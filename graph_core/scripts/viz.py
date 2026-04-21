@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 from pyvis.network import Network
 import pandas as pd
 
@@ -25,5 +26,11 @@ for row in edge_subset.itertuples(index=False):
         value=row.cosine_sim
     )
 
-net.write_html(str(output_html))
+old_cwd = Path.cwd()
+os.chdir(BASE_DIR)
+try:
+    net.write_html(str(output_html))
+finally:
+    os.chdir(old_cwd)
+
 print(f"Saved graph visualization to: {output_html}")
