@@ -44,3 +44,4 @@ credentials.json
 *.swp
 *.swo
 *~
+graph_core/data/per-protein.h5
