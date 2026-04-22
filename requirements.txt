@@ -9,3 +9,5 @@ pyarrow
 neo4j
 torch
 pyvis
+langchain
+langchain-openai

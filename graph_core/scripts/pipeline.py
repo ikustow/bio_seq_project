@@ -13,6 +13,9 @@ STEP_SCRIPTS = [
     "prepare_vectors.py",
     "build_knn_graph.py",
     "analyze_graph.py",
+    "fetch_uniprot_annotations.py",
+    "fetch_disease_annotations.py",
+    "export_for_neo4j.py",
 ]
 
 
@@ -44,11 +47,8 @@ def run_script(script_name, *args):
 def main():
     clean_output_directory()
 
-    run_script("inspect_h5.py")
-    run_script("extract_embeddings.py")
-    run_script("prepare_vectors.py")
-    run_script("build_knn_graph.py")
-    run_script("analyze_graph.py")
+    for script_name in STEP_SCRIPTS:
+        run_script(script_name)
 
     print("\nPipeline completed successfully.")
 
