@@ -53,11 +53,11 @@ streamlit_ui/.streamlit/secrets.toml
 # Cached AlphaFold structures (regenerated on demand)
 streamlit_ui/assets/AF-*.pdb
 
-# AI agent state files
+# Ignore AI agent state files
 .agentignore
 
-# Project-specific backup files
+# Ignore project-specific backup files
 *.bak
-
-# Private / scratch notes
-info/
+*.swp
+*.swo
+*~

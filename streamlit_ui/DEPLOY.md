@@ -14,37 +14,54 @@ Goal: a private URL (`https://<something>.streamlit.app`) gated by a shared pass
 
 ---
 
-## 1. Initialise the git repo (once)
+## 1. Link the local folder to the existing remote and create a new branch
+
+You already have a remote repo `bio_seq_project` on GitHub. We'll connect the local folder to it, create a new branch off `main`, commit the mock UI there, and push.
 
 From the repo root (the `BioSeq investigator` folder):
 
 ```bash
 git init
+git remote add origin https://github.com/<your-user>/bio_seq_project.git
+git fetch origin
+git checkout -b mock-ui origin/main
+```
+
+Pick any branch name you like instead of `mock-ui` — e.g. `feature/streamlit-mock`, `mvp/ui`, etc. It just has to be new (not already on the remote).
+
+> **If `git checkout` fails** with *"would be overwritten by checkout"* — you have a local file with the same name as a file on `origin/main` (often `README.md` or `.gitignore`). Rename or move the local copy aside, retry the checkout, then merge the contents manually.
+
+## 2. Stage, verify, commit, push
+
+```bash
 git add .
-git commit -m "Initial mock UI"
-```
-
-Verify that `.venv/` and `.streamlit/secrets.toml` are **not** in the commit:
-
-```bash
 git status --short
-git ls-files | grep -E "(\.venv|secrets\.toml$)"
 ```
 
-The second command should return nothing. If it prints a path, **stop** and fix `.gitignore` before pushing — the password would leak.
+Now verify that `.venv/` and `.streamlit/secrets.toml` are **not** staged.
 
----
-
-## 2. Push to a private GitHub repo
-
-1. On GitHub → **New repository** → name it `bioseq-investigator` → **Private** → Create.
-2. Copy the remote commands GitHub shows. Typically:
+**Git Bash / macOS / Linux:**
 
 ```bash
-git remote add origin https://github.com/<your-user>/bioseq-investigator.git
-git branch -M main
-git push -u origin main
+git ls-files --cached | grep -E "(\.venv|secrets\.toml$)"
 ```
+
+**Windows PowerShell:**
+
+```powershell
+git ls-files --cached | Select-String -Pattern "\.venv|secrets\.toml$"
+```
+
+The command must return nothing. If it prints a path, **stop** and fix `.gitignore` before committing — the password would leak.
+
+Then commit and push the new branch:
+
+```bash
+git commit -m "Add Streamlit mock UI"
+git push -u origin mock-ui
+```
+
+On GitHub you should now see a new branch `mock-ui` under the `bio_seq_project` repo, with all the mock UI files. (Open a PR to `main` later when the team wants to merge — or leave it as a feature branch for the demo.)
 
 ---
 
@@ -52,8 +69,8 @@ git push -u origin main
 
 1. Open [share.streamlit.io](https://share.streamlit.io) → **New app**.
 2. Fill in:
-   - **Repository:** `<your-user>/bioseq-investigator`
-   - **Branch:** `main`
+   - **Repository:** `<your-user>/bio_seq_project`
+   - **Branch:** `mock-ui` *(the branch you just pushed, not `main`)*
    - **Main file path:** `streamlit_ui/app.py`
    - **App URL:** pick something like `bioseq-investigator` (you'll get `bioseq-investigator.streamlit.app`).
 3. Click **Advanced settings** → **Python version:** `3.11` → **Secrets:** paste exactly:
