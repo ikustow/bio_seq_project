@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.egg-info/
+.Python
 
 # Virtual environments
 .venv/
@@ -10,12 +12,20 @@ env/
 .env
 .env.*
 
-# VS Code
+# VS Code / editors
 .vscode/
+.idea/
 *.code-workspace
+*.swp
+*.swo
+*~
 
 # OS files
 .DS_Store
+Thumbs.db
+
+# Office lock files
+~$*
 
 # Logs and temporary files
 *.log
@@ -36,11 +46,18 @@ build/
 *.secret
 credentials.json
 
-# Ignore AI agent state files
+# Streamlit secrets — NEVER commit these
+.streamlit/secrets.toml
+streamlit_ui/.streamlit/secrets.toml
+
+# Cached AlphaFold structures (regenerated on demand)
+streamlit_ui/assets/AF-*.pdb
+
+# AI agent state files
 .agentignore
 
-# Ignore project-specific backup files
+# Project-specific backup files
 *.bak
-*.swp
-*.swo
-*~
+
+# Private / scratch notes
+info/

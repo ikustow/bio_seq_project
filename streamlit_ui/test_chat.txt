@@ -1,0 +1,34 @@
+user: 
+    sequence: "MRKGLRATAARCGLGLGYLLQMLVLPALALLSASGTGSAAQDDDFFHELPETFPSDPPEPLPHFLIEPEEAYIVKNKPVNLYCKASPATQIYFKCNSEWVHQKDHIVDERVDETSGLIVREVSIEISRQQVEELFGPEDYWCQCVAWSSAGTTKSRKAYVRIAYLRKTFEQEPLGKEVSLEQEVLLQCRPPEGIPVAEVEWLKNEDIIDPVEDRNFYITIDHNLIIKQARLSDTANYTCVAKNIVAKRKSTTATVIVYVNGGWSTWTEWSVCNSRCGRGYQKRTRTCTNPAPLNGGAFCEGQSVQKIACTTLCPVDGRWTPWSKWSTCGTECTHWRRRECTAPAPKNGGKDCDGLVLQSKNCTDGL"
+    question: "what is the best match for species Human?"
+
+BioSeq:
+    answer: "Great! Start searching"
+
+BioSeq: 
+    answer: "The best match is Protein Netrin receptor UNC5C (Protein unc-5 homolog 3) (Protein unc-5 homolog C). Description of it: "Receptor for netrin required for axon guidance (By similarity). Mediates axon repulsion of neuronal growth cones in the developing nervous system upon ligand binding (By similarity). NTN1/Netrin-1 binding might cause dissociation of UNC5C from polymerized TUBB3 in microtubules and thereby lead to increased microtubule dynamics and axon repulsion (PubMed:28483977). Axon repulsion in growth cones may also be caused by its association with DCC that may trigger signaling for repulsion (By similarity). Might also collaborate with DSCAM in NTN1-mediated axon repulsion independently of DCC (By similarity). Also involved in corticospinal tract axon guidance independently of DCC (By similarity). Involved in dorsal root ganglion axon projection towards the spinal cord (PubMed:28483977). It also acts as a dependence receptor required for apoptosis induction when not associated with netrin ligand (By similarity)". 
+    "Do you want me to explain it easier?"
+
+user:
+    additional_question: "Yes"
+
+BioSeq:
+    answer: "UNC5C — a "brick" and a "No Entry" sign for growing nerves.
+        No signal (no netrin) → the protein says: "You can't build here, get lost." The cell kills itself.
+        Signal (netrin) → the protein shouts: "Turn around!" The nerve process changes direction without destroying the cell.
+        Bottom line: Helps the nervous system build the right roads and remove illegal constructions."
+
+Bioseq: 
+    answer: "Do you have any extra questions regarding this protein?"
+
+user: 
+    additional_question: "are there any connected diseases with this protein?"
+
+Bioseq: 
+    answer: "Alzheimer disease". There are several publications regarding that. Do you want me to share resources? 
+
+user: 
+    additional_question: "no. Tell me more about this desease."
+
+BioSeq: 
+    answer: "Alzheimer disease is a neurodegenerative disorder characterized by progressive dementia, loss of cognitive abilities, and deposition of fibrillar amyloid proteins as intraneuronal neurofibrillary tangles, extracellular amyloid plaques and vascular amyloid deposits. The major constituents of these plaques are neurotoxic amyloid-beta protein 40 and amyloid-beta protein 42, that are produced by the proteolysis of the transmembrane APP protein. The cytotoxic C-terminal fragments (CTFs) and the caspase-cleaved products, such as C31, are also implicated in neuronal death. {ECO:0000269|PubMed:25419706, ECO:0000269|PubMed:27068745}. Note=Disease susceptibility may be associated with variants affecting the gene represented in this entry."

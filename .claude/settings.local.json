@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(py -0)",
+      "Bash(py -3.11 --version)",
+      "Bash(py -3.11 -m venv streamlit_ui/.venv)",
+      "Bash(streamlit_ui/.venv/Scripts/python.exe -m pip install --upgrade pip)",
+      "Bash(streamlit_ui/.venv/Scripts/python.exe -m pip install -r streamlit_ui/requirements.txt)",
+      "Bash(streamlit_ui/.venv/Scripts/python.exe -m pip list)",
+      "Bash(streamlit_ui/.venv/Scripts/streamlit.exe run *)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:8501/)",
+      "Bash(curl -s http://localhost:8501/_stcore/health)",
+      "Bash(powershell.exe -NoProfile -Command 'Get-NetTCPConnection -LocalPort 8501 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }')",
+      "Bash(streamlit_ui/.venv/Scripts/python.exe -c ' *)",
+      "Bash(../streamlit_ui/.venv/Scripts/python.exe -c ' *)",
+      "Bash(curl -s -o /dev/null -w \"root HTTP %{http_code}\\\\n\" http://localhost:8501/)"
+    ]
+  }
+}
