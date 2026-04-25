@@ -1,5 +1,6 @@
 /* BioSeq Investigator — mock UI styles */
 
+/* ---------- Sequence block (FASTA preview in user bubble) ---------- */
 .seq-block {
     font-family: "JetBrains Mono", "Menlo", "Consolas", monospace;
     font-size: 0.80rem;
@@ -15,6 +16,7 @@
     overflow-y: auto;
 }
 
+/* ---------- Locked card sections ---------- */
 .card-locked {
     color: #94a3b8;
     font-size: 0.90rem;
@@ -25,6 +27,17 @@
     font-size: 0.82rem;
 }
 
+/* ---------- Chat column header ---------- */
+.chat-title {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #0f172a;
+    letter-spacing: 0.01em;
+    line-height: 1.4;
+    margin: 0;
+    padding: 0;
+}
+
 /* Tighter chat spacing */
 [data-testid="stChatMessage"] {
     padding: 0.5rem 0.75rem;
@@ -33,4 +46,43 @@
 /* Subtle borders on bordered containers */
 [data-testid="stVerticalBlockBorderWrapper"] > div {
     border-radius: 10px !important;
+}
+
+/* ---------- Buttons (Reset + suggestion chip) ---------- */
+div.stButton > button {
+    border-radius: 10px;
+    transition: background-color 120ms ease, border-color 120ms ease, transform 80ms ease;
+}
+div.stButton > button:hover {
+    border-color: #94a3b8;
+    background-color: #f8fafc;
+}
+
+/* Reduce vertical gap above the chat container so the title sits closer */
+div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
+    margin-bottom: 0.25rem;
+}
+
+/* Tighten the chat input area at the bottom */
+[data-testid="stChatInput"] {
+    margin-top: 0.5rem;
+}
+
+/* ---------- Demo-mode pill in page header ---------- */
+.demo-badge {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+}
+.demo-badge-pill {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #fff7ed;
+    color: #9a3412;
+    border: 1px solid #fed7aa;
+    font-size: 0.78rem;
+    font-weight: 500;
+    white-space: nowrap;
+    line-height: 1.3;
 }

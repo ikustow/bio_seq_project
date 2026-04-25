@@ -44,6 +44,17 @@ def _handle_submission(text: str) -> None:
     st.session_state.pending_assistant = reply
 
 
+def _reset_conversation() -> None:
+    for k in (
+        "messages",
+        "conv_state",
+        "protein",
+        "card_sections_revealed",
+        "pending_assistant",
+    ):
+        st.session_state.pop(k, None)
+
+
 def render(on_first_search) -> None:
     """Render the chat column.
 
@@ -52,8 +63,31 @@ def render(on_first_search) -> None:
     """
     st.session_state.on_first_search = on_first_search
 
-    st.markdown("#### Conversation")
-    chat_area = st.container(height=620, border=False)
+    # Toolbar: title on the left, Reset button on the right — keeps controls
+    # close to the section header so the chat area can flow underneath without
+    # an awkward vertical gap.
+    head_col, reset_col = st.columns([5, 1], vertical_alignment="center")
+    with head_col:
+        st.markdown("<div class='chat-title'>Conversation</div>", unsafe_allow_html=True)
+    with reset_col:
+        if st.button(
+            "Reset",
+            use_container_width=True,
+            help="Clear the conversation and start over",
+            key="chat_reset_btn",
+        ):
+            _reset_conversation()
+            st.rerun()
+
+    # While the chat is fresh (only the welcome message), let the container
+    # size to its content so the suggestion chip and input field stay visible
+    # without scrolling. Once the user has sent something, switch to a fixed
+    # scrollable area so growing history doesn't push the input off-screen.
+    has_user_message = any(m["role"] == "user" for m in st.session_state.messages)
+    if has_user_message:
+        chat_area = st.container(height=540, border=False)
+    else:
+        chat_area = st.container(border=False)
 
     with chat_area:
         for msg in st.session_state.messages:
@@ -70,21 +104,18 @@ def render(on_first_search) -> None:
                 st.write_stream(_stream_tokens(pending))
             st.session_state.messages.append({"role": "assistant", "content": pending})
 
-    # Controls under the chat area.
-    ctrl_cols = st.columns([1, 1, 4])
-    if ctrl_cols[0].button("Try example", use_container_width=True, type="primary"):
-        _handle_submission(conversation.example_first_message())
-        st.rerun()
-    if ctrl_cols[1].button("Reset", use_container_width=True):
-        for k in (
-            "messages",
-            "conv_state",
-            "protein",
-            "card_sections_revealed",
-            "pending_assistant",
-        ):
-            st.session_state.pop(k, None)
-        st.rerun()
+    # Suggestion chip — only shown while the conversation is fresh so it
+    # behaves like a starter prompt and disappears once the user is engaged.
+    if not has_user_message:
+        chip_cols = st.columns([1, 4, 1])
+        with chip_cols[1]:
+            if st.button(
+                "✨  Try the demo sequence — UNC5C (Human)",
+                use_container_width=True,
+                key="try_example_chip",
+            ):
+                _handle_submission(conversation.example_first_message())
+                st.rerun()
 
     user_input = st.chat_input("Paste a FASTA sequence or ask a question…")
     if user_input:

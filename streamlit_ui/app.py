@@ -87,7 +87,7 @@ def main() -> None:
     _require_password()
     _bootstrap_session()
 
-    header_cols = st.columns([8, 2])
+    header_cols = st.columns([8, 2], vertical_alignment="center")
     with header_cols[0]:
         st.title("🧬 BioSeq Investigator")
         st.caption(
@@ -95,9 +95,12 @@ def main() -> None:
             "evidence-grounded answer backed by public bioinformatics databases."
         )
     with header_cols[1]:
-        st.markdown("")
-        st.markdown("")
-        st.markdown(":orange-badge[Demo mode · scripted responses]")
+        st.markdown(
+            "<div class='demo-badge'>"
+            "<span class='demo-badge-pill'>Demo mode · scripted responses</span>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
     st.divider()
 
