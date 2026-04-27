@@ -16,7 +16,18 @@ if str(_HERE) not in sys.path:
 from components import chat, protein_card  # noqa: E402
 from mock import conversation, protein_loader  # noqa: E402
 
-PROTEIN_JSON = _HERE.parent / "test_data_from_database" / "O95185.json"
+PROTEIN_DATA_DIR = _HERE.parent / "test_data_from_database"
+
+# 5 best matches from the (mocked) rank/re-rank pipeline, ordered best → worst.
+# Each tuple is (UniProt accession, match-confidence percent).
+CANDIDATE_SPECS: list[tuple[str, float]] = [
+    ("O95185", 98.7),       # Human (UNC5C) — top match
+    ("Q761X5", 92.4),       # Rat (UNC5C)
+    ("F7HIS3", 86.1),       # Rhesus macaque
+    ("A0A8C8XS57", 78.3),   # Lion
+    ("A0A6P5M6C5", 71.5),   # Koala
+]
+
 STYLE_PATH = _HERE / "assets" / "style.css"
 
 
@@ -61,8 +72,10 @@ def _bootstrap_session() -> None:
         ]
     if "conv_state" not in st.session_state:
         st.session_state.conv_state = conversation.ConversationState()
-    if "protein" not in st.session_state:
-        st.session_state.protein = None
+    if "candidates" not in st.session_state:
+        st.session_state.candidates = None
+    if "selected_candidate_idx" not in st.session_state:
+        st.session_state.selected_candidate_idx = 0
     if "card_sections_revealed" not in st.session_state:
         st.session_state.card_sections_revealed = set()
     if "pending_assistant" not in st.session_state:
@@ -73,8 +86,11 @@ def _bootstrap_session() -> None:
 
 def _load_protein() -> None:
     """Invoked by the chat column the first time a search is triggered."""
-    if st.session_state.protein is None:
-        st.session_state.protein = protein_loader.load(PROTEIN_JSON)
+    if st.session_state.candidates is None:
+        st.session_state.candidates = protein_loader.load_candidates(
+            PROTEIN_DATA_DIR, CANDIDATE_SPECS
+        )
+        st.session_state.selected_candidate_idx = 0
 
 
 def main() -> None:
@@ -109,7 +125,7 @@ def main() -> None:
         chat.render(on_first_search=_load_protein)
     with right:
         protein_card.render(
-            st.session_state.protein,
+            st.session_state.candidates,
             st.session_state.card_sections_revealed,
         )
 

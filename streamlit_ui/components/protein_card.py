@@ -10,7 +10,7 @@ import requests
 import streamlit as st
 
 from components.domain_diagram import build_figure
-from mock.protein_loader import ProteinView
+from mock.protein_loader import Candidate, ProteinView
 
 _ALL_SECTIONS: tuple[str, ...] = (
     "header",
@@ -221,8 +221,52 @@ _LOCKED_HINTS = {
 }
 
 
-def render(protein: ProteinView | None, revealed: set[str]) -> None:
-    if protein is None:
+def _match_tone(score: float) -> str:
+    if score >= 90:
+        return "green"
+    if score >= 80:
+        return "blue"
+    if score >= 70:
+        return "orange"
+    return "gray"
+
+
+def _render_switcher(candidates: list[Candidate]) -> int:
+    """Render the candidate switcher and return the chosen index.
+
+    Uses `selected_candidate_idx` in session_state as both the initial value
+    and the persisted selection across reruns.
+    """
+    options = list(range(len(candidates)))
+
+    def _label(i: int) -> str:
+        c = candidates[i]
+        return f"{c['protein']['accession']} · {c['match_score']:.1f}%"
+
+    with st.container(border=True):
+        st.markdown("#### Top 5 matches")
+        st.caption(
+            "Ranked & re-ranked by the retrieval pipeline. "
+            "Pick a candidate to view its full record."
+        )
+        chosen = st.segmented_control(
+            "Top matches",
+            options=options,
+            format_func=_label,
+            key="selected_candidate_idx",
+            label_visibility="collapsed",
+        )
+    if chosen is None:
+        # User deselected — fall back to the top-ranked candidate.
+        chosen = 0
+    return chosen
+
+
+def render(
+    candidates: list[Candidate] | None,
+    revealed: set[str],
+) -> None:
+    if not candidates:
         with st.container(border=True):
             st.markdown("### Protein card")
             st.markdown(
@@ -231,6 +275,17 @@ def render(protein: ProteinView | None, revealed: set[str]) -> None:
                 unsafe_allow_html=True,
             )
         return
+
+    chosen = _render_switcher(candidates)
+    selected = candidates[chosen]
+    protein = selected["protein"]
+    score = selected["match_score"]
+    tone = _match_tone(score)
+
+    st.markdown(
+        f"**Match confidence:** :{tone}-badge[{score:.1f}%]  "
+        f":gray-badge[rank #{chosen + 1} of {len(candidates)}]"
+    )
 
     for key in _ALL_SECTIONS:
         title = _SECTION_LABELS[key]

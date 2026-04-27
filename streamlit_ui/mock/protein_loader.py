@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional, TypedDict
+from typing import Iterable, Optional, TypedDict
 
 
 class DomainFeature(TypedDict):
@@ -20,6 +20,11 @@ class DiseaseInfo(TypedDict):
     mim_id: str
     description: str
     variants: list[str]
+
+
+class Candidate(TypedDict):
+    protein: "ProteinView"
+    match_score: float
 
 
 class ProteinView(TypedDict):
@@ -235,3 +240,22 @@ def load(path: str | Path) -> ProteinView:
         alphafold_accession=_alphafold_accession(cross_refs, accession),
         sequence=sequence.get("value", ""),
     )
+
+
+def load_candidates(
+    directory: str | Path,
+    specs: Iterable[tuple[str, float]],
+) -> list[Candidate]:
+    """Load multiple `ProteinView`s with their associated mock match scores.
+
+    `specs` is an iterable of `(accession, match_score_percent)` pairs — order
+    is preserved so callers can pre-rank the list (best match first).
+    """
+    base = Path(directory)
+    out: list[Candidate] = []
+    for accession, score in specs:
+        out.append(Candidate(
+            protein=load(base / f"{accession}.json"),
+            match_score=float(score),
+        ))
+    return out

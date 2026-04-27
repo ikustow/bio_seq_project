@@ -37,7 +37,7 @@ def _handle_submission(text: str) -> None:
     st.session_state.card_sections_revealed.update(reveals)
     if (
         st.session_state.conv_state.step >= 1
-        and st.session_state.protein is None
+        and st.session_state.candidates is None
         and st.session_state.on_first_search is not None
     ):
         st.session_state.on_first_search()
@@ -48,7 +48,8 @@ def _reset_conversation() -> None:
     for k in (
         "messages",
         "conv_state",
-        "protein",
+        "candidates",
+        "selected_candidate_idx",
         "card_sections_revealed",
         "pending_assistant",
     ):
