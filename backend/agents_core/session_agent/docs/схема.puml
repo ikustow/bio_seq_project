@@ -1,0 +1,60 @@
+@startuml
+actor User
+participant "App / API" as App
+participant "CLI / Entry Point" as Main
+participant "SessionGraphAgent" as Agent
+participant "LangGraph Checkpointer" as CP
+participant "LangGraph Store" as Store
+participant "Session Repository" as Repo
+database "Supabase Postgres" as DB
+participant "Agent Tools" as Tools
+
+User -> App: send message
+note over App
+  knows user_id and session_id
+end note
+
+App -> Main: main()
+Main -> Agent: invoke(message, context)
+note over Main, Agent
+  context = { user_id, session_id, ... }
+  thread_id = session_id
+end note
+
+Agent -> CP: load state by thread_id
+alt postgres mode
+  CP -> DB: read checkpoint
+  DB --> CP: state snapshot
+  Agent -> Store: access durable memory
+  Store -> DB: read/write values
+  DB --> Store: values
+else memory mode
+  CP --> Agent: in-memory checkpoint state
+  Agent -> Store: access in-memory values
+  Store --> Agent: values
+end
+
+Agent -> Repo: get_session(session_id) if thread is empty
+Repo -> DB: select from chat_sessions
+DB --> Repo: saved snapshot or null
+Repo --> Agent: saved state fields
+
+Agent -> Repo: upsert_session(context, {})
+Repo -> DB: insert/update chat_sessions
+DB --> Repo: ok
+
+Agent -> Agent: build input payload
+Agent -> Tools: call tools if needed
+Tools -> Store: get/put user memory if needed
+Store --> Tools: values
+Tools --> Agent: tool results
+Agent -> Agent: derive_session_patch(...)
+Agent -> CP: update_state(thread_id, patch)
+
+Agent -> Repo: upsert_session(context, current_state)
+Repo -> DB: insert/update chat_sessions
+DB --> Repo: ok
+
+Agent --> App: final answer
+App --> User: response
+@enduml
