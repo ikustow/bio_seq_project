@@ -1,3 +1,0 @@
-{'mode': 'one_dataset_per_accession', 'num_items': 21851}
-num_proteins=21851
-embedding_dim=1024

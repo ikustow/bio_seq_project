@@ -11,3 +11,6 @@ torch
 pyvis
 langchain
 langchain-openai
+langgraph
+langgraph-checkpoint-postgres
+psycopg[binary]
