@@ -5,14 +5,24 @@ import faiss
 def _format_record_for_reranking(record: Dict[str, Any]) -> str:
     """
     Summarizes a UniProt record into a descriptive string for semantic reranking.
+    Excludes identifiers like accession and the sequence itself.
     """
-    primary_acc = record.get('primaryAccession', 'N/A')
     organism = record.get('organism', {}).get('scientificName', 'N/A')
     gene = record.get('genes', [{}])[0].get('geneName', {}).get('value', 'N/A')
     protein_name = record.get('proteinDescription', {}).get('recommendedName', {}).get('fullName', {}).get('value', 'N/A')
-    comments = " ".join([c.get('note', {}).get('texts', [{}])[0].get('value', '') 
-                        for c in record.get('comments', []) if c.get('commentType') == 'FUNCTION'])
-    return f"Accession: {primary_acc}; Gene: {gene}; Organism: {organism}; Protein: {protein_name}; Description: {comments}"
+    
+    # Extract functional comments
+    comments_list = []
+    for c in record.get('comments', []):
+        if c.get('commentType') == 'FUNCTION':
+            for text_obj in c.get('note', {}).get('texts', []):
+                val = text_obj.get('value', '')
+                if val:
+                    comments_list.append(val)
+    
+    comments = " ".join(comments_list)
+    
+    return f"Gene: {gene}; Organism: {organism}; Protein: {protein_name}; Description: {comments}"
 
 class LocalReranker:
     def __init__(self, model_name: str = 'all-MiniLM-L6-v2'):
@@ -41,11 +51,11 @@ class LocalReranker:
             return []
 
         # 1. Format records into passages for embedding
-        passages = [_format_record_for_reranking(rec) for rec in records]
+        contexts = [_format_record_for_reranking(rec) for rec in records]
 
         # 2. Generate embeddings for query and passages
         query_embedding = self.embed_texts([context_query])
-        passage_embeddings = self.embed_texts(passages)
+        passage_embeddings = self.embed_texts(contexts)
 
         # 3. Perform similarity search using FAISS (cosine similarity)
         # Using FAISS for efficient search, similar to initial protein embedding search
@@ -54,7 +64,7 @@ class LocalReranker:
         index.add(passage_embeddings)
 
         # Query FAISS index
-        distances, indices = index.search(query_embedding, len(passages)) # Search all passages
+        distances, indices = index.search(query_embedding, len(contexts)) # Search all passages
         
         # 4. Sort and return top_n records
         # Distances are cosine similarities; higher is better

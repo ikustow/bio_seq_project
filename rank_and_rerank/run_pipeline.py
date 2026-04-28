@@ -1,58 +1,53 @@
 import os
-from bioseq_investigator.embeddings import load_embeddings_and_build_index
-from bioseq_investigator.search import get_prottrans_embedder, search_top_k
-from bioseq_investigator.data_fetcher import get_uniprot_records
-from bioseq_investigator.scoring import rank_sequences
-from bioseq_investigator.reranking import LocalReranker
+import json
+from bioseq_investigator.pipeline import run_bioseq_pipeline
 
 def main():
-    # 1. Setup
-    H5_PATH = "data/per-protein.h5"
-    if not os.path.exists(H5_PATH):
-        print(f"Error: Data file {H5_PATH} not found.")
-        return
-
-    # Mock Input
-    user_sequence = "MALWMRLLPLLALLALWGPDPAAAFVNQHLCGSHLVEALYLVCGERGFFYTPKTRREAEDLQVGQVELGGGPGAGSLQPLALEGSLQKRGIVEQCCTSICSLYQLENYCN"
-    user_context = "Which of these sequences are known to be involved in glucose metabolism or are structurally related to human insulin?"
+    # Example prompt that includes a sequence and context
+    # This sequence is human insulin (P01308)
+    user_prompt = (
+        "I have this protein sequence: MALWMRLLPLLALLALWGPDPAAAFVNQHLCGSHLVEALYLVCGERGFFYTPKTRREAEDLQVGQVELGGGPGAGSLQPLALEGSLQKRGIVEQCCTSICSLYQLENYCN. "
+        "I am looking for sequences involved in glucose metabolism or structurally related to human insulin."
+    )
     
-    print(f"--- BioSeq Investigator Pipeline ---")
-    print(f"Query Sequence: {user_sequence[:50]}...")
-    print(f"Query Context: {user_context}\n")
+    # Another example with a path (uncomment to test)
+    # user_prompt = "Find matches for the sequence in data/my_seq.faa and tell me which are related to cancer research."
+
+    print("--- BioSeq Investigator: LangGraph Pipeline ---")
+    print(f"User Prompt: {user_prompt}\n")
+
+    if not os.getenv("MISTRAL_API_KEY"):
+        print("Warning: MISTRAL_API_KEY environment variable not set. The LLM nodes will fail.")
+        # return
 
     try:
-        # 2. Search
-        print("Loading embeddings and building index...")
-        hnsw_index, acc_map = load_embeddings_and_build_index(H5_PATH)
+        print("Starting pipeline execution...")
+        result = run_bioseq_pipeline(user_prompt)
         
-        print("Loading ProtT5 embedder...")
-        embedder = get_prottrans_embedder()
+        if result.get("error"):
+            print(f"\nPipeline Error: {result['error']}")
+            return
+
+        print("\n--- Pipeline Execution Summary ---")
+        print(f"Extracted Input Type: {result.get('input_type')}")
+        print(f"Detected Sequence Type: {result.get('sequence_type')}")
+        print(f"Processed Protein Sequence (length): {len(result.get('protein_sequence', ''))}")
         
-        print(f"Searching for top 25 sequences...")
-        matches = search_top_k(user_sequence, embedder, hnsw_index, acc_map, k=25)
+        print("\n--- Top 5 Reranked Results (JSON) ---")
+        final_results = result.get("final_results", [])
         
-        # 3. Rank by Sequence Similarity
-        ranked_matches = rank_sequences(matches)
-        top_25_accessions = [match[0] for match in ranked_matches]
+        # Format the output as JSON records
+        print(json.dumps(final_results, indent=2))
         
-        # 4. Fetch Details
-        records = get_uniprot_records(top_25_accessions)
-        
-        # 5. Contextual Reranking
-        print("Reranking by context (NVIDIA NIM alternative)...")
-        reranker = LocalReranker()
-        top_5_records = reranker.rerank_by_context(records, user_context, top_n=5)
-        
-        # 6. Show results
-        print("\n--- Top 5 Closest Records (Context-Aware) ---")
-        for i, record in enumerate(top_5_records, 1):
+        print("\n--- Summary View ---")
+        for i, record in enumerate(final_results, 1):
             acc = record.get('primaryAccession')
             name = record.get('proteinDescription', {}).get('recommendedName', {}).get('fullName', {}).get('value', 'N/A')
             gene = record.get('genes', [{}])[0].get('geneName', {}).get('value', 'N/A')
-            print(f"{i}. [{acc}] Protein: {name}, Gene: {gene}")
-            
+            print(f"{i}. [{acc}] {name} (Gene: {gene})")
+
     except Exception as e:
-        print(f"Pipeline failed: {e}")
+        print(f"Critical Failure: {e}")
 
 if __name__ == "__main__":
     main()

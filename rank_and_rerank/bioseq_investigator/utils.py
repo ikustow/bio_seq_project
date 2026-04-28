@@ -46,3 +46,24 @@ def translate_dna_to_protein(dna_sequence):
 
     upper_dna = dna_sequence.upper()
     return build_protein(codons(upper_dna))
+
+
+import pysam
+
+def get_first_fasta_entry(fasta_path: str) -> str:
+    """
+    Extracts the first header and sequence from a FASTA file using pysam.
+
+    Args:
+        fasta_path: Path to the FASTA file.
+
+    Returns:
+        A string containing the first header and its corresponding sequence.
+    """
+    with pysam.FastaFile(fasta_path) as fasta_file:
+        # Get the first reference (header) in the file
+        first_reference = next(iter(fasta_file.references))
+        # Fetch the sequence for the first reference
+        sequence = fasta_file.fetch(first_reference)
+        # Format as FASTA entry
+        return f">{first_reference}\n{sequence}"
