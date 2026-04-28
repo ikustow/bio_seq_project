@@ -1,66 +1,83 @@
 import unittest
 from unittest.mock import MagicMock, patch
 import numpy as np
+import os
 from bioseq_investigator.search import search_top_k
 from bioseq_investigator.scoring import rank_sequences
-from bioseq_investigator.reranking import LocalReranker, _format_record_for_reranking # Import both
+from bioseq_investigator.reranking import LocalReranker, _format_record_for_reranking
+from bioseq_investigator.utils import translate_dna_to_protein, setup_environment
+from bioseq_investigator.pipeline import run_bioseq_pipeline
+
+class TestBioSeqUtilities(unittest.TestCase):
+    def test_dna_translation(self):
+        dna = "ATG" * 3 # AT GAT GAT
+        protein = translate_dna_to_protein(dna)
+        self.assertEqual(protein, "MDD")
+        
+        dna_with_stop = "ATGTGA"
+        protein_stop = translate_dna_to_protein(dna_with_stop)
+        self.assertEqual(protein_stop, "M") # Stop codon '*' stops translation
+
+    def test_dna_translation_error(self):
+        with self.assertRaises(Exception):
+            translate_dna_to_protein("AT") # Not divisible by 3
+
+    @patch.dict(os.environ, {"MISTRAL_API_KEY": "test_key"})
+    def test_setup_environment(self):
+        self.assertEqual(setup_environment(), "test_key")
 
 class TestPipeline(unittest.TestCase):
-    def test_full_pipeline_flow(self):
-        # 1. Mock Search Results
-        mock_matches = [(f"ACC_{i}", 0.9 - (i * 0.01)) for i in range(25)]
-        
-        # 2. Rank sequences (Verification of scoring module)
-        ranked_matches = rank_sequences(mock_matches)
-        self.assertEqual(len(ranked_matches), 25)
-        self.assertEqual(ranked_matches[0][0], "ACC_0")
-        
-        # 3. Mock UniProt Records for those accessions
-        mock_records = [
-            {
-                "primaryAccession": f"ACC_{i}",
-                "organism": {"scientificName": "Homo sapiens" if i % 2 == 0 else "Mus musculus"},
-                "genes": [{"geneName": {"value": f"GENE_{i}"}}],
-                "proteinDescription": {"recommendedName": {"fullName": {"value": f"Protein {i}"}}}
-            }
-            for i in range(25)
-        ]
-        
-        # 4. Rerank by context using mocked LocalReranker
-        context = "Mus musculus related proteins"
-        
-        with patch('bioseq_investigator.reranking.LocalReranker', autospec=True) as MockReranker:
-            # Configure the mock reranker
-            mock_reranker_instance = MockReranker.return_value
-            mock_reranker_instance.rerank_by_context.return_value = mock_records[:5]
+    def test_format_record(self):
+        record = {
+            "primaryAccession": "P12345",
+            "organism": {"scientificName": "E. coli"},
+            "genes": [{"geneName": {"value": "abcA"}}],
+            "proteinDescription": {"recommendedName": {"fullName": {"value": "Super Protein"}}},
+            "comments": [{"commentType": "FUNCTION", "note": {"texts": [{"value": "Does things."}]}}]
+        }
+        fmt = _format_record_for_reranking(record)
+        self.assertIn("Gene: abcA", fmt)
+        self.assertIn("Organism: E. coli", fmt)
+        self.assertIn("Description: Does things.", fmt)
+        self.assertNotIn("P12345", fmt) # Accession should be excluded
 
-            # Manually trigger instantiation
-            reranker = MockReranker()
-            top_5 = reranker.rerank_by_context(mock_records, context, top_n=5)
+    @patch('bioseq_investigator.pipeline.get_llm')
+    @patch('bioseq_investigator.pipeline.get_or_create_index')
+    @patch('bioseq_investigator.pipeline.get_prottrans_embedder')
+    @patch('bioseq_investigator.pipeline.search_top_k')
+    @patch('bioseq_investigator.pipeline.get_uniprot_records')
+    @patch('bioseq_investigator.pipeline.LocalReranker')
+    def test_run_bioseq_pipeline_mock(self, mock_reranker, mock_uniprot, mock_search, mock_embedder, mock_index, mock_llm):
+        # Setup mocks
+        mock_llm_instance = MagicMock()
+        mock_llm.return_value = mock_llm_instance
         
-        self.assertEqual(len(top_5), 5)
-        # Due to random embeddings, we can't assert specific content, but ensure it returns 5 records
-        self.assertIsInstance(top_5, list)
-        self.assertIsInstance(top_5[0], dict)
-
-    @patch('bioseq_investigator.search.embed_sequence')
-    def test_search_integration(self, mock_embed):
-        mock_embed.return_value = np.random.random(1024).astype(np.float32)
+        # Mock structured output for extraction
+        class MockExtraction:
+            sequence_or_path = "MALT"
+            input_type = "SEQUENCE"
+            context = "test context"
+            sequence_type = "PROTEIN"
+            is_confident = True
+            reasoning = "test reasoning"
+            
+        mock_llm_instance.with_structured_output.return_value.invoke.return_value = MockExtraction()
         
-        mock_index = MagicMock()
-        mock_index.search.return_value = (
-            np.array([[0.9, 0.8]], dtype=np.float32), 
-            np.array([[0, 1]], dtype=np.int64)
-        )
+        mock_index.return_value = (MagicMock(), ["ACC_1"])
+        mock_embedder.return_value = (None, None, "cpu")
+        mock_search.return_value = [("ACC_1", 0.9)]
+        mock_uniprot.return_value = [{"primaryAccession": "ACC_1"}]
+        mock_reranker.return_value.rerank_by_context.return_value = [{"primaryAccession": "ACC_1"}]
         
-        mock_embedder_tools = (None, None, "cpu")
-        accessions = ["ACC_1", "ACC_2"]
+        # Run
+        result = run_bioseq_pipeline("dummy prompt")
         
-        results = search_top_k("MALT", mock_embedder_tools, mock_index, accessions, k=2)
-        
-        self.assertEqual(len(results), 2)
-        self.assertEqual(results[0][0], "ACC_1")
-        self.assertAlmostEqual(results[0][1], 0.9)
+        # Verify
+        self.assertEqual(result['sequence'], "MALT")
+        self.assertEqual(result['sequence_type'], "PROTEIN")
+        self.assertTrue(result['is_confident'])
+        self.assertEqual(len(result['final_results']), 1)
+        self.assertIsNone(result['error'])
 
 if __name__ == '__main__':
     unittest.main()

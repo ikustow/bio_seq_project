@@ -27,7 +27,6 @@ def main():
             return
 
         print("\n--- Pipeline Summary ---")
-        print(f"Input Type: {result.get('input_type')}")
         print(f"Detected Type: {result.get('sequence_type')}")
         print(f"Classification Confidence: {result.get('is_confident')}")
         print(f"Protein Sequence Length: {len(result.get('protein_sequence', ''))}")

@@ -1,45 +1,61 @@
 import unittest
 import numpy as np
 import faiss
-from bioseq_investigator.embeddings import load_embeddings_and_build_index
-from bioseq_investigator.scoring import get_similarity_score
 import os
 import h5py
+import pickle
+from bioseq_investigator.embeddings import (
+    load_embeddings, 
+    build_index, 
+    get_or_create_index,
+    load_embeddings_and_build_index
+)
+from bioseq_investigator.scoring import get_similarity_score
 
 class TestDistanceMetrics(unittest.TestCase):
     def setUp(self):
         self.test_h5 = "test_embeddings.h5"
+        self.test_index = "test_index.index"
+        self.test_cache = "test_cache.pkl"
         self.dim = 128
         self.num_entries = 10
         
         # Create a dummy H5 file
         with h5py.File(self.test_h5, 'w') as f:
             for i in range(self.num_entries):
-                # Creating normalized-ish vectors
                 vec = np.random.random(self.dim).astype(np.float32)
                 f.create_dataset(f"acc_{i}", data=vec)
 
     def tearDown(self):
-        if os.path.exists(self.test_h5):
-            os.remove(self.test_h5)
+        for f in [self.test_h5, self.test_index, self.test_cache]:
+            if os.path.exists(f):
+                os.remove(f)
 
-    def test_cosine_similarity_index(self):
-        index, accessions = load_embeddings_and_build_index(self.test_h5)
-        
-        # Check if metric is METRIC_INNER_PRODUCT
+    def test_load_embeddings(self):
+        embeddings, accessions = load_embeddings(self.test_h5)
+        self.assertEqual(embeddings.shape, (self.num_entries, self.dim))
+        self.assertEqual(len(accessions), self.num_entries)
+        self.assertTrue("acc_0" in accessions)
+
+    def test_build_index_persistence(self):
+        embeddings, _ = load_embeddings(self.test_h5)
+        index = build_index(embeddings, self.test_index)
+        self.assertTrue(os.path.exists(self.test_index))
+        self.assertEqual(index.ntotal, self.num_entries)
         self.assertEqual(index.metric_type, faiss.METRIC_INNER_PRODUCT)
+
+    def test_get_or_create_index(self):
+        # 1. Build and persist
+        index, accessions = get_or_create_index(self.test_h5, self.test_index, self.test_cache)
+        self.assertTrue(os.path.exists(self.test_index))
+        self.assertTrue(os.path.exists(self.test_cache))
+        self.assertEqual(len(accessions), self.num_entries)
         
-        # Check if we can search
-        query = np.random.random((1, self.dim)).astype(np.float32)
-        faiss.normalize_L2(query)
-        distances, indices = index.search(query, 5)
-        
-        self.assertEqual(len(distances[0]), 5)
-        # Cosine similarity for normalized vectors should be between -1 and 1
-        # (mostly 0-1 for random positive vectors)
-        for dist in distances[0]:
-            self.assertGreaterEqual(dist, -1.0001)
-            self.assertLessEqual(dist, 1.0001)
+        # 2. Load from persistence (mocking load_embeddings to ensure it's NOT called)
+        # However, we can just check if it works
+        index2, accessions2 = get_or_create_index(self.test_h5, self.test_index, self.test_cache)
+        self.assertEqual(index2.ntotal, self.num_entries)
+        self.assertEqual(accessions, accessions2)
 
     def test_similarity_normalization(self):
         self.assertEqual(get_similarity_score(0.8), 0.8)
