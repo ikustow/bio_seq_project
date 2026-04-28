@@ -4,13 +4,13 @@ import faiss
 import os
 import h5py
 import pickle
-from bioseq_investigator.embeddings import (
+from src.embeddings import (
     load_embeddings, 
     build_index, 
     get_or_create_index,
     load_embeddings_and_build_index
 )
-from bioseq_investigator.scoring import get_similarity_score
+from src.scoring import get_similarity_score
 
 class TestDistanceMetrics(unittest.TestCase):
     def setUp(self):

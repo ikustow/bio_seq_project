@@ -6,15 +6,15 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 
-from bioseq_investigator.utils import (
+from src.utils import (
     get_first_fasta_entry, 
     translate_dna_to_protein, 
     get_llm
 )
-from bioseq_investigator.embeddings import get_or_create_index
-from bioseq_investigator.search import get_prottrans_embedder, search_top_k
-from bioseq_investigator.data_fetcher import get_uniprot_records
-from bioseq_investigator.reranking import LocalReranker
+from src.embeddings import get_or_create_index
+from src.search import get_prottrans_embedder, search_top_k
+from src.data_fetcher import get_uniprot_records
+from src.reranking import LocalReranker
 
 # --- Structured Output Models ---
 

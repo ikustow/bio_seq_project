@@ -1,6 +1,6 @@
-# BioSeq Investigator
+# BioSeq Retriever
 
-BioSeq Investigator is an advanced bioinformatics pipeline designed for context-aware biological sequence search. It leverages Large Language Models (LLMs), LangGraph, and FAISS to provide a highly flexible system that can interpret natural language queries, classify sequence types, and perform multi-stage similarity searches.
+BioSeq Retriever is an advanced bioinformatics pipeline designed for context-aware biological sequence search. It leverages Large Language Models (LLMs), LangGraph, and FAISS to provide a highly flexible system that can interpret natural language queries, classify sequence types, and perform multi-stage similarity searches.
 
 ## Setup Instructions
 
@@ -67,7 +67,7 @@ The `run_bioseq_pipeline` function returns a dictionary (the final `GraphState`)
 
 ## Integration: Using the Pipeline in Your Code
 ```python
-from bioseq_investigator.pipeline import run_bioseq_pipeline
+from src.pipeline import run_bioseq_pipeline
 
 # 1. Invoke the pipeline
 result = run_bioseq_pipeline("Compare this sequence: MKTLL... against human insulin markers.")
@@ -82,7 +82,7 @@ else:
 ```
 
 ## Project & File Structure
-- `bioseq_investigator/`: Core logic and pipeline modules.
+- `src/`: Core logic and pipeline modules.
   - `pipeline.py`: LangGraph workflow and LLM node orchestration.
   - `embeddings.py`: FAISS index management, HDF5 loading, and persistence.
   - `reranking.py`: Semantic similarity logic using Mistral cloud embeddings.
@@ -92,7 +92,7 @@ else:
   - `scoring.py`: Similarity normalization and ranking.
 - `data/`: Directory for embeddings and FAISS indexes.
 - `tests/`: Automated unit and pipeline tests.
-- `run_pipeline.py`: Main entry point script.
+- `pipeline_interface.py`: Main entry point script.
 
 ## Key Classes and Functions
 - `GraphState` (TypedDict): Maintains the internal pipeline state across nodes.
@@ -106,3 +106,4 @@ else:
 - **Memory Usage**: ProtT5 loading requires significant RAM (~8GB+ recommended).
 - **Sequence Length**: Assumes DNA is in-frame and divisible by 3.
 - **Data Source**: Dependent on UniProt database coverage and pre-computed embedding quality.
+- **Local Data Dependency**: Requires pre-existing data/ directory with embeddings and FAISS indexes.

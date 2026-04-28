@@ -2,11 +2,11 @@ import unittest
 from unittest.mock import MagicMock, patch
 import numpy as np
 import os
-from bioseq_investigator.search import search_top_k
-from bioseq_investigator.scoring import rank_sequences
-from bioseq_investigator.reranking import LocalReranker, _format_record_for_reranking
-from bioseq_investigator.utils import translate_dna_to_protein, setup_environment
-from bioseq_investigator.pipeline import run_bioseq_pipeline
+from src.search import search_top_k
+from src.scoring import rank_sequences
+from src.reranking import LocalReranker, _format_record_for_reranking
+from src.utils import translate_dna_to_protein, setup_environment
+from src.pipeline import run_bioseq_pipeline
 
 class TestBioSeqUtilities(unittest.TestCase):
     def test_dna_translation(self):
@@ -41,12 +41,12 @@ class TestPipeline(unittest.TestCase):
         self.assertIn("Description: Does things.", fmt)
         self.assertNotIn("P12345", fmt) # Accession should be excluded
 
-    @patch('bioseq_investigator.pipeline.get_llm')
-    @patch('bioseq_investigator.pipeline.get_or_create_index')
-    @patch('bioseq_investigator.pipeline.get_prottrans_embedder')
-    @patch('bioseq_investigator.pipeline.search_top_k')
-    @patch('bioseq_investigator.pipeline.get_uniprot_records')
-    @patch('bioseq_investigator.pipeline.LocalReranker')
+    @patch('src.pipeline.get_llm')
+    @patch('src.pipeline.get_or_create_index')
+    @patch('src.pipeline.get_prottrans_embedder')
+    @patch('src.pipeline.search_top_k')
+    @patch('src.pipeline.get_uniprot_records')
+    @patch('src.pipeline.LocalReranker')
     def test_run_bioseq_pipeline_mock(self, mock_reranker, mock_uniprot, mock_search, mock_embedder, mock_index, mock_llm):
         # Setup mocks
         mock_llm_instance = MagicMock()

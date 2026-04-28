@@ -1,6 +1,22 @@
 import os
 import json
-from bioseq_investigator.pipeline import run_bioseq_pipeline
+from src.pipeline import run_bioseq_pipeline
+
+def run_pipeline_interface(user_prompt: str):
+    """
+    Interface to run the bioseq pipeline with a custom prompt.
+    Returns the results dictionary.
+    """
+    if not os.getenv("MISTRAL_API_KEY"):
+        raise ValueError("MISTRAL_API_KEY environment variable not set.")
+    
+    print(f"Executing pipeline for prompt: {user_prompt[:50]}...")
+    result = run_bioseq_pipeline(user_prompt)
+    
+    if result.get("error"):
+        print(f"Pipeline Error: {result['error']}")
+    
+    return result
 
 def main():
     # Example prompt: Mix of DNA/Protein, file paths or sequences
@@ -9,39 +25,32 @@ def main():
         "MALWMRLLPLLALLALWGPDPAAAFVNQHLCGSHLVEALYLVCGERGFFYTPKTRREAEDLQVGQVELGGGPGAGSLQPLALEGSLQKRGIVEQCCTSICSLYQLENYCN). "
         "I am looking for sequences involved in glucose metabolism or structurally related to human insulin."
     )
-    
+
     print("--- BioSeq Investigator: Advanced LangGraph Pipeline ---")
     print(f"User Prompt: {user_prompt}\n")
 
-    # API key is handled by the utils.setup_environment called within nodes
-    if not os.getenv("MISTRAL_API_KEY"):
-        print("Error: MISTRAL_API_KEY environment variable not set.")
-        return
-
     try:
-        print("Executing pipeline...")
-        result = run_bioseq_pipeline(user_prompt)
-        
+        result = run_pipeline_interface(user_prompt)
+
         if result.get("error"):
-            print(f"\nPipeline Error: {result['error']}")
             return
 
         print("\n--- Pipeline Summary ---")
         print(f"Detected Type: {result.get('sequence_type')}")
         print(f"Classification Confidence: {result.get('is_confident')}")
         print(f"Protein Sequence Length: {len(result.get('protein_sequence', ''))}")
-        
+
         print("\n--- Top 5 Context-Aware Matches (UniProt JSON) ---")
         final_results = result.get("final_results", [])
-        
+
         # Output results with the confidence flag as requested
         output = {
             "classification_confident": result.get("is_confident"),
             "top_matches": final_results
         }
-        
+
         print(json.dumps(output, indent=2))
-        
+
         print("\n--- Quick View ---")
         for i, record in enumerate(final_results, 1):
             acc = record.get('primaryAccession')
