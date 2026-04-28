@@ -1,3 +1,7 @@
+import os
+import pysam
+from langchain_mistralai import ChatMistralAI, MistralAIEmbeddings
+
 standard_codon_table = {
     'TTT': 'F', 'TCT': 'S', 'TAT': 'Y', 'TGT': 'C',
     'TTC': 'F', 'TCC': 'S', 'TAC': 'Y', 'TGC': 'C',
@@ -20,6 +24,25 @@ standard_codon_table = {
     'GTG': 'V', 'GCG': 'A', 'GAG': 'E', 'GGG': 'G'
 }
 
+def setup_environment():
+    """Sets up API keys and environment variables."""
+    api_key = os.getenv("MISTRAL_API_KEY")
+    if not api_key:
+        raise ValueError("MISTRAL_API_KEY environment variable is not set.")
+    return api_key
+
+def get_llm(temperature=0):
+    """Returns a configured Mistral LLM instance."""
+    setup_environment()
+    return ChatMistralAI(
+        model="mistral-small-latest",
+        temperature=temperature
+    )
+
+def get_text_embedder():
+    """Returns a Mistral embeddings instance for text/context."""
+    setup_environment()
+    return MistralAIEmbeddings(model="mistral-embed")
 
 def translate_dna_to_protein(dna_sequence):
     if len(dna_sequence) % 3 != 0:
@@ -47,23 +70,11 @@ def translate_dna_to_protein(dna_sequence):
     upper_dna = dna_sequence.upper()
     return build_protein(codons(upper_dna))
 
-
-import pysam
-
 def get_first_fasta_entry(fasta_path: str) -> str:
     """
     Extracts the first header and sequence from a FASTA file using pysam.
-
-    Args:
-        fasta_path: Path to the FASTA file.
-
-    Returns:
-        A string containing the first header and its corresponding sequence.
     """
     with pysam.FastaFile(fasta_path) as fasta_file:
-        # Get the first reference (header) in the file
         first_reference = next(iter(fasta_file.references))
-        # Fetch the sequence for the first reference
         sequence = fasta_file.fetch(first_reference)
-        # Format as FASTA entry
         return f">{first_reference}\n{sequence}"
