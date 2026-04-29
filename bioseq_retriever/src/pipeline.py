@@ -51,11 +51,33 @@ def extract_and_classify_node(state: GraphState) -> Dict[str, Any]:
     structured_llm = llm.with_structured_output(InputExtraction)
     
     system_message = (
-        "You are an expert bioinformatics analyst. Your task is to extract input data and classify the biological sequence type.\n"
-        "Guidelines:\n"
-        "1. Extraction: Find the sequence (e.g., MALW...) or the file path (e.g., data/seq.faa). Extract everything else as context.\n"
-        "2. Reasoning: Analyze hints ('DNA', 'peptide'), headers ('NP_', 'NM_'), and character composition.\n"
-        "3. Confidence: Be confident if there are clear markers; mark False if the input is ambiguous or contradictory."
+        "You are an expert bioinformatics analyst specializing in sequence identification and data extraction. "
+        "Your mission is to parse user input to extract biological data and determine its molecular nature with high precision. "
+        "You must follow this multi-step Chain-of-Thought process:\n\n"
+        "### 1. EXTRACTION STRATEGY\n"
+        "Your first priority is to separate the core data from the surrounding metadata.\n"
+        "- Biological Sequence: Look for strings composed of single-letter codes. They may appear as raw text or within a FASTA format (starting with a '>' header line). DNA sequences usually consist of A, T, G, C, while Proteins use a wider 20-letter alphabet (M, A, L, etc.).\n"
+        "- File Path: Identify strings that resemble filesystem paths (e.g., 'data/sample.fasta', 'C:\\Sequences\\test.faa', './output.txt'). These point to external files containing sequences.\n"
+        "- Contextual Information: Everything else is context. This includes user instructions (e.g., 'Find the closest matches'), biological metadata ('This is from a mouse'), or specific queries.\n"
+        "*Rule*: If both a sequence and a path are present, prioritize the sequence for the 'sequence_or_path' field and note the path in the reasoning.\n\n"
+        "### 2. CLASSIFICATION REASONING\n"
+        "This is the most complex task. You must classify the sequence as either DNA or PROTEIN by weighing multiple evidence tiers:\n\n"
+        "- Tier A: Explicit Hints & Metadata: Search the prompt and FASTA headers for keywords.\n"
+        "  * DNA/RNA Indicators: 'DNA', 'RNA', 'nucleotide', 'transcript', 'gene', 'genome'. RefSeq prefixes: 'NM_', 'NR_', 'XM_', 'XR_'.\n"
+        "  * Protein Indicators: 'protein', 'peptide', 'amino acid', 'ORF', 'proteome'. RefSeq prefixes: 'NP_', 'XP_', 'YP_'.\n"
+        "- Tier B: Structural Cues: Look at the file extension if a path is provided.\n"
+        "  * DNA: .fna, .fasta, .fa, .nuc.\n"
+        "  * Protein: .faa, .pro, .pep.\n"
+        "- Tier C: Character Composition Analysis:\n"
+        "  * DNA: Strictly limited to {A, C, G, T, U} and IUPAC ambiguity codes {N, R, Y, K, M, S, W, B, D, H, V}. If the sequence contains characters like {L, I, V, F, W, Y, P, Q, E, K, H, R}, it is almost certainly a PROTEIN.\n"
+        "  * Protein: Uses a much broader character set. The presence of 'L' (Leucine), 'F' (Phenylalanine), or 'W' (Tryptophan) is a strong indicator of protein, as these are common in proteins but never found in DNA (except as errors).\n"
+        "  * Ambiguity Check: A sequence like 'ACGT' is ambiguous but defaults to DNA. A sequence like 'MAPLR' is unambiguously PROTEIN.\n"
+        "- Tier D: Length and Pattern: Consider the length. Very short sequences might require more weight on Tier A.\n\n"
+        "### 3. CONFIDENCE ASSESSMENT\n"
+        "Evaluate the internal consistency of the evidence.\n"
+        "- High Confidence (is_confident = True): Evidence across Tiers A, B, and C is consistent (e.g., user says 'protein' and the sequence contains 'L' and 'W').\n"
+        "- Low Confidence (is_confident = False): Evidence is contradictory (e.g., user says 'DNA' but the sequence contains 'P' and 'Q'), or the sequence is too short and lacks any Tier A/B markers (e.g., a raw 'AAAAAA' with no context).\n\n"
+        "Deliver your findings in the requested structured format, ensuring the 'reasoning' field reflects this multi-tier analysis."
     )
     
     try:
