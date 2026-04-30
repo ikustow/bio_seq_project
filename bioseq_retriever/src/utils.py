@@ -1,5 +1,4 @@
 import os
-import pysam
 from langchain_mistralai import ChatMistralAI, MistralAIEmbeddings
 
 standard_codon_table = {
@@ -71,10 +70,26 @@ def translate_dna_to_protein(dna_sequence):
     return build_protein(codons(upper_dna))
 
 def get_first_fasta_entry(fasta_path: str) -> str:
+    """Extract the first header and sequence from a FASTA file.
+
+    Pure-Python implementation (no pysam dependency, works on Windows).
+    Returns the entry as ">header\\nsequence" matching pysam output shape.
     """
-    Extracts the first header and sequence from a FASTA file using pysam.
-    """
-    with pysam.FastaFile(fasta_path) as fasta_file:
-        first_reference = next(iter(fasta_file.references))
-        sequence = fasta_file.fetch(first_reference)
-        return f">{first_reference}\n{sequence}"
+    header: str | None = None
+    seq_lines: list[str] = []
+    with open(fasta_path, "r", encoding="utf-8") as f:
+        for raw in f:
+            line = raw.rstrip()
+            if not line:
+                continue
+            if line.startswith(">"):
+                if header is not None:
+                    break
+                header = line[1:]
+            else:
+                if header is None:
+                    raise ValueError(f"FASTA file {fasta_path} must start with a > header")
+                seq_lines.append(line)
+    if header is None:
+        raise ValueError(f"Empty FASTA file: {fasta_path}")
+    return f">{header}\n{''.join(seq_lines)}"
