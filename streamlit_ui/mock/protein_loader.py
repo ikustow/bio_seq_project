@@ -193,8 +193,8 @@ def _go_terms(cross_refs: list[dict], limit: int = 8) -> list[str]:
     return out
 
 
-def load(path: str | Path) -> ProteinView:
-    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+def from_dict(record: dict) -> ProteinView:
+    raw = record
     comments: list[dict] = raw.get("comments", []) or []
     features: list[dict] = raw.get("features", []) or []
     cross_refs: list[dict] = raw.get("uniProtKBCrossReferences", []) or []
@@ -240,6 +240,10 @@ def load(path: str | Path) -> ProteinView:
         alphafold_accession=_alphafold_accession(cross_refs, accession),
         sequence=sequence.get("value", ""),
     )
+
+
+def load(path: str | Path) -> ProteinView:
+    return from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
 
 
 def load_candidates(

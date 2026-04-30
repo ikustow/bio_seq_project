@@ -53,6 +53,9 @@ streamlit_ui/.streamlit/secrets.toml
 # Cached AlphaFold structures (regenerated on demand)
 streamlit_ui/assets/AF-*.pdb
 
+# Bioseq retriever data (per-protein.h5 ~1.3 GB, FAISS index, accession cache)
+bioseq_retriever/data/
+
 # Ignore AI agent state files
 .agentignore
 

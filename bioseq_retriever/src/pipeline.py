@@ -16,6 +16,13 @@ from .search import get_prottrans_embedder, search_top_k
 from .data_fetcher import get_uniprot_records
 from .reranking import LocalReranker
 
+# --- Data paths (env-overridable) ---
+
+_DATA_DIR = os.getenv("BIOSEQ_DATA_DIR", os.path.join("bioseq_retriever", "data"))
+H5_PATH = os.path.join(_DATA_DIR, "per-protein.h5")
+INDEX_PATH = os.path.join(_DATA_DIR, "per-protein.index")
+CACHE_PATH = os.path.join(_DATA_DIR, "per-protein.accessions.pkl")
+
 # --- Structured Output Models ---
 
 class InputExtraction(BaseModel):
@@ -108,7 +115,6 @@ def rank_node(state: GraphState) -> Dict[str, Any]:
     """Performs sequence similarity search (Top 50)."""
     if state.get('error'): return {}
     try:
-        H5_PATH, INDEX_PATH, CACHE_PATH = "data/per-protein.h5", "data/per-protein.index", "data/per-protein.accessions.pkl"
         index, accessions = get_or_create_index(H5_PATH, INDEX_PATH, CACHE_PATH)
         embedder_tools = get_prottrans_embedder()
         matches = search_top_k(state['protein_sequence'], embedder_tools, index, accessions, k=50)

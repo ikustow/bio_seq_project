@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -15,6 +16,8 @@ if str(_HERE) not in sys.path:
 
 from components import chat, protein_card  # noqa: E402
 from mock import conversation, protein_loader  # noqa: E402
+
+BACKEND_MODE = os.getenv("BIOSEQ_BACKEND", "mock").lower()
 
 PROTEIN_DATA_DIR = _HERE.parent / "test_data_from_database"
 
@@ -84,9 +87,38 @@ def _bootstrap_session() -> None:
         st.session_state.on_first_search = None
 
 
+def _first_user_message() -> str:
+    for m in st.session_state.messages:
+        if m["role"] == "user":
+            return m["content"]
+    return ""
+
+
 def _load_protein() -> None:
     """Invoked by the chat column the first time a search is triggered."""
-    if st.session_state.candidates is None:
+    if st.session_state.candidates is not None:
+        return
+
+    if BACKEND_MODE == "real":
+        # Lazy import — heavy deps (torch, faiss, transformers) only load when
+        # the real backend is actually selected.
+        import backend_adapter  # noqa: WPS433
+
+        prompt = _first_user_message()
+        try:
+            with st.spinner("Searching databases — this can take 30–90 seconds…"):
+                candidates = backend_adapter.run_search(prompt)
+        except RuntimeError as exc:
+            st.error(f"Backend error: {exc}")
+            return
+        except ValueError as exc:
+            # e.g. MISTRAL_API_KEY missing from setup_environment
+            st.error(str(exc))
+            return
+
+        st.session_state.candidates = candidates
+        st.session_state.selected_candidate_idx = 0
+    else:
         st.session_state.candidates = protein_loader.load_candidates(
             PROTEIN_DATA_DIR, CANDIDATE_SPECS
         )

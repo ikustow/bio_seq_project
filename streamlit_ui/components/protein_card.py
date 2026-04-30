@@ -241,7 +241,10 @@ def _render_switcher(candidates: list[Candidate]) -> int:
 
     def _label(i: int) -> str:
         c = candidates[i]
-        return f"{c['protein']['accession']} · {c['match_score']:.1f}%"
+        score = c["match_score"]
+        if score <= 0:
+            return c["protein"]["accession"]
+        return f"{c['protein']['accession']} · {score:.1f}%"
 
     with st.container(border=True):
         st.markdown("#### Top 5 matches")
@@ -266,7 +269,7 @@ def render(
     candidates: list[Candidate] | None,
     revealed: set[str],
 ) -> None:
-    if not candidates:
+    if candidates is None:
         with st.container(border=True):
             st.markdown("### Protein card")
             st.markdown(
@@ -276,14 +279,28 @@ def render(
             )
         return
 
+    if not candidates:
+        with st.container(border=True):
+            st.markdown("### Protein card")
+            st.warning(
+                "The retrieval pipeline returned no candidates for this query. "
+                "Try rephrasing or pasting a different sequence."
+            )
+        return
+
     chosen = _render_switcher(candidates)
     selected = candidates[chosen]
     protein = selected["protein"]
     score = selected["match_score"]
-    tone = _match_tone(score)
+
+    if score <= 0:
+        confidence_badge = ":gray-badge[match-confidence unavailable]"
+    else:
+        tone = _match_tone(score)
+        confidence_badge = f":{tone}-badge[{score:.1f}%]"
 
     st.markdown(
-        f"**Match confidence:** :{tone}-badge[{score:.1f}%]  "
+        f"**Match confidence:** {confidence_badge}  "
         f":gray-badge[rank #{chosen + 1} of {len(candidates)}]"
     )
 
