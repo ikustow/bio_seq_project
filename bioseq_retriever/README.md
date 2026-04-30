@@ -6,14 +6,14 @@ BioSeq Retriever is an advanced bioinformatics pipeline designed for context-awa
 
 ### 1. Create Conda Environment
 ```bash
-conda create -n bioseq python=3.10 -y
+conda create -n bioseq python=3.12 -y
 conda activate bioseq
 ```
 
 ### 2. Install Dependencies
 Install the required packages using Conda where available, and pip for others:
 ```bash
-conda install -c conda-forge h5py faiss-cpu numpy requests pysam transformers torch sentence-transformers -y
+conda install -c conda-forge h5py faiss-cpu numpy requests pyfaidx transformers pytorch sentence-transformers -y
 pip install langchain-mistralai langgraph tiktoken sentencepiece protobuf
 ```
 

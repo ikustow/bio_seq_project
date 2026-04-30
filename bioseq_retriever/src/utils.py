@@ -1,5 +1,5 @@
 import os
-import pysam
+from pyfaidx import Fasta
 from langchain_mistralai import ChatMistralAI, MistralAIEmbeddings
 
 standard_codon_table = {
@@ -72,9 +72,8 @@ def translate_dna_to_protein(dna_sequence):
 
 def get_first_fasta_entry(fasta_path: str) -> str:
     """
-    Extracts the first header and sequence from a FASTA file using pysam.
+    Extracts the first header and sequence from a FASTA file using pyfaidx.
     """
-    with pysam.FastaFile(fasta_path) as fasta_file:
-        first_reference = next(iter(fasta_file.references))
-        sequence = fasta_file.fetch(first_reference)
-        return f">{first_reference}\n{sequence}"
+    fasta = Fasta(fasta_path)
+    first_record = fasta[0]
+    return f">{first_record.name}\n{str(first_record)}"
