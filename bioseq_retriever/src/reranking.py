@@ -1,7 +1,7 @@
 import numpy as np
 from typing import List, Dict, Any, Tuple
 import faiss
-from src.utils import get_text_embedder
+from .utils import get_text_embedder
 
 def _format_record_for_reranking(record: Dict[str, Any]) -> str:
     """
