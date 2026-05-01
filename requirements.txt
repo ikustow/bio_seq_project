@@ -1,0 +1,16 @@
+h5py
+numpy
+pandas
+tqdm
+scikit-learn
+faiss-cpu
+networkx
+pyarrow
+neo4j
+torch
+pyvis
+langchain
+langchain-openai
+langgraph
+langgraph-checkpoint-postgres
+psycopg[binary]

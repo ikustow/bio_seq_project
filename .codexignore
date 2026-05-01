@@ -1,0 +1,42 @@
+# AI ignore file
+# Exclude files and folders that should not be read or processed by AI agents.
+
+# Git metadata
+.git/
+
+# Local environment and secrets
+.env
+.env.*
+.venv/
+venv/
+env/
+
+# Editor/project settings
+.vscode/
+*.code-workspace
+
+# Python caches and build artifacts
+__pycache__/
+*.py[cod]
+
+# Logs and temporary files
+*.log
+*.tmp
+*.cache
+
+# OS files
+.DS_Store
+
+# Dependency folders
+node_modules/
+
+# Sensitive keys and certificates
+*.key
+*.pem
+*.crt
+
+# Local backups
+*.bak
+*.swp
+*.swo
+*~
