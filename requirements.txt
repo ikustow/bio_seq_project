@@ -22,8 +22,9 @@ tokenizers==0.22.2
 
 # Vector search + embeddings file
 # NOTE: on the Windows dev machine this is conda's `faiss==1.9.0`; on
-# HF Spaces (Linux) we use the pip-only `faiss-cpu` build instead.
-faiss-cpu==1.9.0
+# HF Spaces (Linux) we use the pip-only `faiss-cpu` build. PyPI's
+# closest equivalent to conda's 1.9.0 is `1.9.0.post1`.
+faiss-cpu==1.9.0.post1
 h5py==3.16.0
 numpy==1.26.4
 
