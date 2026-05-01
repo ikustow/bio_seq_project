@@ -83,7 +83,6 @@ def _download_hf(repo_id: str, filename: str, dest: Path) -> None:
         filename=filename,
         repo_type="dataset",
         local_dir=str(dest.parent),
-        local_dir_use_symlinks=False,
     )
     cached_path = Path(cached)
     if cached_path != dest:
