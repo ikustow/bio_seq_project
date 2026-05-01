@@ -34,21 +34,22 @@ Pick:
   The Space fits — see cold-start budget in `README.md`.
 
 Keep the full ID handy: `<owner>/<space-name>`. Examples below use
-`<OWNER>/<SPACE>` as a placeholder — substitute throughout.
+`radda-i/BioSeq_investigator` as a placeholder — substitute throughout.
 
 ---
 
-## 2. (Recommended) Stage the embeddings on a HF Dataset
+## 2. Stage the embeddings on a HF Dataset
 
-`per-protein.h5` (~1.38 GB) and a pre-built FAISS index (~2 GB) are too
-big to commit to the Space repo cleanly. The fastest cold-start path is
-to host them in a **HF Dataset** and have the Space pull from there on
-first boot.
+Three files are too big to commit to the Space repo: `per-protein.h5`
+(1.38 GB), the pre-built FAISS HNSW index `per-protein.index` (2.51 GB),
+and the accession cache `per-protein.accessions.pkl` (5.2 MB). All
+three already exist on the strong laptop in
+`D:\Alina_data_Sanity\bio_seq_project\bioseq_retriever\data\` after the
+2026-05-01 smoke test.
 
-> If you'd rather skip this step and accept slow cold starts, jump to
-> §3 — the Space will fall back to downloading `per-protein.h5` from
-> UniProt FTP (~5–10 min) and rebuilding the FAISS index from scratch
-> (~5–15 min) on every first run.
+We host them in a **HF Dataset** and have the Space pull all three on
+first boot. Including the pre-built index in the dataset cuts ~5–15 min
+off every cold start (no FAISS rebuild needed).
 
 ### 2a. Create the dataset repo
 
@@ -58,7 +59,7 @@ On https://huggingface.co/new-dataset:
 - Name: e.g. `bioseq-data`
 - Visibility: **public** is fine (the file already is — it comes from UniProt)
 
-Full ID: `<OWNER>/bioseq-data`.
+Full ID: `radda-i/bioseq-data`.
 
 ### 2b. Upload the files
 
@@ -67,38 +68,33 @@ On the **strong laptop** (where the data lives):
 ```powershell
 cd D:\Alina_data_Sanity\bio_seq_project
 
-# huggingface_hub is already in the venv — use it to upload.
+# huggingface_hub is already in the venv. Set the write token in the
+# session env first (so it is not in shell history):
+$env:HF_TOKEN = "<paste your HF write token>"
+
 .\.venv\python.exe -c @"
-from huggingface_hub import HfApi, login
-login(token='<HF_WRITE_TOKEN>')   # or set HF_TOKEN env var beforehand
-api = HfApi()
-api.upload_file(
-    path_or_fileobj='bioseq_retriever/data/per-protein.h5',
-    path_in_repo='per-protein.h5',
-    repo_id='<OWNER>/bioseq-data',
-    repo_type='dataset',
-)
-# Optionally also upload the pre-built index after running the pipeline
-# once locally so it exists in bioseq_retriever/data/:
 import os
-if os.path.exists('bioseq_retriever/data/per-protein.index'):
+from huggingface_hub import HfApi
+api = HfApi(token=os.environ['HF_TOKEN'])
+for src in [
+    'bioseq_retriever/data/per-protein.h5',
+    'bioseq_retriever/data/per-protein.index',
+    'bioseq_retriever/data/per-protein.accessions.pkl',
+]:
+    print(f'uploading {src}...')
     api.upload_file(
-        path_or_fileobj='bioseq_retriever/data/per-protein.index',
-        path_in_repo='per-protein.index',
-        repo_id='<OWNER>/bioseq-data',
+        path_or_fileobj=src,
+        path_in_repo=os.path.basename(src),
+        repo_id='radda-i/bioseq-data',
         repo_type='dataset',
     )
-    api.upload_file(
-        path_or_fileobj='bioseq_retriever/data/per-protein.accessions.pkl',
-        path_in_repo='per-protein.accessions.pkl',
-        repo_id='<OWNER>/bioseq-data',
-        repo_type='dataset',
-    )
+print('done')
 "@
 ```
 
-The first upload takes a while (1.4 GB over your home upload bandwidth);
-subsequent re-uploads are deduped via xet.
+Total upload is ~3.9 GB. Over a typical home upload link this takes
+20–60 minutes; do it once and forget. Subsequent re-uploads are deduped
+via HF's xet backend.
 
 ---
 
@@ -106,8 +102,8 @@ subsequent re-uploads are deduped via xet.
 
 On https://huggingface.co/new-space:
 
-- Owner: `<OWNER>`
-- Space name: `<SPACE>`
+- Owner: `radda-i`
+- Space name: `BioSeq_investigator`
 - License: `mit` (or whatever matches your README)
 - SDK: **Streamlit**
 - Hardware: **CPU basic** (free)
@@ -115,7 +111,7 @@ On https://huggingface.co/new-space:
 - "Create Space"
 
 HF will give you the git remote URL:
-`https://huggingface.co/spaces/<OWNER>/<SPACE>`.
+`https://huggingface.co/spaces/radda-i/BioSeq_investigator`.
 
 ---
 
@@ -130,7 +126,7 @@ In the Space's **Settings → Variables and secrets**:
 **Variables** (visible in Space settings):
 
 - `BIOSEQ_BACKEND` = `real`
-- `BIOSEQ_DATA_SOURCE` = `hf:<OWNER>/bioseq-data` *(if you did §2)*
+- `BIOSEQ_DATA_SOURCE` = `hf:radda-i/bioseq-data` *(if you did §2)*
   or omit / set to `uniprot` to fall back to UniProt FTP.
 
 ---
@@ -141,7 +137,7 @@ From this repo (any machine — primary laptop is fine):
 
 ```bash
 # One-time: add the Space as a git remote.
-git remote add space https://huggingface.co/spaces/<OWNER>/<SPACE>
+git remote add space https://huggingface.co/spaces/radda-i/BioSeq_investigator
 
 # Push the deploy branch as the Space's main branch.
 git checkout deploy/hf-spaces
@@ -171,7 +167,7 @@ logs. Expect this sequence:
 3. Click into the App tab. The chat column appears immediately. Paste a
    FASTA in chat and submit.
 4. Logs show:
-   - `[bioseq.bootstrap] HF Hub: <OWNER>/bioseq-data::per-protein.h5` (or `GET https://ftp.uniprot.org/...`)
+   - `[bioseq.bootstrap] HF Hub: radda-i/bioseq-data::per-protein.h5` (or `GET https://ftp.uniprot.org/...`)
    - `[bioseq.bootstrap] saved bioseq_retriever/data/per-protein.h5`
    - `Loading model Rostlab/prot_t5_xl_uniref50...` (only first time per
      container — afterwards the HF cache covers it)

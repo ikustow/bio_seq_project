@@ -28,7 +28,7 @@ populated live from the retrieval pipeline at
 |-----------------------|--------------|----------|-------|
 | `MISTRAL_API_KEY`     | **Secret**   | yes      | Mistral API key — drives extract/classify and reranking. |
 | `BIOSEQ_BACKEND`      | **Variable** | yes      | Set to `real` for live pipeline. `mock` keeps the demo UI without backend. |
-| `BIOSEQ_DATA_SOURCE`  | **Variable** | optional | `uniprot` (default, downloads ~1.3 GB from UniProt FTP on first boot) or `hf:OWNER/DATASET` to pull `per-protein.h5` (and optionally a pre-built FAISS index) from a HF dataset repo. |
+| `BIOSEQ_DATA_SOURCE`  | **Variable** | recommended | Set to `hf:radda-i/bioseq-data` for this Space — pulls `per-protein.h5` (~1.3 GB), the pre-built FAISS index (~2.5 GB) and the accession cache from a HF dataset repo. Cold start ~1–2 min. Defaults to `uniprot` (downloads from UniProt FTP, no index → +5–15 min FAISS rebuild on every cold start). |
 | `BIOSEQ_DATA_DIR`     | **Variable** | optional | Override the default `bioseq_retriever/data` location for the embeddings + index. |
 
 ## Cold-start expectations (free-tier 16 GB CPU Space)
