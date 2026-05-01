@@ -1,6 +1,16 @@
 import os
 from langchain_mistralai import ChatMistralAI, MistralAIEmbeddings
 
+try:
+    # In dev runs MISTRAL_API_KEY can live in a local .env (one level above
+    # the project root, alongside the data folder). On HF Spaces it comes
+    # from the Space's Secrets and is already in os.environ — load_dotenv
+    # is a no-op in that case.
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 standard_codon_table = {
     'TTT': 'F', 'TCT': 'S', 'TAT': 'Y', 'TGT': 'C',
     'TTC': 'F', 'TCC': 'S', 'TAC': 'Y', 'TGC': 'C',

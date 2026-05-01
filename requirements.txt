@@ -1,0 +1,35 @@
+# BioSeq Investigator — pinned to versions verified on the strong laptop venv
+# (smoke-tested 2026-05-01 against per-protein.h5 + ProtT5 + Mistral rerank).
+
+# UI
+streamlit==1.57.0
+pandas==2.3.3
+plotly==6.7.0
+py3Dmol==2.5.4
+requests==2.33.1
+
+# Pipeline orchestration
+langchain-mistralai==1.1.2
+langgraph==1.1.10
+pydantic==2.13.3
+
+# ProtT5 embedding (heavy: ~3 GB downloaded from HF Hub on first boot)
+transformers==5.7.0
+torch==2.10.0
+sentencepiece==0.2.1
+protobuf==7.34.1
+tokenizers==0.22.2
+
+# Vector search + embeddings file
+# NOTE: on the Windows dev machine this is conda's `faiss==1.9.0`; on
+# HF Spaces (Linux) we use the pip-only `faiss-cpu` build instead.
+faiss-cpu==1.9.0
+h5py==3.16.0
+numpy==1.26.4
+
+# HF Hub downloads (bootstrap pulls per-protein.h5 from a HF Dataset)
+huggingface_hub==1.13.0
+
+# .env loader so MISTRAL_API_KEY can come from a local .env in dev,
+# without needing python-dotenv to be installed system-wide.
+python-dotenv==1.0.1

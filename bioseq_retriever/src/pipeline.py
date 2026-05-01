@@ -15,6 +15,7 @@ from .embeddings import get_or_create_index
 from .search import get_prottrans_embedder, search_top_k
 from .data_fetcher import get_uniprot_records
 from .reranking import LocalReranker
+from .bootstrap import ensure_data
 
 # --- Data paths (env-overridable) ---
 
@@ -115,6 +116,7 @@ def rank_node(state: GraphState) -> Dict[str, Any]:
     """Performs sequence similarity search (Top 50)."""
     if state.get('error'): return {}
     try:
+        ensure_data()
         index, accessions = get_or_create_index(H5_PATH, INDEX_PATH, CACHE_PATH)
         embedder_tools = get_prottrans_embedder()
         matches = search_top_k(state['protein_sequence'], embedder_tools, index, accessions, k=50)
