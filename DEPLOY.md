@@ -63,38 +63,29 @@ Full ID: `radda-i/bioseq-data`.
 
 ### 2b. Upload the files
 
-On the **strong laptop** (where the data lives):
+On the **strong laptop** (where the data lives), open **PowerShell** and
+paste these three lines one at a time:
 
 ```powershell
 cd D:\Alina_data_Sanity\bio_seq_project
-
-# huggingface_hub is already in the venv. Set the write token in the
-# session env first (so it is not in shell history):
-$env:HF_TOKEN = "<paste your HF write token>"
-
-.\.venv\python.exe -c @"
-import os
-from huggingface_hub import HfApi
-api = HfApi(token=os.environ['HF_TOKEN'])
-for src in [
-    'bioseq_retriever/data/per-protein.h5',
-    'bioseq_retriever/data/per-protein.index',
-    'bioseq_retriever/data/per-protein.accessions.pkl',
-]:
-    print(f'uploading {src}...')
-    api.upload_file(
-        path_or_fileobj=src,
-        path_in_repo=os.path.basename(src),
-        repo_id='radda-i/bioseq-data',
-        repo_type='dataset',
-    )
-print('done')
-"@
+$env:HF_TOKEN = "<paste your HF write token here>"
+.\.venv\python.exe scripts\upload_to_hf_dataset.py
 ```
+
+That's it — the third line invokes
+[`scripts/upload_to_hf_dataset.py`](scripts/upload_to_hf_dataset.py),
+which iterates over the three data files and uploads each one to
+`radda-i/bioseq-data`. It prints `--- <file> (size MB) ---` before each
+upload and `done in Ns` after, so you can see progress.
 
 Total upload is ~3.9 GB. Over a typical home upload link this takes
 20–60 minutes; do it once and forget. Subsequent re-uploads are deduped
-via HF's xet backend.
+via HF's xet backend, so re-running the script is safe.
+
+> **Token tip:** `$env:HF_TOKEN = "..."` puts the token in the *current
+> PowerShell session only*. Close the window when you're done and the
+> variable disappears. Do **not** use `setx` (that would persist it
+> system-wide).
 
 ---
 
