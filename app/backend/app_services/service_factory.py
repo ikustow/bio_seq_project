@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from contextlib import ExitStack
 
-from backend.agents_core.session_agent.config import DEFAULT_DATABASE, DEFAULT_ENV_PATH, DEFAULT_MODEL, DEFAULT_URI, load_env_file
+from backend.agents_core.shared.config import DEFAULT_DATABASE, DEFAULT_ENV_PATH, DEFAULT_MODEL, DEFAULT_URI, load_env_file
 
 from .bioseq_chat import BioSeqChatService, MockBioSeqChatService
 from .graph_retrieval import GraphRetrievalService
@@ -18,8 +18,8 @@ def create_bioseq_retriever_graph_agent(use_llm_extractor: bool = True):
         raise ValueError("Neo4j credentials are missing. Set NEO4J_USERNAME and NEO4J_PASSWORD.")
     from backend.agents_core.retriever_agent.agent import BioSeqRetrieverGraphAgent
     from backend.agents_core.retriever_agent.llm import create_extraction_llm_factory, select_llm_provider
-    from backend.agents_core.session_agent.services.graph import Neo4jGraphClient, resolve_driver_uri
-    from backend.agents_core.session_agent.services.persistence import create_persistence_resources
+    from backend.agents_core.shared.services.graph import Neo4jGraphClient, resolve_driver_uri
+    from backend.agents_core.shared.services.persistence import create_persistence_resources
 
     insecure = os.getenv("NEO4J_INSECURE", "1").lower() not in {"0", "false", "no"}
     client = Neo4jGraphClient(
@@ -63,8 +63,8 @@ def create_bioseq_chat_service() -> BioSeqChatService | MockBioSeqChatService:
         raise ValueError("OPENAI_API_KEY is missing; graph mode needs it for SessionGraphAgent.")
 
     from backend.agents_core.session_agent.agent import SessionGraphAgent
-    from backend.agents_core.session_agent.services.graph import Neo4jGraphClient, resolve_driver_uri
-    from backend.agents_core.session_agent.services.persistence import create_persistence_resources
+    from backend.agents_core.shared.services.graph import Neo4jGraphClient, resolve_driver_uri
+    from backend.agents_core.shared.services.persistence import create_persistence_resources
     from langchain_openai import ChatOpenAI
 
     insecure = os.getenv("NEO4J_INSECURE", "1").lower() not in {"0", "false", "no"}

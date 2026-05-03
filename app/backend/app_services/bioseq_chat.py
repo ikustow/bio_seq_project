@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING
-from typing import Any
+from typing import Any, Protocol
 
-from backend.agents_core.session_agent.models import AppContext
-from backend.agents_core.session_agent.services.session_state import get_message_text, serialize_message
+from backend.agents_core.shared.models import AppContext
+from backend.agents_core.shared.services.session_state import get_message_text, serialize_message
 from backend.app_contracts import BioSeqPipelineSnapshot, CandidateView, ChatTurnRequest, ChatTurnResult, ProteinView, SessionSnapshot
 
 from .graph_retrieval import GraphRetrievalService
 from .retriever_pipeline import BioSeqRetrieverPipeline
 
-if TYPE_CHECKING:
-    from backend.agents_core.session_agent.agent import SessionGraphAgent
+class SessionGraphAgent(Protocol):
+    @property
+    def warnings(self) -> list[str]: ...
+
+    def invoke(self, message: str, context: AppContext) -> tuple[dict[str, Any], dict[str, Any]]: ...
+
+    def get_current_state(self, context: AppContext) -> dict[str, Any]: ...
+
+    def update_current_state(self, context: AppContext, patch: dict[str, Any]) -> dict[str, Any]: ...
 
 
 class BioSeqChatService:

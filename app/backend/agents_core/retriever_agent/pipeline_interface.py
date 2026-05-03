@@ -9,7 +9,7 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from backend.agents_core.session_agent.models import AppContext
+from backend.agents_core.shared.models import AppContext
 from backend.app_services.service_factory import create_bioseq_retriever_graph_agent
 
 

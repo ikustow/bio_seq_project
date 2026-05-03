@@ -8,10 +8,11 @@ from contextlib import ExitStack
 
 from backend.agents_core.retriever_agent.agent import BioSeqRetrieverGraphAgent
 from backend.agents_core.retriever_agent.llm import create_extraction_llm_factory, require_llm_api_key, select_llm_provider
-from backend.agents_core.session_agent.config import DEFAULT_DATABASE, DEFAULT_ENV_PATH, DEFAULT_URI, load_env_file
-from backend.agents_core.session_agent.models import AppContext
-from backend.agents_core.session_agent.services.graph import Neo4jGraphClient, resolve_driver_uri
-from backend.agents_core.session_agent.services.persistence import create_persistence_resources
+from backend.agents_core.shared.config import DEFAULT_DATABASE, DEFAULT_ENV_PATH, DEFAULT_URI, load_env_file
+from backend.agents_core.shared.models import AppContext
+from backend.agents_core.shared.services.graph import Neo4jGraphClient, resolve_driver_uri
+from backend.agents_core.shared.services.persistence import create_persistence_resources
+from backend.agents_core.shared.services.session_state import serialize_message
 from backend.app_services.graph_retrieval import GraphRetrievalService
 
 load_env_file(DEFAULT_ENV_PATH)
@@ -19,7 +20,7 @@ load_env_file(DEFAULT_ENV_PATH)
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--message", required=True, help="Single prompt to send to the retriever graph agent.")
+    parser.add_argument("--message", help="Single prompt to send to the retriever graph agent.")
     parser.add_argument("--provider", choices=["openai", "mistral"], default=os.getenv("BIOSEQ_LLM_PROVIDER"))
     parser.add_argument("--model", default=None)
     parser.add_argument("--uri", default=os.getenv("NEO4J_URI", DEFAULT_URI))
@@ -32,6 +33,7 @@ def parse_args():
     parser.add_argument("--user-role", default=os.getenv("APP_USER_ROLE"))
     parser.add_argument("--supabase-db-url", default=os.getenv("SUPABASE_DB_URL"))
     parser.add_argument("--deterministic-extractor", action="store_true", help="Skip LLM extraction and use local parsing.")
+    parser.add_argument("--dump-history", action="store_true", help="Print stored message history for the session and exit.")
     parser.add_argument(
         "--insecure",
         action="store_true",
@@ -75,8 +77,23 @@ def main() -> None:
             llm_factory=llm_factory,
             use_llm_extractor=not args.deterministic_extractor,
         )
+        if args.dump_history:
+            print(json.dumps(agent.get_message_history(context), ensure_ascii=False, indent=2))
+            return
+        if not args.message:
+            raise ValueError("--message is required unless --dump-history is used.")
         result, session_state = agent.invoke(args.message, context)
-        print(json.dumps({"result": result, "session_state": session_state}, ensure_ascii=False, indent=2))
+        print(json.dumps({"result": _json_safe(result), "session_state": _json_safe(session_state)}, ensure_ascii=False, indent=2))
+
+
+def _json_safe(value):
+    if hasattr(value, "content") and hasattr(value, "type"):
+        return serialize_message(value)
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 if __name__ == "__main__":

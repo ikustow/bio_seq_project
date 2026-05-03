@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Callable, Literal, Optional, TypedDict
+from typing import Annotated, Any, Callable, Literal, Optional, TypedDict
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
+from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 
-from backend.agents_core.session_agent.models import AppContext, PersistenceResources
+from backend.agents_core.shared.models import AppContext, PersistenceResources
+from backend.agents_core.shared.services.session_state import serialize_message
 from backend.app_services.graph_retrieval import GraphRetrievalService, normalize_protein_sequence
 from backend.app_services.retriever_pipeline import (
     EXTRACTION_SYSTEM_PROMPT,
@@ -28,6 +30,7 @@ class InputExtraction(BaseModel):
 
 
 class GraphState(TypedDict):
+    messages: Annotated[list[Any], add_messages]
     prompt: str
     sequence_or_path: Optional[str]
     input_type: Optional[str]
@@ -77,8 +80,10 @@ class BioSeqRetrieverGraphAgent:
         config = {"configurable": {"thread_id": context.session_id}}
         saved_session = self._persistence.session_repository.get_session(context.session_id)
         result = self._graph.invoke(_initial_state(prompt), config=config)
+        assistant_message = _assistant_message_from_state(result)
+        self._graph.update_state(config, {"messages": [AIMessage(content=assistant_message)]})
         current_state = dict(self._graph.get_state(config).values)
-        session_patch = _merge_session_patch(saved_session, _derive_session_patch(result))
+        session_patch = _merge_session_patch(saved_session, _derive_session_patch(current_state))
         if session_patch:
             self._persistence.session_repository.upsert_session(context, session_patch)
         return result, current_state
@@ -97,6 +102,9 @@ class BioSeqRetrieverGraphAgent:
             _merge_session_patch(saved_session, _derive_session_patch(current_state)),
         )
         return current_state
+
+    def get_message_history(self, context: AppContext) -> list[dict[str, Any]]:
+        return [serialize_message(message) for message in self.get_current_state(context).get("messages", [])]
 
 
 def create_pipeline(
@@ -178,6 +186,9 @@ class _RetrieverNodes:
                 "is_confident": result.is_confident,
             }
         except Exception as exc:
+            previous = _previous_extraction(state)
+            if previous:
+                return previous
             return {"error": f"Extraction failed: {exc}"}
 
     def resolve_filepath_node(self, state: GraphState) -> dict[str, Any]:
@@ -286,17 +297,24 @@ def should_translate(state: GraphState) -> Literal["translate", "skip"]:
 
 def _initial_state(prompt: str) -> GraphState:
     return {
+        "messages": [HumanMessage(content=prompt)],
         "prompt": prompt,
-        "sequence_or_path": None,
-        "input_type": None,
-        "context": None,
-        "sequence": None,
-        "sequence_type": None,
-        "protein_sequence": None,
-        "is_confident": None,
-        "ranked_results": None,
-        "final_results": None,
         "error": None,
+    }
+
+
+def _previous_extraction(state: GraphState) -> dict[str, Any] | None:
+    sequence_or_path = state.get("sequence_or_path")
+    input_type = state.get("input_type")
+    sequence_type = state.get("sequence_type")
+    if not sequence_or_path or input_type not in {"SEQUENCE", "FILEPATH"} or sequence_type not in {"DNA", "PROTEIN"}:
+        return None
+    return {
+        "sequence_or_path": sequence_or_path,
+        "input_type": input_type,
+        "context": state.get("prompt") or state.get("context") or "",
+        "sequence_type": sequence_type,
+        "is_confident": False,
     }
 
 
@@ -350,6 +368,24 @@ def _derive_session_patch(state: dict[str, Any]) -> dict[str, Any]:
         "current_mode": "bioseq_retriever_langgraph",
         "last_tool_results_summary": summary,
     }
+
+
+def _assistant_message_from_state(state: dict[str, Any]) -> str:
+    if state.get("error"):
+        return str(state["error"])
+    final_results = state.get("final_results") or []
+    if not final_results:
+        return "Retriever graph pipeline completed without final matches."
+    top = final_results[0].get("protein", {}) if isinstance(final_results[0], dict) else {}
+    accession = top.get("accession")
+    name = top.get("name")
+    organism = top.get("organism_scientific")
+    organism_suffix = f" Organism: {organism}." if organism else ""
+    if accession and name:
+        return f"Top graph match is {accession}: {name}.{organism_suffix}"
+    if accession:
+        return f"Top graph match is {accession}.{organism_suffix}"
+    return f"Retriever graph pipeline returned {len(final_results)} final matches."
 
 
 def _merge_session_patch(saved: dict[str, Any] | None, incoming: dict[str, Any]) -> dict[str, Any]:

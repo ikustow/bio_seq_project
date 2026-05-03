@@ -10,7 +10,7 @@ from backend.app_contracts import CandidateView, ProteinView
 from .protein_view_mapper import neighbor_record_to_candidate, protein_record_to_view
 
 if TYPE_CHECKING:
-    from backend.agents_core.session_agent.services.graph import Neo4jGraphClient
+    from backend.agents_core.shared.services.graph import Neo4jGraphClient
 
 AMINO_ACID_RE = re.compile(r"^[ACDEFGHIKLMNPQRSTVWY]+$", re.IGNORECASE)
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Callable
 
-from backend.agents_core.session_agent.config import DEFAULT_MODEL
+from backend.agents_core.shared.config import DEFAULT_MODEL
 
 DEFAULT_MISTRAL_MODEL = "mistral-small-latest"
 
