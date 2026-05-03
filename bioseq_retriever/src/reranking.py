@@ -27,12 +27,12 @@ def _format_record_for_reranking(record: Dict[str, Any]) -> str:
 
 class LocalReranker:
     def __init__(self):
-        print("Using Mistral AI Embeddings for local reranking...")
+        print("Using configured embeddings for local reranking...")
         self.embedder = get_text_embedder()
 
     def embed_texts(self, texts: List[str]) -> np.ndarray:
         """
-        Generates embeddings for a list of texts using Mistral API.
+        Generates embeddings for a list of texts using the configured provider.
         """
         embeddings = self.embedder.embed_documents(texts)
         return np.array(embeddings, dtype=np.float32)

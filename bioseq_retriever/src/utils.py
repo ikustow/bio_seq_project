@@ -1,6 +1,4 @@
 import os
-from pyfaidx import Fasta
-from langchain_mistralai import ChatMistralAI, MistralAIEmbeddings
 
 standard_codon_table = {
     'TTT': 'F', 'TCT': 'S', 'TAT': 'Y', 'TGT': 'C',
@@ -24,25 +22,59 @@ standard_codon_table = {
     'GTG': 'V', 'GCG': 'A', 'GAG': 'E', 'GGG': 'G'
 }
 
-def setup_environment():
+def _select_provider(provider: str | None = None) -> str:
+    requested = (provider or os.getenv("BIOSEQ_LLM_PROVIDER") or "").strip().lower()
+    if requested:
+        if requested not in {"mistral", "openai"}:
+            raise ValueError("BIOSEQ_LLM_PROVIDER must be either 'mistral' or 'openai'.")
+        return requested
+    if os.getenv("MISTRAL_API_KEY"):
+        return "mistral"
+    if os.getenv("OPENAI_API_KEY"):
+        return "openai"
+    return "mistral"
+
+
+def setup_environment(provider: str | None = None):
     """Sets up API keys and environment variables."""
-    api_key = os.getenv("MISTRAL_API_KEY")
+    selected_provider = _select_provider(provider)
+    env_key = "OPENAI_API_KEY" if selected_provider == "openai" else "MISTRAL_API_KEY"
+    api_key = os.getenv(env_key)
     if not api_key:
-        raise ValueError("MISTRAL_API_KEY environment variable is not set.")
+        raise ValueError("Set MISTRAL_API_KEY or OPENAI_API_KEY before running the pipeline.")
     return api_key
 
 def get_llm(temperature=0):
-    """Returns a configured Mistral LLM instance."""
-    setup_environment()
+    """Returns a configured chat LLM instance."""
+    provider = _select_provider()
+    setup_environment(provider)
+    if provider == "openai":
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=os.getenv("OPENAI_MODEL", "gpt-4.1-nano"),
+            temperature=temperature
+        )
+
+    from langchain_mistralai import ChatMistralAI
+
     return ChatMistralAI(
-        model="mistral-small-latest",
+        model=os.getenv("MISTRAL_MODEL", "mistral-small-latest"),
         temperature=temperature
     )
 
 def get_text_embedder():
-    """Returns a Mistral embeddings instance for text/context."""
-    setup_environment()
-    return MistralAIEmbeddings(model="mistral-embed")
+    """Returns a configured embeddings instance for text/context."""
+    provider = _select_provider(os.getenv("BIOSEQ_EMBEDDINGS_PROVIDER"))
+    setup_environment(provider)
+    if provider == "openai":
+        from langchain_openai import OpenAIEmbeddings
+
+        return OpenAIEmbeddings(model=os.getenv("OPENAI_EMBEDDINGS_MODEL", "text-embedding-3-small"))
+
+    from langchain_mistralai import MistralAIEmbeddings
+
+    return MistralAIEmbeddings(model=os.getenv("MISTRAL_EMBEDDINGS_MODEL", "mistral-embed"))
 
 def translate_dna_to_protein(dna_sequence):
     if len(dna_sequence) % 3 != 0:
@@ -74,6 +106,8 @@ def get_first_fasta_entry(fasta_path: str) -> str:
     """
     Extracts the first header and sequence from a FASTA file using pyfaidx.
     """
+    from pyfaidx import Fasta
+
     fasta = Fasta(fasta_path)
     first_record = fasta[0]
     return f">{first_record.name}\n{str(first_record)}"

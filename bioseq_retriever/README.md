@@ -14,24 +14,28 @@ conda activate bioseq
 Install the required packages using Conda where available, and pip for others:
 ```bash
 conda install -c conda-forge h5py faiss-cpu numpy requests pyfaidx transformers pytorch sentence-transformers -y
-pip install langchain-mistralai langgraph tiktoken sentencepiece protobuf
+pip install langchain-mistralai langchain-openai langgraph tiktoken sentencepiece protobuf
 ```
 
 *Note: If you have a GPU, you might prefer `faiss-gpu`.*
 
 ### 3. API Keys
-The pipeline requires a **Mistral AI API Key** for extraction, classification, and reranking.
+The pipeline requires either a **Mistral AI API Key** or an **OpenAI API Key** for extraction, classification, and reranking. Mistral remains the default when both keys are present.
 
 #### System-Wide (Recommended)
 Add the following to your shell profile (`.bashrc`, `.zshrc`, or Windows Environment Variables):
 ```bash
 export MISTRAL_API_KEY='your-real-api-key'
+# Optional OpenAI fallback/alternative:
+export OPENAI_API_KEY='your-real-api-key'
 ```
 
 #### Locally via `.env`
 Create a `.env` file in the project root:
 ```text
 MISTRAL_API_KEY=your-real-api-key
+# Optional OpenAI fallback/alternative:
+OPENAI_API_KEY=your-real-api-key
 ```
 
 #### Programmatically
@@ -39,6 +43,22 @@ You can set the environment variable directly in your script before calling the 
 ```python
 import os
 os.environ["MISTRAL_API_KEY"] = "your-real-api-key"
+# Optional OpenAI fallback/alternative:
+os.environ["OPENAI_API_KEY"] = "your-real-api-key"
+```
+
+To force a provider when both keys are available:
+```bash
+export BIOSEQ_LLM_PROVIDER=openai
+export BIOSEQ_EMBEDDINGS_PROVIDER=openai
+```
+
+Optional model overrides:
+```bash
+export OPENAI_MODEL=gpt-4.1-nano
+export OPENAI_EMBEDDINGS_MODEL=text-embedding-3-small
+export MISTRAL_MODEL=mistral-small-latest
+export MISTRAL_EMBEDDINGS_MODEL=mistral-embed
 ```
 
 ## What This Code Does
@@ -102,7 +122,7 @@ else:
 - `translate_dna_to_protein` (Function): Handles genetic code translation.
 
 ## Limitations and Remarks
-- **API Dependency**: Requires an active Mistral AI API key.
+- **API Dependency**: Requires an active Mistral AI or OpenAI API key.
 - **Memory Usage**: ProtT5 loading requires significant RAM (~8GB+ recommended).
 - **Sequence Length**: Assumes DNA is in-frame and divisible by 3.
 - **Data Source**: Dependent on UniProt database coverage and pre-computed embedding quality.

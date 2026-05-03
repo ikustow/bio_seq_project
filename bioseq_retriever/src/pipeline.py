@@ -130,7 +130,12 @@ def rank_node(state: GraphState) -> Dict[str, Any]:
     """Performs sequence similarity search (Top 50)."""
     if state.get('error'): return {}
     try:
-        H5_PATH, INDEX_PATH, CACHE_PATH = "data/per-protein.h5", "data/per-protein.index", "data/per-protein.accessions.pkl"
+        H5_PATH = os.getenv("BIOSEQ_H5_PATH", "data/per-protein.h5")
+        default_index_base = os.path.splitext(H5_PATH)[0]
+        INDEX_PATH = os.getenv("BIOSEQ_INDEX_PATH", f"{default_index_base}.index")
+        CACHE_PATH = os.getenv("BIOSEQ_ACCESSIONS_CACHE_PATH", f"{default_index_base}.accessions.pkl")
+        os.makedirs(os.path.dirname(INDEX_PATH) or ".", exist_ok=True)
+        os.makedirs(os.path.dirname(CACHE_PATH) or ".", exist_ok=True)
         index, accessions = get_or_create_index(H5_PATH, INDEX_PATH, CACHE_PATH)
         embedder_tools = get_prottrans_embedder()
         matches = search_top_k(state['protein_sequence'], embedder_tools, index, accessions, k=50)

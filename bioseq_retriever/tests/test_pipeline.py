@@ -26,6 +26,10 @@ class TestBioSeqUtilities(unittest.TestCase):
     def test_setup_environment(self):
         self.assertEqual(setup_environment(), "test_key")
 
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test_openai_key"}, clear=True)
+    def test_setup_environment_openai_fallback(self):
+        self.assertEqual(setup_environment(), "test_openai_key")
+
 class TestPipeline(unittest.TestCase):
     def test_format_record(self):
         record = {
