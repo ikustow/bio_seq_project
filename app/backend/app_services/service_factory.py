@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from contextlib import ExitStack
 
-from backend.agents_core.shared.config import DEFAULT_DATABASE, DEFAULT_ENV_PATH, DEFAULT_MODEL, DEFAULT_URI, load_env_file
+from backend.agents_core.shared.config import DEFAULT_ENV_PATH, DEFAULT_MODEL, load_env_file, resolve_neo4j_settings
 
 from .bioseq_chat import BioSeqChatService, MockBioSeqChatService
 from .graph_retrieval import GraphRetrievalService
@@ -12,21 +12,19 @@ from .retriever_pipeline import BioSeqRetrieverPipeline
 
 def create_bioseq_retriever_graph_agent(use_llm_extractor: bool = True):
     load_env_file(DEFAULT_ENV_PATH)
-    user = os.getenv("NEO4J_USERNAME", os.getenv("USERNAME"))
-    password = os.getenv("NEO4J_PASSWORD", os.getenv("PASSWORD"))
-    if not user or not password:
-        raise ValueError("Neo4j credentials are missing. Set NEO4J_USERNAME and NEO4J_PASSWORD.")
+    neo4j = resolve_neo4j_settings()
+    if not neo4j.user or not neo4j.password:
+        raise ValueError("Neo4j credentials are missing. Set NEO4J_USERNAME/NEO4J_PASSWORD or profile-specific credentials.")
     from backend.agents_core.retriever_agent.agent import BioSeqRetrieverGraphAgent
     from backend.agents_core.retriever_agent.llm import create_extraction_llm_factory, select_llm_provider
     from backend.agents_core.shared.services.graph import Neo4jGraphClient, resolve_driver_uri
     from backend.agents_core.shared.services.persistence import create_persistence_resources
 
-    insecure = os.getenv("NEO4J_INSECURE", "1").lower() not in {"0", "false", "no"}
     client = Neo4jGraphClient(
-        uri=resolve_driver_uri(os.getenv("NEO4J_URI", DEFAULT_URI), insecure=insecure),
-        user=user,
-        password=password,
-        database=os.getenv("NEO4J_DATABASE", DEFAULT_DATABASE),
+        uri=resolve_driver_uri(neo4j.uri, insecure=neo4j.insecure),
+        user=neo4j.user,
+        password=neo4j.password,
+        database=neo4j.database,
     )
     exit_stack = ExitStack()
     persistence = create_persistence_resources(os.getenv("SUPABASE_DB_URL"), exit_stack)
@@ -55,10 +53,9 @@ def create_bioseq_chat_service() -> BioSeqChatService | MockBioSeqChatService:
     if backend_mode != "graph":
         raise ValueError("BIOSEQ_BACKEND must be either 'mock' or 'graph'.")
 
-    user = os.getenv("NEO4J_USERNAME", os.getenv("USERNAME"))
-    password = os.getenv("NEO4J_PASSWORD", os.getenv("PASSWORD"))
-    if not user or not password:
-        raise ValueError("Neo4j credentials are missing. Set NEO4J_USERNAME and NEO4J_PASSWORD.")
+    neo4j = resolve_neo4j_settings()
+    if not neo4j.user or not neo4j.password:
+        raise ValueError("Neo4j credentials are missing. Set NEO4J_USERNAME/NEO4J_PASSWORD or profile-specific credentials.")
     if not os.getenv("OPENAI_API_KEY"):
         raise ValueError("OPENAI_API_KEY is missing; graph mode needs it for SessionGraphAgent.")
 
@@ -67,12 +64,11 @@ def create_bioseq_chat_service() -> BioSeqChatService | MockBioSeqChatService:
     from backend.agents_core.shared.services.persistence import create_persistence_resources
     from langchain_openai import ChatOpenAI
 
-    insecure = os.getenv("NEO4J_INSECURE", "1").lower() not in {"0", "false", "no"}
     client = Neo4jGraphClient(
-        uri=resolve_driver_uri(os.getenv("NEO4J_URI", DEFAULT_URI), insecure=insecure),
-        user=user,
-        password=password,
-        database=os.getenv("NEO4J_DATABASE", DEFAULT_DATABASE),
+        uri=resolve_driver_uri(neo4j.uri, insecure=neo4j.insecure),
+        user=neo4j.user,
+        password=neo4j.password,
+        database=neo4j.database,
     )
     exit_stack = ExitStack()
     persistence = create_persistence_resources(os.getenv("SUPABASE_DB_URL"), exit_stack)

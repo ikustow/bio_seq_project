@@ -145,7 +145,7 @@ class GraphRetrievalService:
         target = self.get_protein_view(accession)
         result = self._client.execute(
             """
-            MATCH (p:Protein {accession: $accession})-[r:SIMILAR_TO]-(n:Protein)
+            MATCH (p:Protein {accession: $accession})-[r:SIMILAR_TO]->(n:Protein)
             RETURN n {.*} AS protein,
                    r.cosine_sim AS similarity_score,
                    r.rank AS graph_rank
@@ -192,7 +192,7 @@ class GraphRetrievalService:
     def get_candidate_context(self, accession: str, limit: int = 5) -> list[dict[str, Any]]:
         result = self._client.execute(
             """
-            MATCH (:Protein {accession: $accession})-[r:SIMILAR_TO]-(n:Protein)
+            MATCH (:Protein {accession: $accession})-[r:SIMILAR_TO]->(n:Protein)
             OPTIONAL MATCH (n)-[:ASSOCIATED_WITH]->(d:Disease)
             RETURN n.accession AS accession,
                    n.gene_primary AS gene,

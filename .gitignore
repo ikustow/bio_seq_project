@@ -21,6 +21,7 @@ env/
 *.log
 *.tmp
 *.cache
+.local/
 
 # Node modules if any
 node_modules/
@@ -45,6 +46,6 @@ credentials.json
 *.swo
 *~
 graph_core/data/per-protein.h5
-graph_core/data/
-graph_core/lib/
-app/backend/graph_core
+app/backend/graph_core/data/
+app/backend/graph_core/lib/
+app/backend/graph_core/output/

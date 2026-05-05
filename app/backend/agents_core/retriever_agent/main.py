@@ -8,7 +8,7 @@ from contextlib import ExitStack
 
 from backend.agents_core.retriever_agent.agent import BioSeqRetrieverGraphAgent
 from backend.agents_core.retriever_agent.llm import create_extraction_llm_factory, require_llm_api_key, select_llm_provider
-from backend.agents_core.shared.config import DEFAULT_DATABASE, DEFAULT_ENV_PATH, DEFAULT_URI, load_env_file
+from backend.agents_core.shared.config import DEFAULT_ENV_PATH, load_env_file, resolve_neo4j_settings
 from backend.agents_core.shared.models import AppContext
 from backend.agents_core.shared.services.graph import Neo4jGraphClient, resolve_driver_uri
 from backend.agents_core.shared.services.persistence import create_persistence_resources
@@ -19,14 +19,16 @@ load_env_file(DEFAULT_ENV_PATH)
 
 
 def parse_args():
+    neo4j = resolve_neo4j_settings()
     parser = argparse.ArgumentParser()
     parser.add_argument("--message", help="Single prompt to send to the retriever graph agent.")
     parser.add_argument("--provider", choices=["openai", "mistral"], default=os.getenv("BIOSEQ_LLM_PROVIDER"))
     parser.add_argument("--model", default=None)
-    parser.add_argument("--uri", default=os.getenv("NEO4J_URI", DEFAULT_URI))
-    parser.add_argument("--database", default=os.getenv("NEO4J_DATABASE", DEFAULT_DATABASE))
-    parser.add_argument("--user", default=os.getenv("NEO4J_USERNAME", os.getenv("USERNAME")))
-    parser.add_argument("--password", default=os.getenv("NEO4J_PASSWORD", os.getenv("PASSWORD")))
+    parser.add_argument("--neo4j-profile", default=neo4j.profile, help="Neo4j env profile: local or cloud.")
+    parser.add_argument("--uri", default=neo4j.uri)
+    parser.add_argument("--database", default=neo4j.database)
+    parser.add_argument("--user", default=neo4j.user)
+    parser.add_argument("--password", default=neo4j.password)
     parser.add_argument("--user-id", default=os.getenv("APP_USER_ID", "local-user"))
     parser.add_argument("--session-id", default=os.getenv("APP_SESSION_ID", f"retriever_{uuid.uuid4().hex[:8]}"))
     parser.add_argument("--workspace-id", default=os.getenv("APP_WORKSPACE_ID"))
@@ -37,9 +39,22 @@ def parse_args():
     parser.add_argument(
         "--insecure",
         action="store_true",
-        default=os.getenv("NEO4J_INSECURE", "1").lower() not in {"0", "false", "no"},
+        default=neo4j.insecure,
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.neo4j_profile != neo4j.profile:
+        selected_neo4j = resolve_neo4j_settings(args.neo4j_profile)
+        if args.uri == neo4j.uri:
+            args.uri = selected_neo4j.uri
+        if args.database == neo4j.database:
+            args.database = selected_neo4j.database
+        if args.user == neo4j.user:
+            args.user = selected_neo4j.user
+        if args.password == neo4j.password:
+            args.password = selected_neo4j.password
+        if args.insecure == neo4j.insecure:
+            args.insecure = selected_neo4j.insecure
+    return args
 
 
 def main() -> None:

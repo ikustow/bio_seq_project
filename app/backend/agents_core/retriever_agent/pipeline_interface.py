@@ -9,12 +9,18 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+from backend.agents_core.shared.config import DEFAULT_ENV_PATH, load_env_file, resolve_neo4j_settings
 from backend.agents_core.shared.models import AppContext
 from backend.app_services.service_factory import create_bioseq_retriever_graph_agent
 
 
 DEFAULT_DB_ACCESSION = ""
-DEFAULT_USER_PROMPT = "MALWMRLLPLLALLALWGPDPAAAFVNQHLCGSHLVEALYLVCGERGFFYTPKTRREAEDLQVGQVELGGGPGAGSLQPLALEGSLQKRGIVEQCCTSICSLYQLENYCN"
+DEFAULT_USER_PROMPT = """\
+
+MALWMRLLPLLALLALWGPDPAAAFVNQHLCGSHLVEALYLVCGERGFFYTPKTRREAEDLQVGQVELGGGPGAGSLQPLALEGSLQKRGIVEQCCTSICSLYQLENYCN
+I am looking for sequences involved in glucose metabolism or structurally related to human insulin.
+
+"""
 
 
 def run_pipeline_interface(user_prompt: str = DEFAULT_USER_PROMPT):
@@ -41,9 +47,13 @@ def run_pipeline_interface(user_prompt: str = DEFAULT_USER_PROMPT):
 
 
 def main() -> None:
+    load_env_file(DEFAULT_ENV_PATH)
+    neo4j = resolve_neo4j_settings()
     print("--- BioSeq Investigator: DB-only LangGraph Retriever ---")
     print(f"DB smoke target accession: {DEFAULT_DB_ACCESSION}")
-    print(f"User Prompt: {DEFAULT_USER_PROMPT}\n")
+    print(f"Neo4j profile: {neo4j.profile or 'default'}")
+    print(f"Neo4j target: {neo4j.uri} / database={neo4j.database}")
+    print(f"User Prompt:\n{DEFAULT_USER_PROMPT}\n")
 
     try:
         result = run_pipeline_interface(DEFAULT_USER_PROMPT)
