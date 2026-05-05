@@ -1,6 +1,9 @@
 h5py
 numpy
 pandas
+plotly
+py3Dmol
+requests
 tqdm
 scikit-learn
 faiss-cpu
