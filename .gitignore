@@ -36,6 +36,10 @@ build/
 *.secrets
 *.secret
 credentials.json
+app/frontend/.streamlit/secrets.toml
+
+# Streamlit frontend runtime cache
+app/frontend/assets/AF-*.pdb
 
 # Ignore AI agent state files
 .agentignore
