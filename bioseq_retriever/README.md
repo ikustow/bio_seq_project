@@ -64,12 +64,32 @@ result = run_bioseq_pipeline("Compare this sequence: MKTLL... against human insu
 
 ## Execution Flow
 1. **Extraction & Classification**: The LLM parses the prompt and classifies the molecule.
-2. **Short-Circuit Error Handling**: If any node fails (e.g., security violation, translation error), the graph immediately terminates and returns the error in the state.
+2. **Short-Circuit Error Handling**: If any node fails, the graph immediately terminates and returns the error in the state.
 3. **Dynamic Resolution**: File paths are validated for security and resolved via `pyfaidx`.
-4. **Sequence Preprocessing**: DNA is translated; Proteins pass through.
-5. **Vector Search (Ranking)**: Initial 50 matches are found in the FAISS index.
-6. **Contextual Refinement (Reranking)**: Top 5 matches are selected based on semantic alignment with the user's query context.
+4. **Microservice Processing**: Sequence embedding and similarity search are performed by dedicated services if enabled.
+5. **Contextual Refinement (Reranking)**: Top 5 matches are selected based on semantic alignment with the user's query context.
 
+## Running the System
+The system can now run in two modes: **Local** (legacy) or **Service** (microservices).
+
+### Service Mode (Recommended for Production)
+1. **Start Services**:
+   ```bash
+   python services/embedding_service.py  # Runs on port 8001
+   python services/search_service.py     # Runs on port 8002
+   ```
+2. **Run Pipeline**:
+   The services are enabled by default (`BIOSEQ_USE_SERVICES=true`). Simply run the pipeline:
+   ```bash
+   python pipeline_interface.py "I have a sequence: MALW..."
+   ```
+
+### Local Mode (Development)
+To run everything within the same process (higher memory usage):
+```bash
+export BIOSEQ_USE_SERVICES=false
+python pipeline_interface.py "I have a sequence: MALW..."
+```
 
 ## Project & File Structure
 - `src/`: Core logic and pipeline modules.
@@ -77,12 +97,17 @@ result = run_bioseq_pipeline("Compare this sequence: MKTLL... against human insu
   - `embeddings.py`: FAISS index management, HDF5 loading, and persistence.
   - `reranking.py`: Semantic similarity logic using Mistral cloud embeddings.
   - `utils.py`: DNA translation tables, API environment setup, and LLM factory.
-  - `search.py`: ProtT5 interface and top-k vector search.
-  - `data_fetcher.py`: REST client for UniProt.
+  - `search.py`: ProtT5 interface and top-k vector search (connects to Search Service).
+  - `api_client.py`: Centralized API client with pooling and exponential backoff.
+  - `config.py`: Environment configuration and service settings.
+  - `data_fetcher.py`: REST client for UniProt using `httpx`.
   - `scoring.py`: Similarity normalization and ranking.
+- `services/`: Standalone microservices for resource-intensive tasks.
+  - `embedding_service.py`: ProtT5 model hosting.
+  - `search_service.py`: FAISS index hosting.
 - `data/`: Directory for embeddings and FAISS indexes.
 - `tests/`: Automated unit and pipeline tests.
-- `pipeline_interface.py`: Main entry point script.
+- `pipeline_interface.py`: CLI entry point script.
 
 ## Key Classes and Functions
 - `GraphState` (TypedDict): Maintains the internal pipeline state across nodes.
