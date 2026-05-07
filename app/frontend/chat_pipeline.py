@@ -1,11 +1,22 @@
 """End-to-end turn pipeline for the Streamlit frontend.
 
-Dispatches to one of two retrieval backends per ``backend_choice.get_backend()``:
+Two-level dispatch on every user turn:
 
-- ``"graph"``     — Neo4j ``BioSeqRetrieverGraphAgent`` (this module).
-- ``"embeddings"``— Legacy ProtT5+FAISS via ``embeddings_pipeline``.
+1. **Turn-position router.** First user turn in the session goes to a
+   retriever backend (graph or embeddings — see below). Subsequent turns
+   go to the chat-LLM module via ``chat_llm_pipeline``. "First" is decided
+   by reading ``working_memory.turn_count`` from ``public.chat_sessions``
+   so the rule survives page reloads, sidebar session-switches, and
+   multi-tab use. While the chat-LLM module is being built by a teammate,
+   ``chat_llm_pipeline`` is a stub that returns "module baking…" and keeps
+   the protein card untouched.
 
-Both paths return the same dict shape so the UI is backend-agnostic, and both
+2. **Retriever backend selector** (only for first turns). Picked from
+   ``backend_choice.get_backend()``:
+   - ``"graph"``     — Neo4j ``BioSeqRetrieverGraphAgent`` (this module).
+   - ``"embeddings"``— Legacy ProtT5+FAISS via ``embeddings_pipeline``.
+
+All paths return the same dict shape so the UI is backend-agnostic, and all
 write the turn to ``public.chat_sessions`` so sidebar history is uniform.
 The embeddings module is imported lazily so the heavy ML deps (~2 GB) don't
 load when only the graph backend is in use.
@@ -68,7 +79,7 @@ def get_agent_warnings() -> list[str]:
 
 
 def run_turn(prompt: str) -> dict[str, Any]:
-    """Dispatch one user turn to the currently-selected backend.
+    """Dispatch one user turn.
 
     Returns a dict with:
         reply: str               — assistant text to stream
@@ -79,7 +90,17 @@ def run_turn(prompt: str) -> dict[str, Any]:
         result: dict             — raw backend state (for debug)
         persisted: bool          — True iff session was written to DB
         backend: str             — which backend produced the result
+        update_card: bool        — caller should replace the protein card
+                                   when True (False on follow-up turns to
+                                   keep the existing selection stable).
     """
+    if not _is_first_turn_in_session():
+        # Follow-up turn → chat-LLM module. Lazy import keeps stub-only path
+        # decoupled from retriever code.
+        import chat_llm_pipeline  # noqa: WPS433
+
+        return chat_llm_pipeline.run_turn_chat_llm(prompt)
+
     backend = backend_choice.get_backend()
 
     if backend == backend_choice.BACKEND_EMBEDDINGS:
@@ -88,12 +109,51 @@ def run_turn(prompt: str) -> dict[str, Any]:
 
         outcome = embeddings_pipeline.run_turn_embeddings(prompt)
         outcome["backend"] = backend
+        outcome.setdefault("update_card", True)
         return outcome
 
     # default: graph backend
     outcome = _run_turn_graph(prompt)
     outcome["backend"] = backend_choice.BACKEND_GRAPH
+    outcome.setdefault("update_card", True)
     return outcome
+
+
+def _is_first_turn_in_session() -> bool:
+    """Return True if this is the first user turn in the active session.
+
+    Reads ``working_memory.turn_count`` from ``public.chat_sessions``. If the
+    session row doesn't exist or the counter is 0, this is the first turn —
+    route to a retriever. Any positive count means there's already history,
+    so route to the chat-LLM module.
+
+    Falls back to ``True`` (route to retriever) when DB persistence is off
+    or the session id is missing — that way the UI degrades gracefully
+    without history rather than dropping into the chat-LLM stub forever.
+    """
+    session_id = st.session_state.get("session_id")
+    if not session_id:
+        return True
+    if not session_db_adapter.is_persistent():
+        return True
+    row = session_db_adapter.load_session(session_id)
+    if not row:
+        return True
+    working_memory = row.get("working_memory") or {}
+    if isinstance(working_memory, str):
+        # Some psycopg / driver combinations may surface jsonb as text.
+        try:
+            import json
+            working_memory = json.loads(working_memory)
+        except Exception:
+            working_memory = {}
+    if not isinstance(working_memory, dict):
+        return True
+    try:
+        turn_count = int(working_memory.get("turn_count") or 0)
+    except (TypeError, ValueError):
+        turn_count = 0
+    return turn_count == 0
 
 
 def _run_turn_graph(prompt: str) -> dict[str, Any]:

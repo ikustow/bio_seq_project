@@ -125,6 +125,7 @@ def save_turn(
     candidates: list[dict[str, Any]],
     revealed_sections: set[str] | list[str] | None = None,
     current_mode: str | None = None,
+    update_candidates: bool = True,
 ) -> dict[str, Any] | None:
     """Append the current turn to ``public.chat_sessions``.
 
@@ -132,6 +133,12 @@ def save_turn(
     ``agent.invoke()``, extends it with UI-specific fields, then upserts. This
     preserves agent-side data (session_summary, active_accession, sequences)
     while ensuring the UI owns the full candidate cards and the message log.
+
+    When ``update_candidates=False`` (chat-LLM follow-up turns that don't
+    re-run retrieval), the saved ``proteins``, ``last_candidates``,
+    ``last_revealed_sections``, ``working_set_ids`` and ``active_accession``
+    are preserved untouched, and only the message log + turn counter are
+    advanced. This keeps the protein card stable across follow-up Q&A.
     """
     repo = get_repository()
     if isinstance(repo, NullSessionRepository):
@@ -143,15 +150,34 @@ def save_turn(
     # - agent already wrote ``proteins`` (top-1). We extend it with all 5 cards.
     # - ``working_memory`` is a free-form jsonb: append the message log,
     #   keep the latest 5 cards, bump turn counters.
-    proteins = _merge_protein_records(
-        saved.get("proteins") or [],
-        candidates,
-    )
-    sequences = list(saved.get("sequences") or [])
-
     saved_wm = saved.get("working_memory") or {}
     if not isinstance(saved_wm, dict):
         saved_wm = {}
+
+    if update_candidates:
+        proteins = _merge_protein_records(
+            saved.get("proteins") or [],
+            candidates,
+        )
+        new_last_candidates = candidates[:MAX_TRACKED_CARDS]
+        new_working_set = _merge_working_set(
+            saved.get("working_set_ids") or [],
+            [c.get("protein", {}).get("accession") for c in candidates if isinstance(c, dict)],
+        )
+        revealed_list = sorted(set(revealed_sections or []))
+    else:
+        # Follow-up turn (chat-LLM stub or future LLM module): keep the cards
+        # the user already sees. Reveals come from the saved row so the
+        # protein-card section state matches what was previously unlocked.
+        proteins = list(saved.get("proteins") or [])
+        new_last_candidates = list(saved_wm.get("last_candidates") or [])
+        new_working_set = list(saved.get("working_set_ids") or [])
+        if revealed_sections is not None:
+            revealed_list = sorted(set(revealed_sections))
+        else:
+            revealed_list = list(saved_wm.get("last_revealed_sections") or [])
+
+    sequences = list(saved.get("sequences") or [])
 
     messages = list(saved_wm.get("messages") or [])
     now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
@@ -160,13 +186,12 @@ def save_turn(
     if assistant_message:
         messages.append({"role": "assistant", "content": assistant_message, "ts": now_iso})
 
-    revealed_list = sorted(set(revealed_sections or []))
     turn_count = int(saved_wm.get("turn_count") or 0) + 1
 
     working_memory = {
         **saved_wm,
         "messages": messages[-200:],  # keep recent tail; full history is in LangGraph checkpoints
-        "last_candidates": candidates[: MAX_TRACKED_CARDS],
+        "last_candidates": new_last_candidates,
         "last_user_message": user_message,
         "last_assistant_message": assistant_message,
         "last_revealed_sections": revealed_list,
@@ -175,8 +200,17 @@ def save_turn(
         "ui_writer": "streamlit_frontend",
     }
 
-    top_protein = candidates[0].get("protein") if candidates and isinstance(candidates[0], dict) else None
-    top_accession = top_protein.get("accession") if isinstance(top_protein, dict) else None
+    if update_candidates:
+        top_protein = candidates[0].get("protein") if candidates and isinstance(candidates[0], dict) else None
+        top_accession = top_protein.get("accession") if isinstance(top_protein, dict) else None
+        active_accession = top_accession or saved.get("active_accession")
+        last_tool_summary = (
+            f"Returned {len(candidates)} candidate(s)"
+            + (f"; top: {top_accession}" if top_accession else ".")
+        )
+    else:
+        active_accession = saved.get("active_accession")
+        last_tool_summary = saved.get("last_tool_results_summary") or "Follow-up turn; no new retrieval."
 
     state = {
         "session_summary": saved.get("session_summary") or _short_summary(user_message, assistant_message),
@@ -184,19 +218,13 @@ def save_turn(
         "sequences": sequences,
         "working_memory": working_memory,
         "active_sequence_id": saved.get("active_sequence_id"),
-        "active_accession": top_accession or saved.get("active_accession"),
+        "active_accession": active_accession,
         "last_analysis_summary": _short_summary(user_message, assistant_message, limit=400),
-        "working_set_ids": _merge_working_set(
-            saved.get("working_set_ids") or [],
-            [c.get("protein", {}).get("accession") for c in candidates if isinstance(c, dict)],
-        ),
+        "working_set_ids": new_working_set,
         # Tagging order: explicit override (per-turn from the dispatching
         # backend) > what the agent already wrote > UI fallback.
         "current_mode": current_mode or saved.get("current_mode") or "streamlit_ui",
-        "last_tool_results_summary": (
-            f"Returned {len(candidates)} candidate(s)"
-            + (f"; top: {top_accession}" if top_accession else ".")
-        ),
+        "last_tool_results_summary": last_tool_summary,
     }
 
     repo.upsert_session(context, state)

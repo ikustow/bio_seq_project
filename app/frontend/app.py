@@ -150,15 +150,22 @@ def _load_protein() -> None:
 
 
 def _handle_vector_db_submission(text: str) -> tuple[str, set[str]]:
-    """Run one user turn through the retriever + persist it to chat_sessions."""
+    """Run one user turn through the active backend and persist it.
+
+    On retriever turns (``update_card=True``) we replace the protein card
+    with the new candidates and reset the candidate switcher to position 0.
+    On chat-LLM follow-up turns (``update_card=False``) we leave the card
+    state alone so the user's selected candidate doesn't jump.
+    """
     import chat_pipeline  # noqa: WPS433  (lazy import; heavy backend deps)
 
-    with st.spinner("Querying retriever…"):
+    with st.spinner("Working…"):
         outcome = chat_pipeline.run_turn(text)
 
-    st.session_state.candidates = outcome["candidates"]
-    st.session_state.selected_candidate_idx = 0
-    st.session_state.card_sections_revealed = set(outcome["reveals"])
+    if outcome.get("update_card", True):
+        st.session_state.candidates = outcome["candidates"]
+        st.session_state.selected_candidate_idx = 0
+        st.session_state.card_sections_revealed = set(outcome["reveals"])
     st.session_state.vector_db_result = outcome["result"]
     st.session_state.backend_warnings = outcome["warnings"]
     return outcome["reply"], outcome["reveals"]
