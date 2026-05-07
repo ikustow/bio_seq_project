@@ -1,0 +1,29 @@
+# Optional — install only when using the "Embeddings (ProtT5 + FAISS)"
+# backend in the UI. Pinned to match the hf-spaces deploy that was
+# smoke-tested 2026-05-01 against per-protein.h5 + ProtT5 + Mistral rerank.
+#
+# On the powerful laptop:
+#   pip install -r app/frontend/requirements-embeddings.txt
+#
+# Adds ~2 GB to the venv (torch wheels). First inference also triggers
+# ~3 GB of HuggingFace model downloads (cached afterward).
+#
+# Required env in .env:
+#   MISTRAL_API_KEY=...                         # for the contextual reranker
+#   BIOSEQ_DATA_SOURCE=hf:OWNER/DATASET         # optional: pulls per-protein.h5
+#                                               #   from a HF Dataset on first
+#                                               #   boot. Default = UniProt FTP.
+#   BIOSEQ_DATA_DIR=bioseq_retriever/data       # optional override (default ok)
+
+transformers==5.7.0
+torch==2.10.0
+sentencepiece==0.2.1
+protobuf==7.34.1
+tokenizers==0.22.2
+faiss-cpu==1.9.0.post1
+h5py==3.16.0
+numpy==1.26.4
+huggingface_hub==1.13.0
+python-dotenv==1.0.1
+pyfaidx
+sentence-transformers

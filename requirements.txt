@@ -19,3 +19,4 @@ langgraph
 langgraph-checkpoint-postgres
 psycopg[binary]
 streamlit
+streamlit-cookies-controller

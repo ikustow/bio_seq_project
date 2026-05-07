@@ -1,5 +1,38 @@
+# =============================================================================
+# Core UI deps — required for both backends (graph and embeddings).
+# =============================================================================
 streamlit>=1.57,<2.0
+streamlit-cookies-controller>=0.0.4
 pandas>=2.0
 plotly>=5.20,<6.0
 py3Dmol>=2.1
 requests>=2.31
+
+# Persistence + agent runtime (graph backend) -------------------------------
+psycopg[binary]>=3.1
+langgraph
+langgraph-checkpoint-postgres
+langchain
+langchain-openai
+langchain-mistralai
+neo4j
+
+# =============================================================================
+# OPTIONAL — embeddings backend (legacy ProtT5 + FAISS path).
+# Only install when the user picks "Embeddings" in the UI. Adds ~2 GB to the
+# venv (torch wheels) and triggers ~3 GB of HuggingFace model downloads on
+# first inference. Pinned versions match the hf-spaces deploy that was
+# smoke-tested 2026-05-01.
+# =============================================================================
+# transformers==5.7.0
+# torch==2.10.0
+# sentencepiece==0.2.1
+# protobuf==7.34.1
+# tokenizers==0.22.2
+# faiss-cpu==1.9.0.post1
+# h5py==3.16.0
+# numpy==1.26.4
+# huggingface_hub==1.13.0
+# python-dotenv==1.0.1
+# pyfaidx
+# sentence-transformers

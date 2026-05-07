@@ -52,6 +52,14 @@ def _handle_submission(text: str, on_submit: SubmitHandler | None) -> None:
 
 
 def _reset_conversation() -> None:
+    """Reset = start a brand-new session.
+
+    We deliberately keep ``user_id`` (cookie identity) so the sidebar history
+    survives. The previous ``session_id`` row in ``public.chat_sessions`` is
+    left intact as part of the user's history; we just mint a new one.
+    """
+    import session_identity  # noqa: WPS433  (avoid circular import at module load)
+
     for k in (
         "messages",
         "conv_state",
@@ -62,6 +70,7 @@ def _reset_conversation() -> None:
         "vector_db_result",
     ):
         st.session_state.pop(k, None)
+    session_identity.start_new_session(reason="chat_reset_button")
 
 
 def render(on_first_search, on_submit: SubmitHandler | None = None) -> None:
