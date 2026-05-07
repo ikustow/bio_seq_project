@@ -63,21 +63,30 @@ result, current_state = agent.invoke(prompt, context)
 
 ```text
 extract
-  -> resolve_file  -> translate/pass_protein -> rank -> rerank -> END
-  -> use_raw       -> translate/pass_protein -> rank -> rerank -> END
+  -> resolve_file  -> translate/pass_protein -> anchor -> rank -> rerank -> END
+  -> use_raw       -> translate/pass_protein -> anchor -> rank -> rerank -> END
 ```
 
 Узлы:
 
 | Node | Логика |
 | --- | --- |
-| `extract` | Извлекает sequence/path, context, sequence type и confidence. Использует LLM structured output или deterministic fallback. |
+| `extract` | Извлекает sequence/path, context, sequence type и confidence. |
 | `resolve_file` | Сейчас всегда возвращает controlled error: runtime file resolution отключен. |
 | `use_raw` | Нормализует raw sequence/FASTA через `use_raw_sequence`. |
-| `translate` | Переводит DNA/CDS в protein sequence через стандартную codon table. |
-| `pass_protein` | Нормализует protein sequence без трансляции. |
-| `rank` | Ищет exact graph hit по hash sequence/translated sequence, потом тянет neighbor candidates. |
-| `rerank` | Повторно берет candidates с учетом lexical context score. |
+| `translate` | Переводит DNA/CDS в protein sequence. |
+| `pass_protein` | Нормализует protein sequence. |
+| `anchor` | **Fallback**: использует MinHash-сервис для поиска ближайшего accession в Neo4j, если нет exact hash hit. |
+| `rank` | Ищет exact graph hit по hash, или использует `anchor` для поиска соседей, затем тянет neighbor candidates. |
+| `rerank` | **Contextual Reranking**: использует `LLMReranker` для оценки relevance 50 кандидатов относительно контекста пользователя, возвращая 5 лучших. |
+
+---
+## Retrieval Lifecycle (Tiered)
+1. **Hash Lookup (Tier 1)**: Exact sequence hash match against Neo4j.
+2. **MinHash Anchor (Tier 2 Fallback)**: If no match, MinHash-based lookup (in-memory) finds closest graph node (accession).
+3. **Graph Traversal (Tier 3)**: Fetches up to 50 neighbor candidates via `SIMILAR_TO` edges from the anchor.
+4. **Contextual Reranking (Tier 4)**: Uses OpenAI `LLMReranker` to re-order 50 candidates by relevance to the query context.
+---
 
 Conditional routing:
 
