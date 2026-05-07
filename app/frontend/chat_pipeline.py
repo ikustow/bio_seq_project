@@ -311,9 +311,48 @@ def auto_restore_if_fresh_load(session_id: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Backend → UI mapping (kept compatible with vector_db_adapter so the protein
-# card and chat column don't need schema changes for this task).
+# Backend → UI shape adapters
+#
+# After the schema unification (app_contracts.DomainFeature/DiseaseInfo now
+# carry the same UI-friendly fields the protein_card expects) the adapter is
+# a thin shape normalizer rather than a per-field translator. It also acts
+# as a backward-compat shim for older persisted rows that pre-date the
+# unification: missing keys get safe defaults so render() never KeyErrors.
 # ---------------------------------------------------------------------------
+
+
+_PROTEIN_DEFAULTS: dict[str, Any] = {
+    "accession": "",
+    "name": "Unknown protein",
+    "alt_names": [],
+    "gene": "",
+    "organism_scientific": "",
+    "organism_common": "",
+    "taxon_id": 0,
+    "annotation_score": 0.0,
+    "reviewed": False,
+    "existence": "",
+    "length": 0,
+    "mol_weight": 0,
+    "subcellular_locations": [],
+    "function_text": "",
+    "disease": None,
+    "domains": [],
+    "keywords": [],
+    "go_terms": [],
+    "pubmed_ids": [],
+    "xrefs": {},
+    "alphafold_accession": "",
+    "sequence": "",
+}
+
+_DISEASE_DEFAULTS: dict[str, Any] = {
+    "name": "",
+    "acronym": "",
+    "mim_id": "",
+    "description": "",
+    "variants": [],
+}
 
 
 def _assistant_message(state: dict[str, Any]) -> str:
@@ -344,78 +383,63 @@ def _assistant_message(state: dict[str, Any]) -> str:
 
 
 def _candidate_from_backend(record: dict[str, Any]) -> Candidate:
-    protein = _protein_from_backend(record.get("protein") or {})
     return Candidate(
-        protein=protein,
+        protein=_ensure_protein_shape(record.get("protein") or {}),
         match_score=_score_as_percent(record.get("match_score")),
     )
 
 
-def _protein_from_backend(raw: dict[str, Any]) -> ProteinView:
-    accession = str(_first(raw, "accession", default=""))
-    return ProteinView(
-        accession=accession,
-        name=str(_first(raw, "name", "protein_name", default=accession or "Unknown protein")),
-        alt_names=_as_str_list(raw.get("alt_names")),
-        gene=str(_first(raw, "gene", "gene_primary", "gene_name", default="") or ""),
-        organism_scientific=str(_first(raw, "organism_scientific", "organism_name", default="") or ""),
-        organism_common=str(_first(raw, "organism_common", "organism_common_name", default="") or ""),
-        taxon_id=_as_int(raw.get("taxon_id")),
-        annotation_score=_as_float(raw.get("annotation_score")),
-        reviewed=bool(raw.get("reviewed")),
-        existence=str(_first(raw, "existence", "protein_existence", default="") or ""),
-        length=_as_int(_first(raw, "length", "sequence_length", default=0)),
-        mol_weight=_as_int(raw.get("mol_weight")),
-        subcellular_locations=_as_str_list(raw.get("subcellular_locations")),
-        function_text=str(raw.get("function_text") or ""),
-        disease=_disease_from_backend(raw.get("disease")),
-        domains=_domains_from_backend(raw.get("domains")),
-        keywords=_as_str_list(raw.get("keywords")),
-        go_terms=_as_str_list(raw.get("go_terms")),
-        pubmed_ids=_as_str_list(raw.get("pubmed_ids")),
-        xrefs={str(k): str(v) for k, v in (raw.get("xrefs") or {}).items() if v not in (None, "")},
-        alphafold_accession=str(raw.get("alphafold_accession") or accession),
-        sequence=str(_first(raw, "sequence", "protein_sequence", default="") or ""),
-    )
+def _ensure_protein_shape(raw: dict[str, Any]) -> ProteinView:
+    out: dict[str, Any] = {**_PROTEIN_DEFAULTS, **raw}
+    out["disease"] = _ensure_disease_shape(out.get("disease"))
+    out["domains"] = _ensure_domains_shape(out.get("domains"))
+    if not out.get("alphafold_accession"):
+        out["alphafold_accession"] = out.get("accession") or ""
+    out["xrefs"] = {
+        str(k): str(v)
+        for k, v in (out.get("xrefs") or {}).items()
+        if v not in (None, "")
+    }
+    return out  # type: ignore[return-value]
 
 
-def _disease_from_backend(value: Any) -> DiseaseInfo | None:
-    if not isinstance(value, dict):
+def _ensure_disease_shape(raw: Any) -> DiseaseInfo | None:
+    if not isinstance(raw, dict):
         return None
-    names = _as_str_list(value.get("names"))
-    xrefs = value.get("xrefs") if isinstance(value.get("xrefs"), dict) else {}
-    name = value.get("name") or (names[0] if names else "")
-    count = _as_int(value.get("count"), default=len(names))
-    if not name and count == 0:
+    out: dict[str, Any] = {**_DISEASE_DEFAULTS, **raw}
+    # Backward compat with the original DiseaseInfo (names/count/xrefs):
+    if not out["name"]:
+        names = raw.get("names") or []
+        if names:
+            out["name"] = str(names[0])
+    if not out["mim_id"]:
+        xrefs = raw.get("xrefs") if isinstance(raw.get("xrefs"), dict) else {}
+        out["mim_id"] = str(xrefs.get("MIM") or "")
+    if not out["name"] and not raw.get("count"):
         return None
-    return DiseaseInfo(
-        name=str(name or "Disease association"),
-        acronym=str(value.get("acronym") or ""),
-        mim_id=str(value.get("mim_id") or xrefs.get("MIM") or ""),
-        description=str(value.get("description") or ""),
-        variants=_as_str_list(value.get("variants")),
-    )
+    return out  # type: ignore[return-value]
 
 
-def _domains_from_backend(value: Any) -> list[DomainFeature]:
-    if not isinstance(value, list):
+def _ensure_domains_shape(raw: Any) -> list[DomainFeature]:
+    if not isinstance(raw, list):
         return []
     domains: list[DomainFeature] = []
-    for item in value:
+    for item in raw:
         if not isinstance(item, dict):
             continue
-        start = _as_int(item.get("start"), default=0)
-        end = _as_int(item.get("end"), default=0)
+        try:
+            start = int(item.get("start") or 0)
+            end = int(item.get("end") or 0)
+        except (TypeError, ValueError):
+            continue
         if start <= 0 or end <= 0:
             continue
-        domains.append(
-            DomainFeature(
-                type=str(item.get("type") or "Domain"),
-                name=str(item.get("name") or item.get("description") or "Domain"),
-                start=start,
-                end=end,
-            )
-        )
+        domains.append({  # type: ignore[typeddict-item]
+            "type": str(item.get("type") or "Domain"),
+            "name": str(item.get("name") or item.get("description") or "Domain"),
+            "start": start,
+            "end": end,
+        })
     return domains
 
 
@@ -437,38 +461,12 @@ def _revealed_sections(candidates: list[Candidate]) -> set[str]:
     return sections
 
 
-def _first(source: dict[str, Any], *keys: str, default: Any = "") -> Any:
-    for key in keys:
-        value = source.get(key)
-        if value is not None:
-            return value
-    return default
-
-
-def _as_str_list(value: Any) -> list[str]:
-    if not value:
-        return []
-    if isinstance(value, list):
-        return [str(item) for item in value if item not in (None, "")]
-    return [str(value)]
-
-
-def _as_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _as_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
 def _score_as_percent(value: Any) -> float:
-    score = _as_float(value)
+    """Backend score lives on a 0..1 scale; UI renders as percent."""
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return 0.0
     if score <= 0:
         return 0.0
     if score <= 1:

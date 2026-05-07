@@ -4,6 +4,15 @@ from pydantic import BaseModel, Field
 
 
 class DomainFeature(BaseModel):
+    """UI-ready protein-feature record.
+
+    ``type`` is required by the protein_card domain diagram for coloring
+    (``"Domain"`` / ``"Signal"`` / ``"Transmembrane"``). Defaults to
+    ``"Domain"`` so a backend that doesn't classify features still produces
+    a valid view.
+    """
+
+    type: str = "Domain"
     name: str = ""
     start: int | None = None
     end: int | None = None
@@ -11,9 +20,21 @@ class DomainFeature(BaseModel):
 
 
 class DiseaseInfo(BaseModel):
+    """UI-ready disease association.
+
+    Carries both the legacy graph fields (``names``, ``count``, ``xrefs``)
+    and the UI-friendly fields the protein card needs (``name``,
+    ``acronym``, ``mim_id``, ``variants``). Either side can populate what it
+    has; missing fields fall back to safe defaults.
+    """
+
+    name: str = ""
+    acronym: str = ""
+    mim_id: str = ""
+    description: str = ""
+    variants: list[str] = Field(default_factory=list)
     names: list[str] = Field(default_factory=list)
     count: int = 0
-    description: str = ""
     xrefs: dict[str, str] = Field(default_factory=dict)
 
 
