@@ -34,17 +34,23 @@ def normalize_protein_sequence(sequence: str) -> str:
 def sequence_hash(sequence: str) -> str:
     return hashlib.sha256(normalize_protein_sequence(sequence).encode("utf-8")).hexdigest()
 
+# Configuration constants
+MINHASH_SIGNATURES_PATH = os.getenv("BIOSEQ_MINHASH_SIGNATURES_PATH", "app/backend/graph_core/data/minhash_signatures.json")
+
 class GraphRetrievalService:
     def __init__(self, client: "Neo4jGraphClient") -> None:
         self._client = client
         self.minhasher = GraphAnchorIndexer()
         self.reranker = LLMReranker()
         
+        # Load signatures for procedural anchor matching
         self.signatures_db = []
-        sig_path = "app/backend/graph_core/data/minhash_signatures.json"
-        if os.path.exists(sig_path):
-            with open(sig_path, 'r') as f:
+        if os.path.exists(MINHASH_SIGNATURES_PATH):
+            with open(MINHASH_SIGNATURES_PATH, 'r') as f:
                 self.signatures_db = json.load(f)
+        else:
+            print(f"Warning: MinHash signatures not found at {MINHASH_SIGNATURES_PATH}. Anchor fallback disabled.")
+
 
     def _find_anchor_procedurally(self, sequence: str) -> str | None:
         if not self.signatures_db: return None
