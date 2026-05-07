@@ -12,5 +12,14 @@ DEFAULT_CACHE_PATH = os.getenv("BIOSEQ_ACCESSIONS_CACHE_PATH", f"{_h5_base}.acce
 # --- Security ---
 ALLOWED_DATA_DIR = os.getenv("BIOSEQ_ALLOWED_DATA_DIR", "data")
 
-# --- Fetcher ---
+# --- Fetcher & API ---
 FETCH_TIMEOUT = float(os.getenv("BIOSEQ_FETCH_TIMEOUT", "10.0"))
+MAX_RETRIES = int(os.getenv("BIOSEQ_MAX_RETRIES", "5"))
+BACKOFF_FACTOR = float(os.getenv("BIOSEQ_BACKOFF_FACTOR", "2.0"))
+
+# --- Services (Microservices) ---
+EMBEDDING_SERVICE_URL = os.getenv("BIOSEQ_EMBEDDING_SERVICE_URL", "http://localhost:8001")
+SEARCH_SERVICE_URL = os.getenv("BIOSEQ_SEARCH_SERVICE_URL", "http://localhost:8002")
+
+# Toggle to use services instead of local loading
+USE_SERVICES = os.getenv("BIOSEQ_USE_SERVICES", "true").lower() == "true"
