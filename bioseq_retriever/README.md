@@ -13,93 +13,63 @@ conda activate bioseq
 ### 2. Install Dependencies
 Install the required packages using Conda where available, and pip for others:
 ```bash
-conda install -c conda-forge h5py faiss-cpu numpy requests pyfaidx transformers pytorch sentence-transformers -y
+conda install -c conda-forge h5py faiss-cpu numpy httpx pyfaidx transformers pytorch sentence-transformers -y
 pip install langchain-mistralai langchain-openai langgraph tiktoken sentencepiece protobuf
 ```
 
 *Note: If you have a GPU, you might prefer `faiss-gpu`.*
 
-### 3. API Keys
-The pipeline requires either a **Mistral AI API Key** or an **OpenAI API Key** for extraction, classification, and reranking. Mistral remains the default when both keys are present.
+### 3. Configuration & API Keys
+The pipeline requires either a **Mistral AI API Key** or an **OpenAI API Key**.
 
-#### System-Wide (Recommended)
-Add the following to your shell profile (`.bashrc`, `.zshrc`, or Windows Environment Variables):
+#### Security & Paths
+Configure the data environment using the following variables:
+- `BIOSEQ_H5_PATH`: Path to the .h5 embeddings file (default: `data/per-protein.h5`).
+- `BIOSEQ_INDEX_PATH`: Path to the FAISS index (default: derived from H5 path).
+- `BIOSEQ_ACCESSIONS_CACHE_PATH`: Path to the accession JSON cache (default: derived from H5 path).
+- `BIOSEQ_ALLOWED_DATA_DIR`: Directory allowed for FASTA file resolution (default: `data`). This prevents directory traversal attacks.
+- `BIOSEQ_FETCH_TIMEOUT`: Timeout for UniProt API calls in seconds (default: `10.0`).
+
+#### AI Providers
+To force a provider or model:
 ```bash
-export MISTRAL_API_KEY='your-real-api-key'
-# Optional OpenAI fallback/alternative:
-export OPENAI_API_KEY='your-real-api-key'
-```
-
-#### Locally via `.env`
-Create a `.env` file in the project root:
-```text
-MISTRAL_API_KEY=your-real-api-key
-# Optional OpenAI fallback/alternative:
-OPENAI_API_KEY=your-real-api-key
-```
-
-#### Programmatically
-You can set the environment variable directly in your script before calling the pipeline:
-```python
-import os
-os.environ["MISTRAL_API_KEY"] = "your-real-api-key"
-# Optional OpenAI fallback/alternative:
-os.environ["OPENAI_API_KEY"] = "your-real-api-key"
-```
-
-To force a provider when both keys are available:
-```bash
-export BIOSEQ_LLM_PROVIDER=openai
-export BIOSEQ_EMBEDDINGS_PROVIDER=openai
-```
-
-Optional model overrides:
-```bash
-export OPENAI_MODEL=gpt-4.1-nano
-export OPENAI_EMBEDDINGS_MODEL=text-embedding-3-small
-export MISTRAL_MODEL=mistral-small-latest
-export MISTRAL_EMBEDDINGS_MODEL=mistral-embed
+export BIOSEQ_LLM_PROVIDER=mistral # or 'openai'
+export BIOSEQ_EMBEDDINGS_PROVIDER=mistral # or 'openai'
+export MISTRAL_API_KEY='your-key'
 ```
 
 ## What This Code Does
 - **Intelligent Input Parsing**: Uses LLMs to extract sequences, file paths, and semantic context from natural language prompts.
-- **Automated Sequence Classification**: Employs Chain-of-Thought reasoning to determine if a sequence is DNA or Protein based on hints, headers, and character composition.
-- **Conditional Workflow Execution**: Dynamically routes the execution path to resolve file paths or translate DNA to protein only when necessary.
-- **High-Dimensional Similarity Search**: Performs initial ranking of protein sequences using ProtT5 embeddings and HNSW indexing for speed and accuracy.
-- **Cloud-Powered Semantic Reranking**: Refines results using Mistral AI embeddings to match the semantic context provided in the user's question.
-- **UniProt Data Integration**: Fetches full JSON records for top-matching proteins to provide rich biological metadata.
+- **Automated Sequence Classification**: Employs Chain-of-Thought reasoning to determine if a sequence is DNA or Protein.
+- **Secure File Resolution**: Resolves sequences from file paths while enforcing directory restrictions to prevent unauthorized access.
+- **Memory-Efficient Indexing**: Uses HDF5 generators and HNSW indexing to handle large-scale embedding datasets without exceeding memory limits.
+- **High-Dimensional Similarity Search**: Performs initial ranking of protein sequences using ProtT5 embeddings.
+- **Cloud-Powered Semantic Reranking**: Refines results using semantic context-aware reranking via `httpx`.
+- **UniProt Data Integration**: Fetches rich biological metadata with built-in timeouts and error handling.
 
-## Execution Flow
-1. **Extraction & Classification**: The LLM extracts the search target and context, classifying the sequence type with a confidence score.
-2. **Dynamic Resolution**: If a file path is provided, the system reads the FASTA content; otherwise, it uses the raw sequence.
-3. **Sequence Preprocessing**: DNA sequences are automatically translated into protein sequences; protein sequences pass through unchanged.
-4. **Vector Search (Ranking)**: The protein sequence is embedded and used to search a FAISS index containing pre-computed protein representations, returning the top 50 matches.
-5. **Contextual Refinement (Reranking)**: The metadata of the top 50 matches is embedded and compared against the user's original context query, narrowing the results to the top 5.
-6. **Result Synthesis**: The system returns the final UniProt JSON records along with a boolean indicator of classification confidence.
+## Integration: Using the Pipeline
+### Command Line Interface
+You can run the pipeline directly from the terminal:
+```bash
+python pipeline_interface.py "I have a sequence: MALW... find matches involved in insulin signaling."
+```
 
-## Pipeline Output Structure
-The `run_bioseq_pipeline` function returns a dictionary (the final `GraphState`) containing:
-- `final_results` (List[Dict]): The top 5 UniProt JSON records.
-- `is_confident` (bool): A flag indicating if the LLM is certain about its sequence classification.
-- `sequence_type` (str): Detected type ('DNA' or 'PROTEIN').
-- `protein_sequence` (str): The protein sequence used for search.
-- `error` (str | None): Error message if any stage failed.
-
-## Integration: Using the Pipeline in Your Code
+### Python API
 ```python
 from src.pipeline import run_bioseq_pipeline
 
-# 1. Invoke the pipeline
+# Invoke the pipeline
 result = run_bioseq_pipeline("Compare this sequence: MKTLL... against human insulin markers.")
-
-# 2. Handle results
-if result['error']:
-    print(f"Error: {result['error']}")
-else:
-    print(f"Confidence: {result['is_confident']}")
-    for match in result['final_results']:
-        print(f"Found match: {match['primaryAccession']}")
 ```
+
+## Execution Flow
+1. **Extraction & Classification**: The LLM parses the prompt and classifies the molecule.
+2. **Short-Circuit Error Handling**: If any node fails (e.g., security violation, translation error), the graph immediately terminates and returns the error in the state.
+3. **Dynamic Resolution**: File paths are validated for security and resolved via `pyfaidx`.
+4. **Sequence Preprocessing**: DNA is translated; Proteins pass through.
+5. **Vector Search (Ranking)**: Initial 50 matches are found in the FAISS index.
+6. **Contextual Refinement (Reranking)**: Top 5 matches are selected based on semantic alignment with the user's query context.
+
 
 ## Project & File Structure
 - `src/`: Core logic and pipeline modules.

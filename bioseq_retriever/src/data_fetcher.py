@@ -1,5 +1,6 @@
-import requests
+import httpx
 from typing import List, Dict, Any
+from src.config import FETCH_TIMEOUT
 
 def get_uniprot_records(accessions: List[str]) -> List[Dict[str, Any]]:
     if not accessions:
@@ -15,8 +16,9 @@ def get_uniprot_records(accessions: List[str]) -> List[Dict[str, Any]]:
         "size": len(accessions)
     }
     
-    response = requests.get(url, params=params)
-    if response.status_code == 200:
-        return response.json().get('results', [])
-    else:
-        response.raise_for_status()
+    with httpx.Client(timeout=FETCH_TIMEOUT) as client:
+        response = client.get(url, params=params)
+        if response.status_code == 200:
+            return response.json().get('results', [])
+        else:
+            response.raise_for_status()

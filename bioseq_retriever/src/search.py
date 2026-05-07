@@ -1,11 +1,10 @@
 import faiss
 import numpy as np
+import torch
+from transformers import T5EncoderModel, T5Tokenizer
 from typing import List, Tuple
 
-def get_prottrans_embedder(model_name: str = "Rostlab/prot_t5_xl_uniref50"):
-    import torch
-    from transformers import T5EncoderModel, T5Tokenizer
-    
+def get_prottrans_embedder(model_name: str = "Rostlab/prot_t5_xl_uniref50"):    
     print(f"Loading model {model_name}...")
     tokenizer = T5Tokenizer.from_pretrained(model_name, do_lower_case=False)
     model = T5EncoderModel.from_pretrained(model_name)
@@ -17,8 +16,6 @@ def get_prottrans_embedder(model_name: str = "Rostlab/prot_t5_xl_uniref50"):
     return model, tokenizer, device
 
 def embed_sequence(sequence: str, model, tokenizer, device) -> np.ndarray:
-    import torch
-    
     processed_seq = " ".join(list(sequence.upper()))
     inputs = tokenizer(processed_seq, return_tensors="pt").to(device)
     
