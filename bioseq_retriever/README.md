@@ -13,7 +13,7 @@ conda activate bioseq
 ### 2. Install Dependencies
 Install the required packages using Conda where available, and pip for others:
 ```bash
-conda install -c conda-forge h5py faiss-cpu numpy httpx pyfaidx transformers pytorch sentence-transformers -y
+conda install -c conda-forge h5py faiss-cpu numpy httpx pyfaidx transformers pytorch sentence-transformers fastapi -y
 pip install langchain-mistralai langchain-openai langgraph tiktoken sentencepiece protobuf
 ```
 
