@@ -34,6 +34,12 @@ for _path in (_FRONTEND_ROOT, _APP_ROOT, _PROJECT_ROOT, _RETRIEVER_ROOT):
 import session_db_adapter  # noqa: E402
 from mock.protein_loader import Candidate, from_dict  # noqa: E402
 
+# bioseq_retriever now defaults BIOSEQ_USE_SERVICES=true and routes embed/search
+# through HTTP microservices on localhost:8001/8002. We're using the local-mode
+# (in-process ProtT5+FAISS), so force services off before any retriever module
+# imports config.py — it's a module-level constant that's read once at import.
+os.environ.setdefault("BIOSEQ_USE_SERVICES", "false")
+
 
 # ---------------------------------------------------------------------------
 # Cached pipeline factory
@@ -57,7 +63,11 @@ def _ensure_data_paths() -> tuple[Path, Path, Path]:
 
     base = h5_path.with_suffix("")
     index_default = f"{base}.index"
-    cache_default = f"{base}.accessions.pkl"
+    # bioseq_retriever switched accessions cache from pickle to JSON
+    # (embeddings.get_or_create_index now does json.load); reading a stale
+    # ``.pkl`` produces "Expecting value: line 1 column 1 (char 0)". Default
+    # to ``.json`` so the cache extension matches the loader.
+    cache_default = f"{base}.accessions.json"
 
     index_path = Path(os.getenv("BIOSEQ_INDEX_PATH", index_default)).expanduser().resolve()
     cache_path = Path(os.getenv("BIOSEQ_ACCESSIONS_CACHE_PATH", cache_default)).expanduser().resolve()
