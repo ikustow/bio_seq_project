@@ -13,9 +13,11 @@ import streamlit as st
 BACKEND_GRAPH = "graph"
 BACKEND_EMBEDDINGS = "embeddings"
 
-ALL_BACKENDS: tuple[str, ...] = (BACKEND_GRAPH, BACKEND_EMBEDDINGS)
+# Order in ALL_BACKENDS controls the radio order in the sidebar — primary
+# backend first, then alternate.
+ALL_BACKENDS: tuple[str, ...] = (BACKEND_EMBEDDINGS, BACKEND_GRAPH)
 
-DEFAULT_BACKEND = BACKEND_GRAPH  # TODO: flip to BACKEND_EMBEDDINGS when ready
+DEFAULT_BACKEND = BACKEND_EMBEDDINGS
 
 LABELS: dict[str, str] = {
     BACKEND_GRAPH: "Graph (Neo4j)",
