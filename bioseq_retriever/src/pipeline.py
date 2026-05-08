@@ -8,15 +8,16 @@ from langgraph.graph import StateGraph, END
 
 from src.utils import get_llm, translate_dna_to_protein, get_first_fasta_entry
 from src.data_fetcher import get_uniprot_records
-from src.embeddings import get_or_create_index, get_prottrans_embedder
-from src.search import search_top_k
+from src.embeddings import get_or_create_index
+from src.search import search_top_k, get_prottrans_embedder
 from src.reranking import LocalReranker
 
 from src.config import (
     DEFAULT_H5_PATH, 
     DEFAULT_INDEX_PATH, 
     DEFAULT_CACHE_PATH, 
-    ALLOWED_DATA_DIR
+    ALLOWED_DATA_DIR,
+    USE_SERVICES
 )
 
 # --- State Definitions ---
@@ -148,10 +149,14 @@ def rank_node(state: GraphState) -> Dict[str, Any]:
     """Performs sequence similarity search (Top 50)."""
     if state.get('error'): return {}
     try:
-        os.makedirs(os.path.dirname(DEFAULT_INDEX_PATH) or ".", exist_ok=True)
-        os.makedirs(os.path.dirname(DEFAULT_CACHE_PATH) or ".", exist_ok=True)
-        index, accessions = get_or_create_index(DEFAULT_H5_PATH, DEFAULT_INDEX_PATH, DEFAULT_CACHE_PATH)
-        embedder_tools = get_prottrans_embedder()
+        if USE_SERVICES:
+            index, accessions, embedder_tools = None, None, None
+        else:
+            os.makedirs(os.path.dirname(DEFAULT_INDEX_PATH) or ".", exist_ok=True)
+            os.makedirs(os.path.dirname(DEFAULT_CACHE_PATH) or ".", exist_ok=True)
+            index, accessions = get_or_create_index(DEFAULT_H5_PATH, DEFAULT_INDEX_PATH, DEFAULT_CACHE_PATH)
+            embedder_tools = get_prottrans_embedder()
+
         matches = search_top_k(state['protein_sequence'], embedder_tools, index, accessions, k=50)
         records = get_uniprot_records([m[0] for m in matches])
         return {"ranked_results": records}
