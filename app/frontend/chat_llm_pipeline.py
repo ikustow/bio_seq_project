@@ -1,26 +1,19 @@
 """Chat-LLM follow-up turn handler.
 
-For follow-up questions in an existing session (after the first retriever
-turn), the UI should call the dedicated chat-LLM module — written by a
-teammate, not yet integrated. Until that lands, this module is a **stub**
-that returns a friendly "module is baking" reply, persists the turn to
-``public.chat_sessions`` (so it shows up in the sidebar history), and
-preserves the protein card untouched.
-
-When the real chat-LLM module ships:
-1. Replace ``run_turn_chat_llm`` with a real call into that module.
-2. Keep the same return contract (``reply``, ``candidates``, ``reveals``,
-   ``warnings``, ``result``, ``persisted``, ``backend``, ``update_card``).
-3. Keep ``current_mode='chat_llm'`` (drop the ``_stub`` suffix) so saved
-   sessions carry a clean tag.
+Follow-up questions in an existing session are routed here after the first
+retriever turn. This module calls a configured Gemini proxy and preserves the
+currently rendered protein card, so a chat answer does not wipe the right
+column.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any
 
+import requests
 import streamlit as st
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -33,23 +26,13 @@ for _path in (_FRONTEND_ROOT, _APP_ROOT, _PROJECT_ROOT):
 import session_db_adapter  # noqa: E402
 
 
-STUB_MESSAGE = (
-    "⏳ **Chat agent module is still baking — a couple of days more.**\n\n"
-    "I can't continue this conversation yet because the LLM follow-up "
-    "module isn't wired in. The protein card on the right still reflects "
-    "your previous search.\n\n"
-    "Options:\n"
-    "- Click **➕ New chat** in the sidebar to start a fresh retriever search.\n"
-    "- Wait for the chat agent to come online and your follow-ups will work here."
-)
+PROXY_URL_ENV = "BIOSEQ_LLM_PROXY_URL"
+PROXY_TOKEN_ENV = "BIOSEQ_LLM_PROXY_TOKEN"
+REQUEST_TIMEOUT_SECONDS = 45
 
 
 def run_turn_chat_llm(prompt: str) -> dict[str, Any]:
-    """Stub follow-up handler — returns the standard outcome shape.
-
-    Preserves the cards/reveals from the prior retriever turn so the right
-    column doesn't blink to empty when the user types a follow-up.
-    """
+    """Run a follow-up chat turn through the configured Gemini proxy."""
     user_id = st.session_state.get("user_id") or "anonymous"
     session_id = st.session_state.get("session_id")
     if not session_id:
@@ -65,32 +48,110 @@ def run_turn_chat_llm(prompt: str) -> dict[str, Any]:
     )
     warnings: list[str] = list(session_db_adapter.get_warnings())
 
-    # Persist the turn but DON'T touch the saved candidate state — the user
-    # is still looking at the protein card from the previous retriever turn.
+    current_mode = "chat_llm"
+    try:
+        reply, result = _call_gemini_proxy(prompt)
+    except Exception as exc:
+        reply = f"**Chat LLM error:** {exc}"
+        result = {"mode": "chat_llm", "error": str(exc)}
+        current_mode = "chat_llm_error"
+        warnings.append(str(exc))
+
+    # Persist the turn but do not touch the saved candidate state. The user is
+    # still looking at the protein card from the previous retriever turn.
     try:
         session_db_adapter.save_turn(
             context,
             user_message=prompt,
-            assistant_message=STUB_MESSAGE,
+            assistant_message=reply,
             candidates=[],
             revealed_sections=None,
-            current_mode="chat_llm_stub",
+            current_mode=current_mode,
             update_candidates=False,
         )
     except Exception as exc:
         warnings.append(f"Could not save session turn: {exc}")
 
-    # Return whatever the UI is currently rendering on the right so the
-    # caller can keep the card stable. ``update_card=False`` tells app.py
-    # not to clobber st.session_state.candidates / selected_candidate_idx.
     return {
-        "reply": STUB_MESSAGE,
+        "reply": reply,
         "candidates": st.session_state.get("candidates") or [],
         "candidates_raw": [],
         "reveals": set(st.session_state.get("card_sections_revealed") or set()),
         "warnings": warnings,
-        "result": {"mode": "chat_llm_stub"},
+        "result": result,
         "persisted": session_db_adapter.is_persistent(),
-        "backend": "chat_llm_stub",
+        "backend": current_mode,
         "update_card": False,
     }
+
+
+def _call_gemini_proxy(prompt: str) -> tuple[str, dict[str, Any]]:
+    proxy_url = (os.getenv(PROXY_URL_ENV) or "").strip()
+    proxy_token = (os.getenv(PROXY_TOKEN_ENV) or "").strip()
+    if not proxy_url:
+        raise RuntimeError(f"{PROXY_URL_ENV} is not set.")
+    if not proxy_token:
+        raise RuntimeError(f"{PROXY_TOKEN_ENV} is not set.")
+
+    payload = {
+        "contents": _build_gemini_contents(prompt),
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 900,
+        },
+        "systemInstruction": {
+            "parts": [
+                {
+                    "text": (
+                        "You are BioSeq Investigator's follow-up chat assistant. "
+                        "Answer concisely, use the conversation context, and do "
+                        "not claim that a new database search was run."
+                    )
+                }
+            ]
+        },
+    }
+
+    response = requests.post(
+        proxy_url,
+        json=payload,
+        headers={"X-BioSeq-Token": proxy_token},
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    data = response.json()
+    return _extract_gemini_text(data), {"mode": "chat_llm", "gemini": data}
+
+
+def _build_gemini_contents(prompt: str) -> list[dict[str, Any]]:
+    messages = st.session_state.get("messages") or []
+    contents: list[dict[str, Any]] = []
+    seen_current_prompt = False
+
+    for message in messages[-20:]:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        content = str(message.get("content") or "").strip()
+        if not content:
+            continue
+        if role == "user":
+            seen_current_prompt = seen_current_prompt or content == prompt
+            contents.append({"role": "user", "parts": [{"text": content}]})
+        elif role == "assistant" and contents:
+            contents.append({"role": "model", "parts": [{"text": content}]})
+
+    if not seen_current_prompt:
+        contents.append({"role": "user", "parts": [{"text": prompt}]})
+    return contents
+
+
+def _extract_gemini_text(data: dict[str, Any]) -> str:
+    candidates = data.get("candidates") or []
+    if not candidates:
+        raise RuntimeError("Gemini returned no candidates.")
+    parts = ((candidates[0].get("content") or {}).get("parts") or [])
+    text = "\n".join(str(part.get("text") or "") for part in parts if part.get("text")).strip()
+    if not text:
+        raise RuntimeError("Gemini returned an empty text response.")
+    return text

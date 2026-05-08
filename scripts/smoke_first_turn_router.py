@@ -161,19 +161,24 @@ def main() -> int:
     assert is_first_after is False, "expected NOT-first after one turn"
     print("    [ok] turn_count bumped -> routed to chat-LLM")
 
-    # 3. Run the chat-LLM stub. Should preserve cards and tag the row.
+    # 3. Run the chat LLM path. Monkeypatch the proxy call so this smoke test
+    #    verifies routing/persistence without depending on external network.
     _session_state["candidates"] = fake_candidates  # what UI is rendering
     _session_state["card_sections_revealed"] = {"header", "keyfacts", "function"}
+    chat_llm_pipeline._call_gemini_proxy = lambda prompt: (
+        "Gemini proxy test response.",
+        {"mode": "chat_llm", "test_prompt": prompt},
+    )
 
     outcome = chat_llm_pipeline.run_turn_chat_llm("Tell me more about diseases?")
-    print(f"[3] stub outcome.update_card: {outcome.get('update_card')}")
-    print(f"    stub outcome.backend: {outcome.get('backend')}")
-    assert outcome["update_card"] is False, "stub must not update card"
-    assert outcome["backend"] == "chat_llm_stub"
-    assert "baking" in outcome["reply"].lower(), outcome["reply"]
+    print(f"[3] chat outcome.update_card: {outcome.get('update_card')}")
+    print(f"    chat outcome.backend: {outcome.get('backend')}")
+    assert outcome["update_card"] is False, "chat LLM must not update card"
+    assert outcome["backend"] == "chat_llm"
+    assert outcome["reply"] == "Gemini proxy test response.", outcome["reply"]
     assert outcome["candidates"] == fake_candidates, "candidates must be preserved"
     assert outcome["reveals"] == {"header", "keyfacts", "function"}, outcome["reveals"]
-    print("    [ok] stub preserves cards, returns baking message")
+    print("    [ok] chat LLM preserves cards, returns proxy response")
 
     # 4. Verify the DB row reflects the stub turn.
     row = session_db_adapter.load_session(session_id)
@@ -189,20 +194,20 @@ def main() -> int:
     print(f"    row.proteins (count): {len(row.get('proteins') or [])}")
     print(f"    last_candidates (count): {len(wm.get('last_candidates') or [])}")
 
-    assert row.get("current_mode") == "chat_llm_stub", row.get("current_mode")
+    assert row.get("current_mode") == "chat_llm", row.get("current_mode")
     assert wm.get("turn_count") == 2, wm.get("turn_count")
     assert row.get("active_accession") == "P00001", row.get("active_accession")
     assert len(row.get("proteins") or []) == 1, "proteins must be preserved"
     assert len(wm.get("last_candidates") or []) == 1, "last_candidates must be preserved"
-    print("    [ok] stub turn persisted; cards untouched")
+    print("    [ok] chat LLM turn persisted; cards untouched")
 
-    # 5. Verify message log has all 4 messages (1 retriever Q+A, 1 stub Q+A).
+    # 5. Verify message log has all 4 messages (1 retriever Q+A, 1 chat Q+A).
     msgs = session_db_adapter.extract_messages(row)
     print(f"[5] message log: {len(msgs)} entries")
     assert len(msgs) == 4, [m["role"] for m in msgs]
     assert msgs[-1]["role"] == "assistant"
-    assert "baking" in msgs[-1]["content"].lower()
-    print("    [ok] message transcript continuous across retriever->stub")
+    assert msgs[-1]["content"] == "Gemini proxy test response."
+    print("    [ok] message transcript continuous across retriever->chat LLM")
 
     # 6. Edge: SUPABASE_DB_URL absent -> router falls back to retriever path.
     #    Simulated by toggling the cache. We can't actually clear the
