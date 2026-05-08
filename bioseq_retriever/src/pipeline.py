@@ -6,12 +6,41 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 
+from src.utils import get_llm, translate_dna_to_protein, get_first_fasta_entry
+from src.data_fetcher import get_uniprot_records
+from src.embeddings import get_or_create_index, get_prottrans_embedder
+from src.search import search_top_k
+from src.reranking import LocalReranker
+
 from src.config import (
     DEFAULT_H5_PATH, 
     DEFAULT_INDEX_PATH, 
     DEFAULT_CACHE_PATH, 
     ALLOWED_DATA_DIR
 )
+
+# --- State Definitions ---
+
+class InputExtraction(BaseModel):
+    sequence_or_path: str = Field(description="The extracted raw biological sequence or the file path.")
+    input_type: Literal["SEQUENCE", "FILEPATH"] = Field(description="Whether the input is a raw sequence or a file path.")
+    context: str = Field(description="Any contextual information, questions, or hints provided by the user.")
+    sequence_type: Literal["DNA", "PROTEIN"] = Field(description="The classified type of the biological sequence.")
+    is_confident: bool = Field(description="True if the LLM is highly confident in the sequence type classification.")
+    reasoning: str = Field(description="Brief chain-of-thought reasoning for the extraction and classification.")
+
+class GraphState(TypedDict):
+    prompt: str
+    sequence_or_path: Optional[str]
+    input_type: Optional[str]
+    context: Optional[str]
+    sequence: Optional[str]
+    sequence_type: Optional[str]
+    protein_sequence: Optional[str]
+    is_confident: Optional[bool]
+    ranked_results: Optional[List[Dict[str, Any]]]
+    final_results: Optional[List[Dict[str, Any]]]
+    error: Optional[str]
 
 # --- Helper Functions ---
 
