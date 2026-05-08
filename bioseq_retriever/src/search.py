@@ -72,14 +72,20 @@ def search_top_k(
     faiss.normalize_L2(query_emb)
     
     print(f"Searching index for top {k} matches...")
-    
-    # Ensure determinism by temporarily setting search to single thread
-    original_num_threads = faiss.get_num_threads()
-    faiss.set_num_threads(1)
+
+    # Ensure determinism by temporarily setting search to single thread.
+    # The threading API requires OpenMP and is missing on some faiss-cpu
+    # builds (notably older Windows wheels); degrade gracefully when so —
+    # search still works, but multi-thread variance becomes possible.
+    _get_threads = getattr(faiss, "get_num_threads", None)
+    _set_threads = getattr(faiss, "set_num_threads", None)
+    original_num_threads = _get_threads() if _get_threads else None
+    if _set_threads:
+        _set_threads(1)
     try:
         distances, indices = index.search(query_emb, k)
     finally:
-        # Reset to full parallelism
-        faiss.set_num_threads(original_num_threads)
+        if _set_threads and original_num_threads is not None:
+            _set_threads(original_num_threads)
     
     return [(accession_list[idx], float(distances[0][i])) for i, idx in enumerate(indices[0])]
