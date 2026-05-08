@@ -17,6 +17,9 @@ class NullSessionRepository:
     def upsert_session(self, context: AppContext, state: dict[str, Any]) -> None:
         return None
 
+    def list_sessions(self, user_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        return []
+
     def close(self) -> None:
         return None
 
@@ -133,6 +136,30 @@ class PostgresSessionRepository:
                     payload.last_tool_results_summary,
                 ),
             )
+
+    def list_sessions(self, user_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                select
+                    session_id,
+                    user_id,
+                    session_summary,
+                    last_analysis_summary,
+                    active_accession,
+                    current_mode,
+                    created_at,
+                    updated_at
+                from public.chat_sessions
+                where user_id = %s
+                order by updated_at desc
+                limit %s
+                """,
+                (user_id, limit),
+            )
+            rows = cur.fetchall()
+            columns = [desc.name for desc in cur.description]
+        return [dict(zip(columns, row, strict=False)) for row in rows]
 
     def close(self) -> None:
         self._conn.close()

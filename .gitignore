@@ -37,6 +37,14 @@ build/
 *.secret
 credentials.json
 app/frontend/.streamlit/secrets.toml
+streamlit_ui/.streamlit/secrets.toml
+
+# Claude Code per-user settings
+.claude/settings.local.json
+
+# Top-level legacy streamlit_ui venv from hf-spaces era — not part of the
+# current app/frontend layout
+streamlit_ui/.venv/
 
 # Streamlit frontend runtime cache
 app/frontend/assets/AF-*.pdb

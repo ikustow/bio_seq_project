@@ -215,17 +215,27 @@ def _model_dump_list(items: Any) -> list[dict[str, Any]]:
 
 
 def _revealed_sections(candidates: list[CandidateView]) -> set[str]:
+    """Return the set of protein-card sections the UI should unlock.
+
+    Section keys must match the frontend's ``protein_card._ALL_SECTIONS``:
+    ``header / keyfacts / function / domains / structure / keywords /
+    disease / references``. Header / keyfacts / structure are revealed
+    whenever there is *any* candidate to show; the rest gate on actual
+    data being present so the card doesn't pretend a section is filled.
+    """
     if not candidates:
         return set()
-    sections = {"overview", "evidence"}
+    sections = {"header", "keyfacts", "structure"}
     protein = candidates[0].protein
     if protein.function_text:
         sections.add("function")
-    if protein.disease:
-        sections.add("disease")
     if protein.domains:
         sections.add("domains")
-    if protein.go_terms or protein.pubmed_ids or protein.xrefs:
+    if protein.keywords or protein.go_terms:
+        sections.add("keywords")
+    if protein.disease:
+        sections.add("disease")
+    if protein.pubmed_ids or protein.xrefs:
         sections.add("references")
     return sections
 

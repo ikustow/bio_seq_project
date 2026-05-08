@@ -15,7 +15,8 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 import config  # noqa: E402
-from components import chat, protein_card  # noqa: E402
+import session_identity  # noqa: E402
+from components import chat, protein_card, session_sidebar  # noqa: E402
 from mock import conversation, protein_loader  # noqa: E402
 
 BACKEND_MODE = os.getenv(
@@ -73,6 +74,10 @@ def _require_password() -> None:
 
 
 def _bootstrap_session() -> None:
+    # Identity bootstrap: cookie-based user_id + per-tab session_id. Must run
+    # before any backend call so AppContext can carry stable ids per browser.
+    _user_id, session_id = session_identity.bootstrap_identity()
+
     if "messages" not in st.session_state:
         st.session_state.messages = [
             {"role": "assistant", "content": conversation.welcome()}
@@ -89,6 +94,21 @@ def _bootstrap_session() -> None:
         st.session_state.pending_assistant = None
     if "on_first_search" not in st.session_state:
         st.session_state.on_first_search = None
+    if "backend_warnings" not in st.session_state:
+        st.session_state.backend_warnings = []
+
+    # If the session_id came from a cookie (i.e. browser reload of an existing
+    # conversation), try to rehydrate the chat from the DB. Lazy import keeps
+    # the first paint snappy; the cached service does the heavy lifting once.
+    if session_id and config.USE_VECTOR_DB_MODE:
+        try:
+            import chat_pipeline  # noqa: WPS433
+
+            chat_pipeline.auto_restore_if_fresh_load(session_id)
+        except Exception as exc:
+            st.session_state.backend_warnings.append(
+                f"Could not auto-restore session {session_id}: {exc}"
+            )
 
 
 def _first_user_message() -> str:
@@ -130,24 +150,25 @@ def _load_protein() -> None:
 
 
 def _handle_vector_db_submission(text: str) -> tuple[str, set[str]]:
-    """Run the graph/vector DB retriever and update card state."""
-    try:
-        import vector_db_adapter  # noqa: WPS433
+    """Run one user turn through the active backend and persist it.
 
-        with st.spinner("Querying vector database…"):
-            reply, candidates, reveals, result = vector_db_adapter.run_prompt(text)
-    except Exception as exc:
-        st.session_state.candidates = []
+    On retriever turns (``update_card=True``) we replace the protein card
+    with the new candidates and reset the candidate switcher to position 0.
+    On chat-LLM follow-up turns (``update_card=False``) we leave the card
+    state alone so the user's selected candidate doesn't jump.
+    """
+    import chat_pipeline  # noqa: WPS433  (lazy import; heavy backend deps)
+
+    with st.spinner("Working…"):
+        outcome = chat_pipeline.run_turn(text)
+
+    if outcome.get("update_card", True):
+        st.session_state.candidates = outcome["candidates"]
         st.session_state.selected_candidate_idx = 0
-        st.session_state.card_sections_revealed = set()
-        st.session_state.vector_db_result = {"error": str(exc)}
-        return f"**Vector DB backend error:** {exc}", set()
-
-    st.session_state.candidates = candidates
-    st.session_state.selected_candidate_idx = 0
-    st.session_state.card_sections_revealed = set(reveals)
-    st.session_state.vector_db_result = result
-    return reply, reveals
+        st.session_state.card_sections_revealed = set(outcome["reveals"])
+    st.session_state.vector_db_result = outcome["result"]
+    st.session_state.backend_warnings = outcome["warnings"]
+    return outcome["reply"], outcome["reveals"]
 
 
 def main() -> None:
@@ -159,6 +180,7 @@ def main() -> None:
     _inject_styles()
     _require_password()
     _bootstrap_session()
+    session_sidebar.render()
 
     header_cols = st.columns([8, 2], vertical_alignment="center")
     with header_cols[0]:

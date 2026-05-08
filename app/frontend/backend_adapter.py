@@ -23,10 +23,14 @@ for path in (_FRONTEND_ROOT, _PROJECT_ROOT, _RETRIEVER_ROOT):
 _DATA_DIR = _RETRIEVER_ROOT / "data"
 os.environ.setdefault("BIOSEQ_H5_PATH", str(_DATA_DIR / "per-protein.h5"))
 os.environ.setdefault("BIOSEQ_INDEX_PATH", str(_DATA_DIR / "per-protein.index"))
+# bioseq_retriever switched the accessions cache from pickle to JSON; default
+# the path extension to match (was ``.pkl``).
 os.environ.setdefault(
     "BIOSEQ_ACCESSIONS_CACHE_PATH",
-    str(_DATA_DIR / "per-protein.accessions.pkl"),
+    str(_DATA_DIR / "per-protein.accessions.json"),
 )
+# Default-off the new microservices mode; we run ProtT5+FAISS in-process.
+os.environ.setdefault("BIOSEQ_USE_SERVICES", "false")
 
 from bioseq_retriever.src.pipeline import run_bioseq_pipeline  # noqa: E402
 

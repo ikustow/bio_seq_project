@@ -84,17 +84,25 @@ def _as_domains(value: Any) -> list[DomainFeature]:
         return []
     domains: list[DomainFeature] = []
     for item in parsed:
-        if isinstance(item, dict):
-            domains.append(
-                DomainFeature(
-                    name=str(item.get("name") or item.get("type") or item.get("description") or ""),
-                    start=_optional_int(item.get("start") or item.get("begin")),
-                    end=_optional_int(item.get("end")),
-                    description=str(item.get("description") or item.get("note") or ""),
-                )
+        # The frontend domain diagram does arithmetic on start/end and colors
+        # by type. Anything without a valid (start, end) pair is dropped —
+        # bare strings, dicts with missing/zero coordinates, etc. — so the
+        # card never blows up on None or zero-length features.
+        if not isinstance(item, dict):
+            continue
+        start = _optional_int(item.get("start") or item.get("begin"))
+        end = _optional_int(item.get("end"))
+        if start is None or end is None or start <= 0 or end <= 0:
+            continue
+        domains.append(
+            DomainFeature(
+                type=str(item.get("type") or item.get("category") or "Domain"),
+                name=str(item.get("name") or item.get("description") or "Domain"),
+                start=start,
+                end=end,
+                description=str(item.get("description") or item.get("note") or ""),
             )
-        elif item:
-            domains.append(DomainFeature(name=str(item)))
+        )
     return domains
 
 
@@ -112,7 +120,16 @@ def _disease_info(record: dict[str, Any]) -> DiseaseInfo | None:
     count = _as_int(record.get("disease_count"), default=len(names))
     if count == 0 and not names:
         return None
-    return DiseaseInfo(names=names, count=count)
+    # The Neo4j graph currently carries only ``disease_names`` / ``disease_count``;
+    # ``acronym`` / ``mim_id`` / ``variants`` aren't propagated yet. We surface
+    # the first name as the UI-friendly ``name`` so the protein card can
+    # render even on graph-only data, and leave the richer fields empty —
+    # the embeddings backend (UniProt JSON) populates them from upstream.
+    return DiseaseInfo(
+        name=names[0] if names else "",
+        names=names,
+        count=count,
+    )
 
 
 def protein_record_to_view(record: dict[str, Any]) -> ProteinView:
@@ -139,7 +156,10 @@ def protein_record_to_view(record: dict[str, Any]) -> ProteinView:
         go_terms=_as_list(record.get("go_terms_json") or record.get("go_terms")),
         pubmed_ids=_as_list(record.get("pubmed_ids_json") or record.get("pubmed_ids")),
         xrefs=_as_dict(record.get("xrefs_json") or record.get("xrefs")),
-        alphafold_accession=str(record.get("alphafold_accession") or ""),
+        # alphafold_accession defaults to the canonical accession when not
+        # explicitly stored — every UniProt entry has a corresponding AlphaFold
+        # model under the same id, and the protein-card 3D viewer keys off it.
+        alphafold_accession=str(record.get("alphafold_accession") or accession),
         sequence=str(record.get("protein_sequence") or record.get("sequence") or ""),
     )
 
