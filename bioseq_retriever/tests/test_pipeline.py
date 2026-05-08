@@ -2,25 +2,38 @@ import unittest
 from unittest.mock import MagicMock, patch
 import numpy as np
 import os
+import shutil
 from src.search import search_top_k
 from src.scoring import rank_sequences
 from src.reranking import LocalReranker, _format_record_for_reranking
-from src.utils import translate_dna_to_protein, setup_environment
-from src.pipeline import run_bioseq_pipeline
+from src.utils import translate_dna_to_protein, setup_environment, get_first_fasta_entry
+from src.pipeline import run_bioseq_pipeline, is_secure_path
+from src.config import ALLOWED_DATA_DIR
 
 class TestBioSeqUtilities(unittest.TestCase):
+    def setUp(self):
+        self.test_dir = "data_test_tmp"
+        os.makedirs(self.test_dir, exist_ok=True)
+        self.fasta_path = os.path.join(self.test_dir, "test.fasta")
+        with open(self.fasta_path, "w") as f:
+            f.write(">test_seq\nATGC\n")
+
+    def tearDown(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
+
     def test_dna_translation(self):
-        dna = "ATG" * 3 # AT GAT GAT
+        dna = "ATG" * 3
         protein = translate_dna_to_protein(dna)
         self.assertEqual(protein, "MDD")
         
         dna_with_stop = "ATGTGA"
         protein_stop = translate_dna_to_protein(dna_with_stop)
-        self.assertEqual(protein_stop, "M") # Stop codon '*' stops translation
+        self.assertEqual(protein_stop, "M")
 
     def test_dna_translation_error(self):
         with self.assertRaises(Exception):
-            translate_dna_to_protein("AT") # Not divisible by 3
+            translate_dna_to_protein("AT")
 
     @patch.dict(os.environ, {"MISTRAL_API_KEY": "test_key"})
     def test_setup_environment(self):
@@ -29,6 +42,11 @@ class TestBioSeqUtilities(unittest.TestCase):
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test_openai_key"}, clear=True)
     def test_setup_environment_openai_fallback(self):
         self.assertEqual(setup_environment(), "test_openai_key")
+
+    def test_secure_path_validation(self):
+        self.assertTrue(is_secure_path(os.path.join(ALLOWED_DATA_DIR, "test.fasta")))
+        self.assertFalse(is_secure_path("/etc/passwd"))
+        self.assertFalse(is_secure_path("non_allowed_dir/test.fasta"))
 
 class TestPipeline(unittest.TestCase):
     def test_format_record(self):
@@ -43,7 +61,7 @@ class TestPipeline(unittest.TestCase):
         self.assertIn("Gene: abcA", fmt)
         self.assertIn("Organism: E. coli", fmt)
         self.assertIn("Description: Does things.", fmt)
-        self.assertNotIn("P12345", fmt) # Accession should be excluded
+        self.assertNotIn("P12345", fmt)
 
     @patch('src.pipeline.get_llm')
     @patch('src.pipeline.get_or_create_index')
@@ -52,11 +70,9 @@ class TestPipeline(unittest.TestCase):
     @patch('src.pipeline.get_uniprot_records')
     @patch('src.pipeline.LocalReranker')
     def test_run_bioseq_pipeline_mock(self, mock_reranker, mock_uniprot, mock_search, mock_embedder, mock_index, mock_llm):
-        # Setup mocks
         mock_llm_instance = MagicMock()
         mock_llm.return_value = mock_llm_instance
         
-        # Mock structured output for extraction
         class MockExtraction:
             sequence_or_path = "MALT"
             input_type = "SEQUENCE"
@@ -73,10 +89,8 @@ class TestPipeline(unittest.TestCase):
         mock_uniprot.return_value = [{"primaryAccession": "ACC_1"}]
         mock_reranker.return_value.rerank_by_context.return_value = [{"primaryAccession": "ACC_1"}]
         
-        # Run
         result = run_bioseq_pipeline("dummy prompt")
         
-        # Verify
         self.assertEqual(result['sequence'], "MALT")
         self.assertEqual(result['sequence_type'], "PROTEIN")
         self.assertTrue(result['is_confident'])

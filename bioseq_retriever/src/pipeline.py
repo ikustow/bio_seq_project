@@ -6,17 +6,21 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 
-from src.utils import (
-    get_first_fasta_entry, 
-    translate_dna_to_protein, 
-    get_llm
-)
-from src.embeddings import get_or_create_index
-from src.search import get_prottrans_embedder, search_top_k
+from src.utils import get_llm, translate_dna_to_protein, get_first_fasta_entry
 from src.data_fetcher import get_uniprot_records
+from src.embeddings import get_or_create_index
+from src.search import search_top_k, get_prottrans_embedder
 from src.reranking import LocalReranker
 
-# --- Structured Output Models ---
+from src.config import (
+    DEFAULT_H5_PATH, 
+    DEFAULT_INDEX_PATH, 
+    DEFAULT_CACHE_PATH, 
+    ALLOWED_DATA_DIR,
+    USE_SERVICES
+)
+
+# --- State Definitions ---
 
 class InputExtraction(BaseModel):
     sequence_or_path: str = Field(description="The extracted raw biological sequence or the file path.")
@@ -25,8 +29,6 @@ class InputExtraction(BaseModel):
     sequence_type: Literal["DNA", "PROTEIN"] = Field(description="The classified type of the biological sequence.")
     is_confident: bool = Field(description="True if the LLM is highly confident in the sequence type classification.")
     reasoning: str = Field(description="Brief chain-of-thought reasoning for the extraction and classification.")
-
-# --- State Definition ---
 
 class GraphState(TypedDict):
     prompt: str
@@ -41,12 +43,21 @@ class GraphState(TypedDict):
     final_results: Optional[List[Dict[str, Any]]]
     error: Optional[str]
 
+# --- Helper Functions ---
+
+def is_secure_path(path: str) -> bool:
+    """Verifies if the path is within the allowed directory."""
+    abs_allowed = os.path.abspath(ALLOWED_DATA_DIR)
+    abs_path = os.path.abspath(path)
+    return abs_path.startswith(abs_allowed)
+
 # --- Node Functions ---
 
 def extract_and_classify_node(state: GraphState) -> Dict[str, Any]:
     """
     Uses LLM with structured output to extract data and classify sequence type.
     """
+    if state.get("error"): return {}
     llm = get_llm(temperature=0)
     structured_llm = llm.with_structured_output(InputExtraction)
     
@@ -97,9 +108,14 @@ def extract_and_classify_node(state: GraphState) -> Dict[str, Any]:
         return {"error": f"Extraction failed: {str(e)}"}
 
 def resolve_filepath_node(state: GraphState) -> Dict[str, Any]:
-    """Node to resolve sequence from a file path."""
+    """Node to resolve sequence from a file path with security check."""
+    if state.get("error"): return {}
+    path = state['sequence_or_path']
+    if not is_secure_path(path):
+        return {"error": f"Security violation: path {path} is not in {ALLOWED_DATA_DIR}"}
+        
     try:
-        fasta_entry = get_first_fasta_entry(state['sequence_or_path'])
+        fasta_entry = get_first_fasta_entry(path)
         lines = fasta_entry.splitlines()
         sequence = "".join(lines[1:]) if len(lines) > 1 else ""
         return {"sequence": sequence}
@@ -108,6 +124,7 @@ def resolve_filepath_node(state: GraphState) -> Dict[str, Any]:
 
 def use_raw_sequence_node(state: GraphState) -> Dict[str, Any]:
     """Node to handle raw sequence input."""
+    if state.get("error"): return {}
     seq = state['sequence_or_path']
     if seq.startswith(">"):
         lines = seq.splitlines()
@@ -116,6 +133,7 @@ def use_raw_sequence_node(state: GraphState) -> Dict[str, Any]:
 
 def translate_dna_node(state: GraphState) -> Dict[str, Any]:
     """Node to translate DNA to protein."""
+    if state.get("error"): return {}
     try:
         protein_seq = translate_dna_to_protein(state['sequence'])
         return {"protein_sequence": protein_seq}
@@ -124,20 +142,21 @@ def translate_dna_node(state: GraphState) -> Dict[str, Any]:
 
 def pass_protein_node(state: GraphState) -> Dict[str, Any]:
     """Node for when sequence is already protein."""
+    if state.get("error"): return {}
     return {"protein_sequence": state['sequence']}
 
 def rank_node(state: GraphState) -> Dict[str, Any]:
     """Performs sequence similarity search (Top 50)."""
     if state.get('error'): return {}
     try:
-        H5_PATH = os.getenv("BIOSEQ_H5_PATH", "data/per-protein.h5")
-        default_index_base = os.path.splitext(H5_PATH)[0]
-        INDEX_PATH = os.getenv("BIOSEQ_INDEX_PATH", f"{default_index_base}.index")
-        CACHE_PATH = os.getenv("BIOSEQ_ACCESSIONS_CACHE_PATH", f"{default_index_base}.accessions.pkl")
-        os.makedirs(os.path.dirname(INDEX_PATH) or ".", exist_ok=True)
-        os.makedirs(os.path.dirname(CACHE_PATH) or ".", exist_ok=True)
-        index, accessions = get_or_create_index(H5_PATH, INDEX_PATH, CACHE_PATH)
-        embedder_tools = get_prottrans_embedder()
+        if USE_SERVICES:
+            index, accessions, embedder_tools = None, None, None
+        else:
+            os.makedirs(os.path.dirname(DEFAULT_INDEX_PATH) or ".", exist_ok=True)
+            os.makedirs(os.path.dirname(DEFAULT_CACHE_PATH) or ".", exist_ok=True)
+            index, accessions = get_or_create_index(DEFAULT_H5_PATH, DEFAULT_INDEX_PATH, DEFAULT_CACHE_PATH)
+            embedder_tools = get_prottrans_embedder()
+
         matches = search_top_k(state['protein_sequence'], embedder_tools, index, accessions, k=50)
         records = get_uniprot_records([m[0] for m in matches])
         return {"ranked_results": records}
@@ -156,12 +175,16 @@ def rerank_node(state: GraphState) -> Dict[str, Any]:
 
 # --- Conditional Routing Logic ---
 
-def should_resolve_filepath(state: GraphState) -> Literal["resolve", "raw"]:
-    if state.get('error'): return "raw"
+def check_error(state: GraphState) -> Literal["error", "continue"]:
+    """Conditional edge to check for errors and short-circuit to END."""
+    return "error" if state.get("error") else "continue"
+
+def should_resolve_filepath(state: GraphState) -> Literal["resolve", "raw", "error"]:
+    if state.get('error'): return "error"
     return "resolve" if state['input_type'] == "FILEPATH" else "raw"
 
-def should_translate(state: GraphState) -> Literal["translate", "skip"]:
-    if state.get('error'): return "skip"
+def should_translate(state: GraphState) -> Literal["translate", "skip", "error"]:
+    if state.get('error'): return "error"
     return "translate" if state['sequence_type'] == "DNA" else "skip"
 
 # --- Graph Construction ---
@@ -184,7 +207,8 @@ def create_pipeline():
         should_resolve_filepath,
         {
             "resolve": "resolve_file",
-            "raw": "use_raw"
+            "raw": "use_raw",
+            "error": END
         }
     )
     
@@ -193,7 +217,8 @@ def create_pipeline():
         should_translate,
         {
             "translate": "translate",
-            "skip": "pass_protein"
+            "skip": "pass_protein",
+            "error": END
         }
     )
     workflow.add_conditional_edges(
@@ -201,13 +226,14 @@ def create_pipeline():
         should_translate,
         {
             "translate": "translate",
-            "skip": "pass_protein"
+            "skip": "pass_protein",
+            "error": END
         }
     )
     
-    workflow.add_edge("translate", "rank")
-    workflow.add_edge("pass_protein", "rank")
-    workflow.add_edge("rank", "rerank")
+    workflow.add_conditional_edges("translate", check_error, {"error": END, "continue": "rank"})
+    workflow.add_conditional_edges("pass_protein", check_error, {"error": END, "continue": "rank"})
+    workflow.add_conditional_edges("rank", check_error, {"error": END, "continue": "rerank"})
     workflow.add_edge("rerank", END)
     
     return workflow.compile()

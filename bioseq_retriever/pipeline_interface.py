@@ -1,5 +1,6 @@
 import os
 import json
+import argparse
 from src.pipeline import run_bioseq_pipeline
 from src.utils import setup_environment
 
@@ -18,13 +19,25 @@ def run_pipeline_interface(user_prompt: str):
     
     return result
 
-def main():
-    # Example prompt: Mix of DNA/Protein, file paths or sequences
-    user_prompt = (
-        "I have a sequence in 'data/per-protein.faa' (just kidding, it's actually here: "
-        "MALWMRLLPLLALLALWGPDPAAAFVNQHLCGSHLVEALYLVCGERGFFYTPKTRREAEDLQVGQVELGGGPGAGSLQPLALEGSLQKRGIVEQCCTSICSLYQLENYCN). "
-        "I am looking for sequences involved in glucose metabolism or structurally related to human insulin."
+def parse_args():
+    """Parses command line arguments."""
+    parser = argparse.ArgumentParser(description="BioSeq Investigator: Advanced LangGraph Pipeline")
+    parser.add_argument(
+        "prompt", 
+        type=str, 
+        nargs="?",
+        default=(
+            "I have a sequence in 'data/per-protein.faa' (just kidding, it's actually here: "
+            "MALWMRLLPLLALLALWGPDPAAAFVNQHLCGSHLVEALYLVCGERGFFYTPKTRREAEDLQVGQVELGGGPGAGSLQPLALEGSLQKRGIVEQCCTSICSLYQLENYCN). "
+            "I am looking for sequences involved in glucose metabolism or structurally related to human insulin."
+        ),
+        help="The natural language prompt containing a biological sequence or file path."
     )
+    return parser.parse_args()
+
+def main():
+    args = parse_args()
+    user_prompt = args.prompt
 
     print("--- BioSeq Investigator: Advanced LangGraph Pipeline ---")
     print(f"User Prompt: {user_prompt}\n")

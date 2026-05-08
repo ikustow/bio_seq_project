@@ -1,5 +1,5 @@
-import requests
 from typing import List, Dict, Any
+from src.api_client import default_api_client
 
 def get_uniprot_records(accessions: List[str]) -> List[Dict[str, Any]]:
     if not accessions:
@@ -15,8 +15,5 @@ def get_uniprot_records(accessions: List[str]) -> List[Dict[str, Any]]:
         "size": len(accessions)
     }
     
-    response = requests.get(url, params=params)
-    if response.status_code == 200:
-        return response.json().get('results', [])
-    else:
-        response.raise_for_status()
+    response = default_api_client.request_with_retry("GET", url, params=params)
+    return response.json().get('results', [])

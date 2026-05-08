@@ -30,12 +30,20 @@ class LocalReranker:
         print("Using configured embeddings for local reranking...")
         self.embedder = get_text_embedder()
 
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
+    def embed_texts(self, texts: List[str], batch_size: int = 20) -> np.ndarray:
         """
         Generates embeddings for a list of texts using the configured provider.
+        Implements batching to handle rate limits and improve efficiency.
         """
-        embeddings = self.embedder.embed_documents(texts)
-        return np.array(embeddings, dtype=np.float32)
+        all_embeddings = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            # LangChain embedders typically have built-in retry logic, 
+            # but batching manually ensures we don't hit payload limits.
+            embeddings = self.embedder.embed_documents(batch)
+            all_embeddings.extend(embeddings)
+            
+        return np.array(all_embeddings, dtype=np.float32)
 
     def rerank_by_context(
         self, 
