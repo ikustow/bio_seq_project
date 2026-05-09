@@ -97,7 +97,7 @@ def _call_gemini_proxy(prompt: str) -> tuple[str, dict[str, Any]]:
         "contents": _build_gemini_contents(prompt),
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 900,
+            "maxOutputTokens": 4096,
         },
         "systemInstruction": {
             "parts": [
