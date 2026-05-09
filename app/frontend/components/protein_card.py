@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import re
 from pathlib import Path
 
@@ -9,16 +10,22 @@ import pandas as pd
 import requests
 import streamlit as st
 
+from components import alignment_viewer
 from components.domain_diagram import build_figure
 from mock.protein_loader import Candidate, ProteinView
 
 _ALL_SECTIONS: tuple[str, ...] = (
     "header",
+    "alignment",
     "keyfacts",
     "function",
+    "expression",
+    "interactions",
     "domains",
+    "regulation",
+    "variants",
     "structure",
-    "keywords",
+    "pathways",
     "disease",
     "references",
 )
@@ -27,11 +34,16 @@ _SECTION_LABELS: dict[str, str] = {
     "header": "Identification",
     "keyfacts": "Key facts",
     "function": "Function",
+    "expression": "Expression & location",
+    "interactions": "Interactions",
     "domains": "Domain architecture",
+    "regulation": "Regulation & isoforms",
+    "variants": "Known variants",
     "structure": "3D structure (AlphaFold)",
-    "keywords": "Keywords & GO terms",
+    "pathways": "Pathways & GO terms",
     "disease": "Disease association",
     "references": "References & external links",
+    "alignment": "Alignment",
 }
 
 _CITATION_RE = re.compile(r"\[?PubMed:(\d+)\]?")
@@ -65,6 +77,9 @@ def _render_header(p: ProteinView) -> None:
     if p["alt_names"]:
         st.caption(" · ".join(p["alt_names"][:3]))
 
+    if p.get("gene_synonyms"):
+        st.caption("Gene synonyms: " + ", ".join(p["gene_synonyms"][:6]))
+
     meta_cols = st.columns(4)
     meta_cols[0].markdown(
         f"**UniProt**  \n[{p['accession']}](https://www.uniprot.org/uniprotkb/{p['accession']})"
@@ -83,6 +98,7 @@ def _render_keyfacts(p: ProteinView) -> None:
         ("Existence", p["existence"]),
         ("Subcellular location", ", ".join(p["subcellular_locations"]) or "—"),
         ("Alt. names", "; ".join(p["alt_names"]) or "—"),
+        ("Protein family", p.get("protein_family") or "-"),
         ("Taxon ID", str(p["taxon_id"])),
     ]
     df = pd.DataFrame(rows, columns=["Field", "Value"])
@@ -91,6 +107,38 @@ def _render_keyfacts(p: ProteinView) -> None:
 
 def _render_function(p: ProteinView) -> None:
     st.markdown(_linkify_citations(p["function_text"]))
+
+
+def _render_expression(p: ProteinView) -> None:
+    tissue_specificity = p.get("tissue_specificity") or ""
+    if tissue_specificity:
+        st.markdown("**Tissue specificity**")
+        st.markdown(_linkify_citations(tissue_specificity))
+    if p["subcellular_locations"]:
+        st.markdown("**Observed locations**")
+        st.markdown(" ".join(f":gray-badge[{loc}]" for loc in p["subcellular_locations"][:12]))
+    if not tissue_specificity and not p["subcellular_locations"]:
+        st.info("No expression or localization notes available.")
+
+
+def _render_interactions(p: ProteinView) -> None:
+    subunit_text = p.get("subunit_text") or ""
+    interactions = p.get("interactions") or []
+    if subunit_text:
+        st.markdown(_linkify_citations(subunit_text))
+    if interactions:
+        rows = []
+        for item in interactions[:12]:
+            partner = item.get("gene") or item.get("accession") or "Interaction partner"
+            rows.append({
+                "Partner": partner,
+                "UniProt": item.get("accession") or "-",
+                "IntAct": item.get("int_act_id") or "-",
+                "Experiments": item.get("experiments") or 0,
+            })
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    if not subunit_text and not interactions:
+        st.info("No interaction notes available.")
 
 
 def _render_domains(p: ProteinView) -> None:
@@ -103,6 +151,62 @@ def _render_domains(p: ProteinView) -> None:
         config={"displayModeBar": False},
     )
     st.caption(f"Architecture over {p['length']:,} residues · hover for details.")
+
+
+def _render_regulation(p: ProteinView) -> None:
+    ptm_texts = p.get("ptm_texts") or []
+    features = p.get("functional_features") or []
+    isoforms = p.get("isoforms") or []
+
+    if ptm_texts:
+        st.markdown("**Post-translational regulation**")
+        for text in ptm_texts[:5]:
+            st.markdown(f"- {_linkify_citations(text)}")
+
+    if features:
+        st.markdown("**Functional regions and sites**")
+        rows = [
+            {
+                "Type": item.get("type") or "",
+                "Region": f"{item.get('start')}-{item.get('end')}",
+                "Description": item.get("description") or item.get("name") or "",
+            }
+            for item in features[:14]
+        ]
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+
+    if isoforms:
+        st.markdown("**Isoforms**")
+        rows = [
+            {
+                "Name": item.get("name") or "-",
+                "IDs": ", ".join(item.get("ids") or []),
+                "Status": item.get("status") or "-",
+            }
+            for item in isoforms[:8]
+        ]
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+
+    if not ptm_texts and not features and not isoforms:
+        st.info("No regulation, feature-site, or isoform notes available.")
+
+
+def _render_variants(p: ProteinView) -> None:
+    variants = p.get("variants") or []
+    if not variants:
+        st.info("No curated natural variants available.")
+        return
+
+    ordered = sorted(variants, key=lambda item: not item.get("disease_related"))
+    rows = []
+    for item in ordered[:10]:
+        rows.append({
+            "Variant": item.get("label") or "Variant",
+            "Position": item.get("position") or "",
+            "dbSNP": item.get("dbsnp_id") or "-",
+            "Note": item.get("description") or "-",
+        })
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
 
 def _pdb_cache_path(accession: str) -> Path:
@@ -160,9 +264,37 @@ def _render_keywords(p: ProteinView) -> None:
     if p["keywords"]:
         st.markdown("**Keywords**")
         st.markdown(" ".join(f":blue-badge[{k}]" for k in p["keywords"][:14]))
-    if p["go_terms"]:
+
+
+def _render_pathways(p: ProteinView) -> None:
+    pathways = p.get("pathways") or []
+    go_terms_by_category = p.get("go_terms_by_category") or {}
+    _render_keywords(p)
+
+    if pathways:
+        st.markdown("**Pathways**")
+        rows = [
+            {
+                "Database": item.get("database") or "",
+                "ID": item.get("id") or "",
+                "Pathway": item.get("name") or "-",
+            }
+            for item in pathways[:10]
+        ]
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+
+    if go_terms_by_category:
+        st.markdown("**GO terms**")
+        for category, terms in go_terms_by_category.items():
+            if terms:
+                st.markdown(f"**{category}**")
+                st.markdown(" ".join(f":gray-badge[{term}]" for term in terms[:8]))
+    elif p["go_terms"]:
         st.markdown("**GO terms**")
         st.markdown(" ".join(f":gray-badge[{g}]" for g in p["go_terms"][:8]))
+
+    if not pathways and not go_terms_by_category and not p["keywords"] and not p["go_terms"]:
+        st.info("No pathway or GO annotations available.")
 
 
 def _render_disease(p: ProteinView) -> None:
@@ -198,13 +330,35 @@ def _render_references(p: ProteinView) -> None:
         st.dataframe(df, hide_index=True, width="stretch")
 
 
+def _render_alignment(p: ProteinView, query_sequence: str | None) -> None:
+    if not query_sequence:
+        st.info("Alignment will appear after a protein sequence search.")
+        return
+    if not p.get("sequence"):
+        st.info("The selected UniProt candidate does not include a sequence for alignment.")
+        return
+    candidate_label = p["accession"]
+    if p.get("gene"):
+        candidate_label = f"{candidate_label} ({p['gene']})"
+    alignment_viewer.render_alignment(
+        query_sequence,
+        p["sequence"],
+        query_name="Query sequence",
+        candidate_name=candidate_label,
+    )
+
+
 _RENDERERS = {
     "header": _render_header,
     "keyfacts": _render_keyfacts,
     "function": _render_function,
+    "expression": _render_expression,
+    "interactions": _render_interactions,
     "domains": _render_domains,
+    "regulation": _render_regulation,
+    "variants": _render_variants,
     "structure": _render_structure,
-    "keywords": _render_keywords,
+    "pathways": _render_pathways,
     "disease": _render_disease,
     "references": _render_references,
 }
@@ -213,38 +367,76 @@ _LOCKED_HINTS = {
     "header": "Submit a sequence to identify the protein.",
     "keyfacts": "Submit a sequence to see its core record.",
     "function": "Submit a sequence to see the biological function.",
+    "expression": "Submit a sequence to see tissue and cell-location notes.",
+    "interactions": "Submit a sequence to see known binding partners.",
     "domains": "Ask for a simpler explanation to unlock the domain map.",
+    "regulation": "Submit a sequence to see PTMs, sites, and isoforms.",
+    "variants": "Submit a sequence to see known natural variants.",
     "structure": "Submit a sequence to load the 3D model.",
-    "keywords": "Submit a sequence to see UniProt keywords.",
+    "pathways": "Submit a sequence to see pathways and GO annotations.",
     "disease": "Ask about diseases to reveal disease associations.",
     "references": "Request the disease details to unlock references.",
+    "alignment": "Submit a sequence to compare it with the selected match.",
 }
 
 
 def _match_tone(score: float) -> str:
     if score >= 90:
         return "green"
-    if score >= 80:
-        return "blue"
     if score >= 70:
+        return "yellow"
+    if score >= 50:
         return "orange"
-    return "gray"
+    return "red"
 
 
-def _render_switcher(candidates: list[Candidate]) -> int:
+def _score_tile(label: str, score: float | None) -> str:
+    if score is None or score <= 0:
+        tone = "gray"
+        value = "--"
+    else:
+        tone = _match_tone(score)
+        value = f"{score:.1f}%"
+    return (
+        f"<span class='candidate-score candidate-score-{tone}'>"
+        f"<span class='candidate-score-label'>{html.escape(label)}</span>"
+        f"<span class='candidate-score-value'>{html.escape(value)}</span>"
+        "</span>"
+    )
+
+
+def _badge_tone(score: float) -> str:
+    if score >= 90:
+        return "green"
+    if score >= 50:
+        return "orange"
+    return "red"
+
+
+def _select_candidate(index: int) -> None:
+    st.session_state.selected_candidate_idx = index
+
+
+def _alignment_score_for_candidate(candidate: Candidate, query_sequence: str | None) -> float | None:
+    if not query_sequence:
+        return None
+    protein = candidate["protein"]
+    candidate_sequence = protein.get("sequence")
+    if not candidate_sequence:
+        return None
+    return alignment_viewer.alignment_match_percent(query_sequence, candidate_sequence)
+
+
+def _render_switcher(candidates: list[Candidate], query_sequence: str | None) -> int:
     """Render the candidate switcher and return the chosen index.
 
     Uses `selected_candidate_idx` in session_state as both the initial value
     and the persisted selection across reruns.
     """
-    options = list(range(len(candidates)))
-
-    def _label(i: int) -> str:
-        c = candidates[i]
-        score = c["match_score"]
-        if score <= 0:
-            return c["protein"]["accession"]
-        return f"{c['protein']['accession']} · {score:.1f}%"
+    chosen = int(st.session_state.get("selected_candidate_idx", 0) or 0)
+    if chosen < 0 or chosen >= len(candidates):
+        chosen = 0
+    st.session_state.selected_candidate_idx = chosen
 
     with st.container(border=True):
         st.markdown("#### Top 5 matches")
@@ -252,22 +444,115 @@ def _render_switcher(candidates: list[Candidate]) -> int:
             "Ranked & re-ranked by the retrieval pipeline. "
             "Pick a candidate to view its full record."
         )
-        chosen = st.segmented_control(
-            "Top matches",
-            options=options,
-            format_func=_label,
-            key="selected_candidate_idx",
-            label_visibility="collapsed",
+        st.markdown(
+            """
+            <style>
+              .candidate-scores {
+                display: grid;
+                gap: 0;
+                grid-template-columns: 1fr 1fr;
+              }
+              div[data-testid="stHorizontalBlock"] div[data-testid="column"] {
+                min-width: 0;
+                gap: 0;
+              }
+              div[data-testid="stButton"] > button {
+                min-height: 46px;
+                width: 100%;
+                border-bottom-left-radius: 0;
+                border-bottom-right-radius: 0;
+                border-radius: 8px 8px 0 0;
+                font-weight: 800;
+              }
+              button[data-testid="stBaseButton-primary"] {
+                background: #eef2ff !important;
+                border-color: #4f46e5 !important;
+                box-shadow: inset 0 0 0 1px #4f46e5 !important;
+                color: #1e293b !important;
+              }
+              .candidate-metrics {
+                border: 1px solid #d1d5db;
+                border-radius: 0 0 8px 8px;
+                border-top: 0;
+                margin-top: -14px;
+                margin-bottom: 14px;
+                overflow: hidden;
+              }
+              .candidate-metrics-active {
+                border-color: #4f46e5;
+                box-shadow: inset 0 0 0 1px #4f46e5;
+              }
+              .candidate-score {
+                align-items: center;
+                border-radius: 0;
+                color: #111827;
+                display: flex;
+                flex-direction: column;
+                gap: 3px;
+                font-weight: 700;
+                justify-content: center;
+                min-height: 48px;
+                overflow: hidden;
+                padding: 7px 4px;
+                text-align: center;
+                flex: 1;
+              }
+              .candidate-score + .candidate-score {
+                border-left: 1px solid rgba(17, 24, 39, 0.1);
+              }
+              .candidate-score-label {
+                font-size: 0.8rem;
+                font-weight: 800;
+                letter-spacing: 0;
+                line-height: 1;
+              }
+              .candidate-score-value {
+                font-size: 0.86rem;
+                font-weight: 800;
+                line-height: 1.05;
+              }
+              .candidate-score-green { background: #bbf7d0; }
+              .candidate-score-yellow { background: #fef08a; }
+              .candidate-score-orange { background: #fed7aa; }
+              .candidate-score-red { background: #fecaca; }
+              .candidate-score-gray { background: #e5e7eb; color: #4b5563; }
+            </style>
+            """,
+            unsafe_allow_html=True,
         )
-    if chosen is None:
-        # User deselected — fall back to the top-ranked candidate.
-        chosen = 0
+        columns = st.columns(len(candidates))
+        for index, candidate in enumerate(candidates):
+            protein = candidate["protein"]
+            accession = protein.get("accession") or ""
+            alignment_score = _alignment_score_for_candidate(candidate, query_sequence)
+            with columns[index]:
+                st.button(
+                    accession,
+                    key=f"candidate_button_{index}_{accession}",
+                    help=protein.get("name") or accession,
+                    use_container_width=True,
+                    type="primary" if index == chosen else "secondary",
+                    on_click=_select_candidate,
+                    args=(index,),
+                )
+                active_metrics_class = " candidate-metrics-active" if index == chosen else ""
+                st.markdown(
+                    f"<div class='candidate-metrics{active_metrics_class}'>"
+                    "<div class='candidate-scores'>"
+                    f"{_score_tile('EMB', candidate['match_score'])}"
+                    f"{_score_tile('SEQ', alignment_score)}"
+                    "</div>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+        st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
     return chosen
 
 
 def render(
     candidates: list[Candidate] | None,
     revealed: set[str],
+    query_sequence: str | None = None,
 ) -> None:
     if candidates is None:
         with st.container(border=True):
@@ -288,7 +573,7 @@ def render(
             )
         return
 
-    chosen = _render_switcher(candidates)
+    chosen = _render_switcher(candidates, query_sequence)
     selected = candidates[chosen]
     protein = selected["protein"]
     score = selected["match_score"]
@@ -296,7 +581,7 @@ def render(
     if score <= 0:
         confidence_badge = ":gray-badge[match-confidence unavailable]"
     else:
-        tone = _match_tone(score)
+        tone = _badge_tone(score)
         confidence_badge = f":{tone}-badge[{score:.1f}%]"
 
     st.markdown(
@@ -310,4 +595,7 @@ def render(
         container = _section(title, is_revealed, _LOCKED_HINTS[key])
         if is_revealed:
             with container:
-                _RENDERERS[key](protein)
+                if key == "alignment":
+                    _render_alignment(protein, query_sequence)
+                else:
+                    _RENDERERS[key](protein)

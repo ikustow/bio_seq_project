@@ -53,7 +53,7 @@ _TURN_1 = Turn(
         "for apoptosis induction when not associated with netrin ligand.\n\n"
         "Do you want me to explain this in simpler language?"
     ),
-    reveals=("header", "keyfacts", "function", "structure", "keywords"),
+    reveals=("header", "keyfacts", "function", "structure", "pathways"),
 )
 
 # Turn 2 — the plain-language explainer.

@@ -65,6 +65,7 @@ def _protein_from_backend(raw: dict[str, Any]) -> ProteinView:
         accession=accession,
         name=str(_first(raw, "name", "protein_name", default=accession or "Unknown protein")),
         alt_names=_as_str_list(raw.get("alt_names")),
+        gene_synonyms=_as_str_list(raw.get("gene_synonyms")),
         gene=str(_first(raw, "gene", "gene_primary", "gene_name", default="") or ""),
         organism_scientific=str(_first(raw, "organism_scientific", "organism_name", default="") or ""),
         organism_common=str(_first(raw, "organism_common", "organism_common_name", default="") or ""),
@@ -76,10 +77,20 @@ def _protein_from_backend(raw: dict[str, Any]) -> ProteinView:
         mol_weight=_as_int(raw.get("mol_weight")),
         subcellular_locations=_as_str_list(raw.get("subcellular_locations")),
         function_text=str(raw.get("function_text") or ""),
+        tissue_specificity=str(raw.get("tissue_specificity") or ""),
+        subunit_text=str(raw.get("subunit_text") or ""),
+        interactions=raw.get("interactions") if isinstance(raw.get("interactions"), list) else [],
+        ptm_texts=_as_str_list(raw.get("ptm_texts")),
+        isoforms=raw.get("isoforms") if isinstance(raw.get("isoforms"), list) else [],
+        functional_features=raw.get("functional_features") if isinstance(raw.get("functional_features"), list) else [],
+        variants=raw.get("variants") if isinstance(raw.get("variants"), list) else [],
+        pathways=raw.get("pathways") if isinstance(raw.get("pathways"), list) else [],
+        protein_family=str(raw.get("protein_family") or ""),
         disease=disease,
         domains=_domains_from_backend(raw.get("domains")),
         keywords=_as_str_list(raw.get("keywords")),
         go_terms=_as_str_list(raw.get("go_terms")),
+        go_terms_by_category=raw.get("go_terms_by_category") if isinstance(raw.get("go_terms_by_category"), dict) else {},
         pubmed_ids=_as_str_list(raw.get("pubmed_ids")),
         xrefs={str(k): str(v) for k, v in (raw.get("xrefs") or {}).items() if v not in (None, "")},
         alphafold_accession=str(raw.get("alphafold_accession") or accession),
@@ -133,15 +144,28 @@ def _revealed_sections(candidates: list[Candidate]) -> set[str]:
 
     protein = candidates[0]["protein"]
     sections = {"header", "keyfacts", "structure"}
-    if protein["function_text"]:
+    if protein.get("function_text"):
         sections.add("function")
-    if protein["domains"]:
+    if protein.get("tissue_specificity") or protein.get("subcellular_locations"):
+        sections.add("expression")
+    if protein.get("subunit_text") or protein.get("interactions"):
+        sections.add("interactions")
+    if protein.get("domains"):
         sections.add("domains")
-    if protein["keywords"] or protein["go_terms"]:
-        sections.add("keywords")
-    if protein["disease"]:
+    if protein.get("ptm_texts") or protein.get("functional_features") or protein.get("isoforms"):
+        sections.add("regulation")
+    if protein.get("variants"):
+        sections.add("variants")
+    if (
+        protein.get("keywords")
+        or protein.get("go_terms")
+        or protein.get("go_terms_by_category")
+        or protein.get("pathways")
+    ):
+        sections.add("pathways")
+    if protein.get("disease"):
         sections.add("disease")
-    if protein["pubmed_ids"] or protein["xrefs"]:
+    if protein.get("pubmed_ids") or protein.get("xrefs"):
         sections.add("references")
     return sections
 

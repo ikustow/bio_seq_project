@@ -68,6 +68,7 @@ def _reset_conversation() -> None:
         "card_sections_revealed",
         "pending_assistant",
         "vector_db_result",
+        "query_protein_sequence",
     ):
         st.session_state.pop(k, None)
     session_identity.start_new_session(reason="chat_reset_button")

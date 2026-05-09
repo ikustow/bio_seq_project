@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import html
 from typing import Any
 
 import streamlit as st
@@ -93,35 +94,63 @@ def _render_session_list(sessions: list[dict[str, Any]], *, current_id: str) -> 
         st.caption("No previous sessions yet.")
         return
 
-    for row in sessions:
-        sid = str(row.get("session_id"))
-        is_current = sid == current_id
-        label = _format_session_label(row, is_current=is_current)
-        if is_current:
-            st.markdown(f"**▶ {label}**")
-            continue
-        if st.button(label, key=f"sidebar_session_{sid}", width="stretch"):
-            _switch_to_session(sid)
-            st.rerun()
+    with st.container(key="sidebar_session_list"):
+        for row in sessions:
+            sid = str(row.get("session_id"))
+            is_current = sid == current_id
+            title = _format_session_title(row)
+            when = _format_when(row.get("updated_at"))
+            if is_current:
+                _render_current_session_item(title, when)
+                continue
+            if st.button(title, key=f"sidebar_session_{sid}", width="stretch"):
+                _switch_to_session(sid)
+                st.rerun()
+            _render_session_date(when)
 
 
-def _format_session_label(row: dict[str, Any], *, is_current: bool) -> str:
+def _render_current_session_item(title: str, when: str) -> None:
+    date_html = (
+        f"<div class='sidebar-session-current-date'>{html.escape(when)}</div>"
+        if when
+        else ""
+    )
+    st.markdown(
+        "<div class='sidebar-session-current'>"
+        f"<div class='sidebar-session-current-title'>{html.escape(title)}</div>"
+        f"{date_html}"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_session_date(when: str) -> None:
+    if not when:
+        return
+    st.markdown(
+        f"<div class='sidebar-session-date'>{html.escape(when)}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _format_session_title(row: dict[str, Any]) -> str:
     summary = (row.get("session_summary") or row.get("last_analysis_summary") or "").strip()
     if not summary:
         accession = row.get("active_accession")
         summary = f"Session on {accession}" if accession else "(no summary yet)"
-    when = _format_when(row.get("updated_at"))
     head = summary[:60] + ("…" if len(summary) > 60 else "")
-    return f"{head}  ·  {when}"
+    return head
 
 
 def _format_when(value: Any) -> str:
     if isinstance(value, _dt.datetime):
-        return value.strftime("%Y-%m-%d %H:%M")
+        return value.strftime("%d.%m %H:%M")
     if isinstance(value, str):
         try:
-            return _dt.datetime.fromisoformat(value.replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M")
+            return _dt.datetime.fromisoformat(value.replace("Z", "+00:00")).strftime("%d.%m %H:%M")
         except ValueError:
+            if len(value) >= 16 and value[4:5] == "-":
+                return value[5:16].replace("-", ".").replace("T", " ")
             return value
     return ""
 
@@ -148,6 +177,7 @@ def _clear_conversation_state() -> None:
         "card_sections_revealed",
         "pending_assistant",
         "vector_db_result",
+        "query_protein_sequence",
         "on_first_search",
     )
     for key in keys_to_clear:

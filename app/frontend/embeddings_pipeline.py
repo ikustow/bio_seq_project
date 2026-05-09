@@ -227,9 +227,10 @@ def run_turn_embeddings(prompt: str) -> dict[str, Any]:
     raw_candidates = list(result.get("final_results") or [])
     ui_candidates = [_candidate_from_legacy(record) for record in raw_candidates]
     reply = _assistant_message(result)
-    reveals = _revealed_sections(ui_candidates)
+    query_protein_sequence = result.get("protein_sequence") or ""
+    reveals = _revealed_sections(ui_candidates, query_protein_sequence)
 
-    _safe_save_turn(context, prompt, reply, raw_candidates, reveals, warnings)
+    _safe_save_turn(context, prompt, reply, raw_candidates, reveals, warnings, query_protein_sequence)
 
     return {
         "reply": reply,
@@ -239,6 +240,7 @@ def run_turn_embeddings(prompt: str) -> dict[str, Any]:
         "warnings": warnings,
         "result": result,
         "persisted": session_db_adapter.is_persistent(),
+        "query_protein_sequence": query_protein_sequence,
     }
 
 
@@ -330,8 +332,14 @@ def _run_legacy_pipeline(prompt: str, resources: dict[str, Any]) -> dict[str, An
             resources["accessions"],
             k=50,
         )
-        records = get_uniprot_records([m[0] for m in matches])
+        embedding_scores = {accession: score for accession, score in matches}
+        records = get_uniprot_records([accession for accession, _score in matches])
+        for record in records:
+            accession = record.get("primaryAccession")
+            if accession in embedding_scores:
+                record["_bioseq_embedding_score"] = embedding_scores[accession]
         state["ranked_results"] = records
+        state["embedding_scores"] = embedding_scores
     except Exception as exc:
         state["error"] = f"Ranking failed: {exc}"
         return state
@@ -353,10 +361,14 @@ def _run_legacy_pipeline(prompt: str, resources: dict[str, Any]) -> dict[str, An
 def _candidate_from_legacy(record: dict[str, Any]) -> Candidate:
     """UniProt JSON record → UI Candidate.
 
-    The legacy reranker doesn't carry similarity scores forward, so we set
-    ``match_score=0.0`` (UI shows a neutral pill).
+    The FAISS stage returns cosine similarity from normalized protein
+    embeddings. We attach that score to the UniProt record before reranking so
+    the final top-5 buttons can show it.
     """
-    return Candidate(protein=from_dict(record), match_score=0.0)
+    return Candidate(
+        protein=from_dict(record),
+        match_score=_score_as_percent(record.get("_bioseq_embedding_score")),
+    )
 
 
 def _assistant_message(state: dict[str, Any]) -> str:
@@ -392,22 +404,49 @@ def _assistant_message(state: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _revealed_sections(candidates: list[Candidate]) -> set[str]:
+def _revealed_sections(candidates: list[Candidate], query_protein_sequence: str | None = None) -> set[str]:
     if not candidates:
         return set()
     protein = candidates[0]["protein"]
     sections = {"header", "keyfacts", "structure"}
-    if protein["function_text"]:
+    if protein.get("function_text"):
         sections.add("function")
-    if protein["domains"]:
+    if protein.get("tissue_specificity") or protein.get("subcellular_locations"):
+        sections.add("expression")
+    if protein.get("subunit_text") or protein.get("interactions"):
+        sections.add("interactions")
+    if protein.get("domains"):
         sections.add("domains")
-    if protein["keywords"] or protein["go_terms"]:
-        sections.add("keywords")
-    if protein["disease"]:
+    if protein.get("ptm_texts") or protein.get("functional_features") or protein.get("isoforms"):
+        sections.add("regulation")
+    if protein.get("variants"):
+        sections.add("variants")
+    if (
+        protein.get("keywords")
+        or protein.get("go_terms")
+        or protein.get("go_terms_by_category")
+        or protein.get("pathways")
+    ):
+        sections.add("pathways")
+    if protein.get("disease"):
         sections.add("disease")
-    if protein["pubmed_ids"] or protein["xrefs"]:
+    if protein.get("pubmed_ids") or protein.get("xrefs"):
         sections.add("references")
+    if query_protein_sequence and protein.get("sequence"):
+        sections.add("alignment")
     return sections
+
+
+def _score_as_percent(value: Any) -> float:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if score <= 0:
+        return 0.0
+    if score <= 1:
+        return score * 100
+    return min(score, 100.0)
 
 
 def _safe_save_turn(
@@ -417,6 +456,7 @@ def _safe_save_turn(
     raw_candidates: list[dict[str, Any]],
     reveals: set[str],
     warnings: list[str],
+    query_protein_sequence: str | None = None,
 ) -> None:
     """Persist the turn even on errors, tagging it as embeddings-mode."""
     try:
@@ -433,7 +473,7 @@ def _safe_save_turn(
                 continue
             normalized.append({
                 "protein": dict(view),
-                "match_score": 0.0,
+                "match_score": _score_as_percent(record.get("_bioseq_embedding_score")),
                 "rank": len(normalized),
                 "similarity_score": None,
                 "context_score": None,
@@ -446,6 +486,7 @@ def _safe_save_turn(
             candidates=normalized,
             revealed_sections=reveals,
             current_mode="embeddings_retriever",
+            query_protein_sequence=query_protein_sequence,
         )
     except Exception as exc:
         warnings.append(f"Could not save session turn: {exc}")

@@ -96,6 +96,8 @@ def _bootstrap_session() -> None:
         st.session_state.on_first_search = None
     if "backend_warnings" not in st.session_state:
         st.session_state.backend_warnings = []
+    if "query_protein_sequence" not in st.session_state:
+        st.session_state.query_protein_sequence = None
 
     # If the session_id came from a cookie (i.e. browser reload of an existing
     # conversation), try to rehydrate the chat from the DB. Lazy import keeps
@@ -166,6 +168,7 @@ def _handle_vector_db_submission(text: str) -> tuple[str, set[str]]:
         st.session_state.candidates = outcome["candidates"]
         st.session_state.selected_candidate_idx = 0
         st.session_state.card_sections_revealed = set(outcome["reveals"])
+        st.session_state.query_protein_sequence = outcome.get("query_protein_sequence")
     st.session_state.vector_db_result = outcome["result"]
     st.session_state.backend_warnings = outcome["warnings"]
     return outcome["reply"], outcome["reveals"]
@@ -215,6 +218,7 @@ def main() -> None:
         protein_card.render(
             st.session_state.candidates,
             st.session_state.card_sections_revealed,
+            query_sequence=st.session_state.query_protein_sequence,
         )
 
 

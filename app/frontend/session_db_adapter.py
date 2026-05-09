@@ -126,6 +126,7 @@ def save_turn(
     revealed_sections: set[str] | list[str] | None = None,
     current_mode: str | None = None,
     update_candidates: bool = True,
+    query_protein_sequence: str | None = None,
 ) -> dict[str, Any] | None:
     """Append the current turn to ``public.chat_sessions``.
 
@@ -192,6 +193,9 @@ def save_turn(
         **saved_wm,
         "messages": messages[-200:],  # keep recent tail; full history is in LangGraph checkpoints
         "last_candidates": new_last_candidates,
+        "last_query_protein_sequence": query_protein_sequence
+        if query_protein_sequence is not None
+        else saved_wm.get("last_query_protein_sequence"),
         "last_user_message": user_message,
         "last_assistant_message": assistant_message,
         "last_revealed_sections": revealed_list,
@@ -235,7 +239,7 @@ def save_turn(
 def _short_summary(user_message: str, assistant_message: str, limit: int = 240) -> str:
     head = (user_message or "").strip().replace("\n", " ")
     body = (assistant_message or "").strip().replace("\n", " ")
-    text = f"Q: {head[:120]} | A: {body[:200]}" if head or body else ""
+    text = f"{head[:120]} {body[:200]}" if head or body else ""
     if len(text) <= limit:
         return text
     return text[: limit - 3] + "..."

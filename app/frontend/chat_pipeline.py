@@ -254,11 +254,16 @@ def restore_session_state(session_id: str) -> dict[str, Any]:
     raw_candidates = session_db_adapter.extract_candidates(row)
     ui_candidates = [_candidate_from_backend(item) for item in raw_candidates]
     messages = session_db_adapter.extract_messages(row)
-    reveals = _revealed_sections(ui_candidates)
+    working_memory = row.get("working_memory") or {}
+    query_protein_sequence = ""
+    if isinstance(working_memory, dict):
+        query_protein_sequence = str(working_memory.get("last_query_protein_sequence") or "")
+    reveals = _revealed_sections(ui_candidates, query_protein_sequence)
 
     st.session_state.candidates = ui_candidates
     st.session_state.selected_candidate_idx = 0
     st.session_state.card_sections_revealed = set(reveals)
+    st.session_state.query_protein_sequence = query_protein_sequence or None
     if messages:
         st.session_state.messages = [
             {"role": m["role"], "content": m["content"]} for m in messages
@@ -325,6 +330,7 @@ _PROTEIN_DEFAULTS: dict[str, Any] = {
     "accession": "",
     "name": "Unknown protein",
     "alt_names": [],
+    "gene_synonyms": [],
     "gene": "",
     "organism_scientific": "",
     "organism_common": "",
@@ -336,10 +342,20 @@ _PROTEIN_DEFAULTS: dict[str, Any] = {
     "mol_weight": 0,
     "subcellular_locations": [],
     "function_text": "",
+    "tissue_specificity": "",
+    "subunit_text": "",
+    "interactions": [],
+    "ptm_texts": [],
+    "isoforms": [],
+    "functional_features": [],
+    "variants": [],
+    "pathways": [],
+    "protein_family": "",
     "disease": None,
     "domains": [],
     "keywords": [],
     "go_terms": [],
+    "go_terms_by_category": {},
     "pubmed_ids": [],
     "xrefs": {},
     "alphafold_accession": "",
@@ -393,6 +409,24 @@ def _ensure_protein_shape(raw: dict[str, Any]) -> ProteinView:
     out: dict[str, Any] = {**_PROTEIN_DEFAULTS, **raw}
     out["disease"] = _ensure_disease_shape(out.get("disease"))
     out["domains"] = _ensure_domains_shape(out.get("domains"))
+    for key in (
+        "gene_synonyms",
+        "interactions",
+        "ptm_texts",
+        "isoforms",
+        "functional_features",
+        "variants",
+        "pathways",
+        "keywords",
+        "go_terms",
+        "pubmed_ids",
+        "subcellular_locations",
+        "alt_names",
+    ):
+        if not isinstance(out.get(key), list):
+            out[key] = []
+    if not isinstance(out.get("go_terms_by_category"), dict):
+        out["go_terms_by_category"] = {}
     if not out.get("alphafold_accession"):
         out["alphafold_accession"] = out.get("accession") or ""
     out["xrefs"] = {
@@ -443,21 +477,36 @@ def _ensure_domains_shape(raw: Any) -> list[DomainFeature]:
     return domains
 
 
-def _revealed_sections(candidates: list[Candidate]) -> set[str]:
+def _revealed_sections(candidates: list[Candidate], query_protein_sequence: str | None = None) -> set[str]:
     if not candidates:
         return set()
     protein = candidates[0]["protein"]
     sections = {"header", "keyfacts", "structure"}
-    if protein["function_text"]:
+    if protein.get("function_text"):
         sections.add("function")
-    if protein["domains"]:
+    if protein.get("tissue_specificity") or protein.get("subcellular_locations"):
+        sections.add("expression")
+    if protein.get("subunit_text") or protein.get("interactions"):
+        sections.add("interactions")
+    if protein.get("domains"):
         sections.add("domains")
-    if protein["keywords"] or protein["go_terms"]:
-        sections.add("keywords")
-    if protein["disease"]:
+    if protein.get("ptm_texts") or protein.get("functional_features") or protein.get("isoforms"):
+        sections.add("regulation")
+    if protein.get("variants"):
+        sections.add("variants")
+    if (
+        protein.get("keywords")
+        or protein.get("go_terms")
+        or protein.get("go_terms_by_category")
+        or protein.get("pathways")
+    ):
+        sections.add("pathways")
+    if protein.get("disease"):
         sections.add("disease")
-    if protein["pubmed_ids"] or protein["xrefs"]:
+    if protein.get("pubmed_ids") or protein.get("xrefs"):
         sections.add("references")
+    if query_protein_sequence and protein.get("sequence"):
+        sections.add("alignment")
     return sections
 
 

@@ -58,6 +58,76 @@ div.stButton > button:hover {
     background-color: #f8fafc;
 }
 
+/* ---------- Sidebar session history ---------- */
+.st-key-sidebar_session_list div.stButton > button {
+    min-height: 54px;
+    justify-content: flex-start;
+    align-items: flex-start;
+    border: 0 !important;
+    border-radius: 8px;
+    background: transparent;
+    box-shadow: none !important;
+    padding: 8px 10px 22px;
+    text-align: left;
+}
+.st-key-sidebar_session_list div.stButton > button:hover {
+    border: 0 !important;
+    background: #cbd5e1;
+}
+.st-key-sidebar_session_list div.stButton > button:active {
+    border: 0 !important;
+    background: #94a3b8;
+}
+.st-key-sidebar_session_list div.stButton > button:focus {
+    border: 0 !important;
+    box-shadow: none !important;
+}
+.st-key-sidebar_session_list div.stButton > button p {
+    width: 100%;
+    margin: 0;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
+    text-align: left;
+    line-height: 1.25;
+}
+.sidebar-session-date {
+    position: relative;
+    z-index: 2;
+    margin: -25px 10px 8px 0;
+    color: #64748b;
+    font-size: 0.72rem;
+    line-height: 1;
+    text-align: right;
+    pointer-events: none;
+}
+.sidebar-session-current {
+    min-height: 54px;
+    box-sizing: border-box;
+    margin-bottom: 8px;
+    padding: 8px 10px 7px;
+    border-radius: 8px;
+    background: #94a3b8;
+    color: #f1f5f9;
+}
+.sidebar-session-current-title {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    font-size: 1rem;
+    line-height: 1.25;
+}
+.sidebar-session-current-date {
+    margin-top: 7px;
+    color: #64748b;
+    font-size: 0.72rem;
+    line-height: 1;
+    text-align: right;
+}
+
 /* Reduce vertical gap above the chat container so the title sits closer */
 div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     margin-bottom: 0.25rem;

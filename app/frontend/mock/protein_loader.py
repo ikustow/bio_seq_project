@@ -22,6 +22,43 @@ class DiseaseInfo(TypedDict):
     variants: list[str]
 
 
+class InteractionInfo(TypedDict):
+    accession: str
+    gene: str
+    int_act_id: str
+    experiments: int
+
+
+class IsoformInfo(TypedDict):
+    name: str
+    ids: list[str]
+    status: str
+
+
+class FeatureInfo(TypedDict):
+    type: str
+    name: str
+    start: int
+    end: int
+    description: str
+
+
+class VariantInfo(TypedDict):
+    label: str
+    position: int
+    original: str
+    alternative: str
+    description: str
+    dbsnp_id: str
+    disease_related: bool
+
+
+class PathwayRef(TypedDict):
+    database: str
+    id: str
+    name: str
+
+
 class Candidate(TypedDict):
     protein: "ProteinView"
     match_score: float
@@ -31,6 +68,7 @@ class ProteinView(TypedDict):
     accession: str
     name: str
     alt_names: list[str]
+    gene_synonyms: list[str]
     gene: str
     organism_scientific: str
     organism_common: str
@@ -42,10 +80,20 @@ class ProteinView(TypedDict):
     mol_weight: int
     subcellular_locations: list[str]
     function_text: str
+    tissue_specificity: str
+    subunit_text: str
+    interactions: list[InteractionInfo]
+    ptm_texts: list[str]
+    isoforms: list[IsoformInfo]
+    functional_features: list[FeatureInfo]
+    variants: list[VariantInfo]
+    pathways: list[PathwayRef]
+    protein_family: str
     disease: Optional[DiseaseInfo]
     domains: list[DomainFeature]
     keywords: list[str]
     go_terms: list[str]
+    go_terms_by_category: dict[str, list[str]]
     pubmed_ids: list[str]
     xrefs: dict[str, str]
     alphafold_accession: str
@@ -63,6 +111,22 @@ def _first_comment(comments: list[dict], comment_type: str) -> Optional[dict]:
     return None
 
 
+def _comment_texts(comments: list[dict], comment_type: str) -> list[str]:
+    out: list[str] = []
+    for comment in comments:
+        if comment.get("commentType") != comment_type:
+            continue
+        for text in comment.get("texts", []) or []:
+            value = text.get("value")
+            if value:
+                out.append(value)
+    return out
+
+
+def _comment_text(comments: list[dict], comment_type: str) -> str:
+    return " ".join(_comment_texts(comments, comment_type))
+
+
 def _subcellular_locations(comments: list[dict]) -> list[str]:
     comment = _first_comment(comments, "SUBCELLULAR LOCATION")
     if not comment:
@@ -76,11 +140,7 @@ def _subcellular_locations(comments: list[dict]) -> list[str]:
 
 
 def _function_text(comments: list[dict]) -> str:
-    comment = _first_comment(comments, "FUNCTION")
-    if not comment:
-        return ""
-    parts = [t.get("value", "") for t in comment.get("texts", [])]
-    return " ".join(p for p in parts if p)
+    return _comment_text(comments, "FUNCTION")
 
 
 def _disease_info(comments: list[dict]) -> Optional[DiseaseInfo]:
@@ -147,6 +207,126 @@ def _domains(features: list[dict]) -> list[DomainFeature]:
     return out
 
 
+def _feature_position(feature: dict) -> tuple[int | None, int | None]:
+    location = feature.get("location", {}) or {}
+    start = location.get("start", {}).get("value")
+    end = location.get("end", {}).get("value")
+    if start is None or end is None:
+        return None, None
+    return int(start), int(end)
+
+
+def _functional_features(features: list[dict]) -> list[FeatureInfo]:
+    useful_types = {
+        "Topological domain",
+        "Region",
+        "Site",
+        "Modified residue",
+        "Glycosylation",
+    }
+    out: list[FeatureInfo] = []
+    for feature in features:
+        ftype = feature.get("type") or ""
+        if ftype not in useful_types:
+            continue
+        start, end = _feature_position(feature)
+        if start is None or end is None:
+            continue
+        desc = feature.get("description") or ""
+        name = desc or ftype
+        out.append(FeatureInfo(
+            type=ftype,
+            name=name,
+            start=start,
+            end=end,
+            description=desc,
+        ))
+    return out
+
+
+def _variants(features: list[dict]) -> list[VariantInfo]:
+    out: list[VariantInfo] = []
+    for feature in features:
+        if feature.get("type") != "Natural variant":
+            continue
+        start, _end = _feature_position(feature)
+        if start is None:
+            continue
+        alt = feature.get("alternativeSequence") or {}
+        original = alt.get("originalSequence") or ""
+        alternatives = alt.get("alternativeSequences") or []
+        alternative = alternatives[0] if alternatives else ""
+        description = feature.get("description") or ""
+        dbsnp_id = ""
+        for xref in feature.get("featureCrossReferences") or []:
+            if xref.get("database") == "dbSNP":
+                dbsnp_id = xref.get("id", "")
+                break
+        label = f"{original}{start}{alternative}" if original and alternative else f"Variant at {start}"
+        disease_related = any(token in description.lower() for token in ("disease", "ad;", "alzheimer", "cancer"))
+        out.append(VariantInfo(
+            label=label,
+            position=start,
+            original=original,
+            alternative=alternative,
+            description=description,
+            dbsnp_id=dbsnp_id,
+            disease_related=disease_related,
+        ))
+    return out
+
+
+def _interactions(comments: list[dict]) -> list[InteractionInfo]:
+    out: list[InteractionInfo] = []
+    for comment in comments:
+        if comment.get("commentType") != "INTERACTION":
+            continue
+        for interaction in comment.get("interactions", []) or []:
+            partner = interaction.get("interactantTwo") or {}
+            accession = partner.get("uniProtKBAccession") or ""
+            gene = partner.get("geneName") or ""
+            int_act_id = partner.get("intActId") or ""
+            if not accession and not gene and not int_act_id:
+                continue
+            out.append(InteractionInfo(
+                accession=accession,
+                gene=gene,
+                int_act_id=int_act_id,
+                experiments=int(interaction.get("numberOfExperiments") or 0),
+            ))
+    return out
+
+
+def _isoforms(comments: list[dict]) -> list[IsoformInfo]:
+    out: list[IsoformInfo] = []
+    for comment in comments:
+        if comment.get("commentType") != "ALTERNATIVE PRODUCTS":
+            continue
+        for isoform in comment.get("isoforms", []) or []:
+            name = isoform.get("name", {}).get("value") or ""
+            ids = [str(item) for item in isoform.get("isoformIds", []) or [] if item]
+            status = isoform.get("isoformSequenceStatus") or ""
+            if name or ids:
+                out.append(IsoformInfo(name=name, ids=ids, status=status))
+    return out
+
+
+def _pathways(cross_refs: list[dict]) -> list[PathwayRef]:
+    out: list[PathwayRef] = []
+    for xref in cross_refs:
+        db = xref.get("database") or ""
+        if db != "Reactome":
+            continue
+        props = {
+            item.get("key"): item.get("value")
+            for item in xref.get("properties", []) or []
+            if item.get("key")
+        }
+        name = props.get("PathwayName") or props.get("Description") or ""
+        out.append(PathwayRef(database=db, id=xref.get("id", ""), name=name))
+    return out
+
+
 def _xrefs(cross_refs: list[dict]) -> dict[str, str]:
     out: dict[str, str] = {}
     for x in cross_refs:
@@ -193,6 +373,36 @@ def _go_terms(cross_refs: list[dict], limit: int = 8) -> list[str]:
     return out
 
 
+def _go_terms_by_category(cross_refs: list[dict], limit_per_category: int = 8) -> dict[str, list[str]]:
+    categories = {
+        "P": "Biological process",
+        "F": "Molecular function",
+        "C": "Cellular component",
+    }
+    out: dict[str, list[str]] = {
+        "Biological process": [],
+        "Molecular function": [],
+        "Cellular component": [],
+    }
+    for xref in cross_refs:
+        if xref.get("database") != "GO":
+            continue
+        value = ""
+        for prop in xref.get("properties", []) or []:
+            if prop.get("key") == "GoTerm":
+                value = prop.get("value", "")
+                break
+        if len(value) < 3 or value[1] != ":":
+            continue
+        category = categories.get(value[0])
+        term = value[2:]
+        if not category or not term:
+            continue
+        if term not in out[category] and len(out[category]) < limit_per_category:
+            out[category].append(term)
+    return {key: values for key, values in out.items() if values}
+
+
 def from_dict(record: dict) -> ProteinView:
     raw = record
     comments: list[dict] = raw.get("comments", []) or []
@@ -209,6 +419,12 @@ def from_dict(record: dict) -> ProteinView:
     alt_names = [a for a in alt_names if a]
     genes = raw.get("genes", []) or []
     gene = genes[0].get("geneName", {}).get("value", "") if genes else ""
+    gene_synonyms = [
+        item.get("value", "")
+        for gene_record in genes
+        for item in gene_record.get("synonyms", []) or []
+    ]
+    gene_synonyms = [item for item in gene_synonyms if item]
     sequence = raw.get("sequence", {}) or {}
     accession = raw.get("primaryAccession", "")
 
@@ -220,6 +436,7 @@ def from_dict(record: dict) -> ProteinView:
         accession=accession,
         name=rec_name,
         alt_names=alt_names,
+        gene_synonyms=gene_synonyms,
         gene=gene,
         organism_scientific=organism.get("scientificName", ""),
         organism_common=organism.get("commonName", ""),
@@ -231,10 +448,20 @@ def from_dict(record: dict) -> ProteinView:
         mol_weight=int(sequence.get("molWeight", 0) or 0),
         subcellular_locations=_subcellular_locations(comments),
         function_text=_function_text(comments),
+        tissue_specificity=_comment_text(comments, "TISSUE SPECIFICITY"),
+        subunit_text=_comment_text(comments, "SUBUNIT"),
+        interactions=_interactions(comments),
+        ptm_texts=_comment_texts(comments, "PTM"),
+        isoforms=_isoforms(comments),
+        functional_features=_functional_features(features),
+        variants=_variants(features),
+        pathways=_pathways(cross_refs),
+        protein_family=_comment_text(comments, "SIMILARITY"),
         disease=disease,
         domains=_domains(features),
         keywords=[k.get("name", "") for k in raw.get("keywords", []) or [] if k.get("name")],
         go_terms=_go_terms(cross_refs),
+        go_terms_by_category=_go_terms_by_category(cross_refs),
         pubmed_ids=_pubmed_ids(references),
         xrefs=_xrefs(cross_refs),
         alphafold_accession=_alphafold_accession(cross_refs, accession),

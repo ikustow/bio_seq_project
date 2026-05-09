@@ -1,6 +1,17 @@
 from .chat import ChatTurnRequest, ChatTurnResult
 from .pipeline import BioSeqInputExtraction, BioSeqPipelineSnapshot
-from .protein_view import CandidateView, DiseaseInfo, DomainFeature, EvidenceItem, ProteinView
+from .protein_view import (
+    CandidateView,
+    DiseaseInfo,
+    DomainFeature,
+    EvidenceItem,
+    FeatureInfo,
+    InteractionInfo,
+    IsoformInfo,
+    PathwayRef,
+    ProteinView,
+    VariantInfo,
+)
 from .session import SessionSnapshot
 
 __all__ = [
@@ -12,6 +23,11 @@ __all__ = [
     "DiseaseInfo",
     "DomainFeature",
     "EvidenceItem",
+    "FeatureInfo",
+    "InteractionInfo",
+    "IsoformInfo",
+    "PathwayRef",
     "ProteinView",
     "SessionSnapshot",
+    "VariantInfo",
 ]
