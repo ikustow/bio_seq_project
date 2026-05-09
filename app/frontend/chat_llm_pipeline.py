@@ -103,9 +103,19 @@ def _call_gemini_proxy(prompt: str) -> tuple[str, dict[str, Any]]:
             "parts": [
                 {
                     "text": (
-                        "You are BioSeq Investigator's follow-up chat assistant. "
-                        "Answer concisely, use the conversation context, and do "
-                        "not claim that a new database search was run."
+                        "You are an expert assistant for protein sequence analysis. "
+                        "Your primary goal is to answer the user's question accurately and helpfully. "
+                        "\n\n"
+                        "You have been provided with database information about the protein the user is asking about. "
+                        "Use this data to ground your answers: explain what the protein does, where it's found, how it interacts, "
+                        "and why it matters clinically or biologically. "
+                        "\n\n"
+                        "Guidelines: "
+                        "- Answer the user's question directly and concisely "
+                        "- Connect relevant data points (function, location, interactions, disease links) to build a coherent explanation "
+                        "- If information is missing from the database, acknowledge it: 'The database doesn't have data on X, but based on Y we can infer...' "
+                        "- Maintain scientific accuracy while keeping explanations clear and accessible "
+                        "- Do not claim that a new database search was performed—use only the information provided"
                     )
                 }
             ]
@@ -126,8 +136,16 @@ def _call_gemini_proxy(prompt: str) -> tuple[str, dict[str, Any]]:
 def _build_gemini_contents(prompt: str) -> list[dict[str, Any]]:
     messages = st.session_state.get("messages") or []
     contents: list[dict[str, Any]] = []
-    seen_current_prompt = False
 
+    protein_context = _get_current_protein_context()
+    if protein_context:
+        contents.append({"role": "user", "parts": [{"text": protein_context}]})
+        contents.append({
+            "role": "model",
+            "parts": [{"text": "I understand. I have the context about the current protein. I'll use this information to answer your questions."}]
+        })
+
+    seen_current_prompt = False
     for message in messages[-20:]:
         if not isinstance(message, dict):
             continue
@@ -144,6 +162,90 @@ def _build_gemini_contents(prompt: str) -> list[dict[str, Any]]:
     if not seen_current_prompt:
         contents.append({"role": "user", "parts": [{"text": prompt}]})
     return contents
+
+
+def _get_current_protein_context() -> str | None:
+    """Build a text description of the currently selected protein."""
+    candidates = st.session_state.get("candidates")
+    if not candidates:
+        return None
+
+    selected_idx = st.session_state.get("selected_candidate_idx", 0)
+    try:
+        selected_idx = int(selected_idx)
+    except (TypeError, ValueError):
+        selected_idx = 0
+
+    if selected_idx < 0 or selected_idx >= len(candidates):
+        return None
+
+    candidate = candidates[selected_idx]
+    protein = candidate.get("protein", {})
+    match_score = candidate.get("match_score", 0)
+
+    lines = [
+        "**Current protein context:**",
+        f"Accession: {protein.get('accession', 'N/A')}",
+        f"Name: {protein.get('name', 'Unknown')}",
+        f"Gene: {protein.get('gene', 'N/A')}",
+        f"Organism: {protein.get('organism_scientific', '')} ({protein.get('organism_common', '')})",
+        f"Match confidence: {match_score:.1f}%",
+        "",
+    ]
+
+    length = protein.get("length")
+    if length:
+        lines.append(f"Length: {length:,} amino acids")
+
+    mol_weight = protein.get("mol_weight")
+    if mol_weight:
+        lines.append(f"Molecular weight: {mol_weight:,} Da")
+
+    function = protein.get("function_text", "").strip()
+    if function:
+        lines.append(f"\n**Function:**\n{function}")
+
+    tissue = protein.get("tissue_specificity", "").strip()
+    if tissue:
+        lines.append(f"\n**Tissue specificity:**\n{tissue}")
+
+    subunit = protein.get("subunit_text", "").strip()
+    if subunit:
+        lines.append(f"\n**Subunit composition:**\n{subunit}")
+
+    subcellular = protein.get("subcellular_locations", [])
+    if subcellular:
+        lines.append(f"\n**Subcellular locations:** {', '.join(subcellular)}")
+
+    domains = protein.get("domains", [])
+    if domains:
+        domain_names = [f"{d.get('name', 'Domain')} ({d.get('start')}-{d.get('end')})" for d in domains[:5]]
+        lines.append(f"\n**Domains:** {', '.join(domain_names)}")
+
+    interactions = protein.get("interactions", [])
+    if interactions:
+        interaction_summary = ", ".join([
+            f"{item.get('gene') or item.get('accession') or 'Partner'}"
+            for item in interactions[:3]
+        ])
+        lines.append(f"\n**Known interaction partners:** {interaction_summary}")
+
+    disease = protein.get("disease")
+    if disease and isinstance(disease, dict) and disease.get("name"):
+        lines.append(f"\n**Associated disease:** {disease.get('name')}")
+        if disease.get("description"):
+            lines.append(f"Description: {disease.get('description')}")
+
+    keywords = protein.get("keywords", [])
+    if keywords:
+        lines.append(f"\n**Keywords:** {', '.join(keywords[:8])}")
+
+    pathways = protein.get("pathways", [])
+    if pathways:
+        pathway_names = [p.get("name", "Pathway") for p in pathways[:3]]
+        lines.append(f"\n**Key pathways:** {', '.join(pathway_names)}")
+
+    return "\n".join(lines)
 
 
 def _extract_gemini_text(data: dict[str, Any]) -> str:
