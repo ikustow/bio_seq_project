@@ -8,7 +8,6 @@ from typing import Any
 
 import streamlit as st
 
-import backend_choice
 import chat_pipeline
 import session_db_adapter
 import session_identity
@@ -25,8 +24,6 @@ def render() -> None:
         if st.button("➕ New chat", width="stretch", key="sidebar_new_chat"):
             _start_fresh_session()
             st.rerun()
-
-        _render_backend_selector()
 
         persistent = session_db_adapter.is_persistent()
         if not persistent:
@@ -66,27 +63,6 @@ def render() -> None:
                 st.markdown("**Warnings**")
                 for warning in st.session_state.backend_warnings:
                     st.markdown(f"- {warning}")
-
-
-def _render_backend_selector() -> None:
-    current = backend_choice.get_backend()
-    options = list(backend_choice.ALL_BACKENDS)
-    try:
-        index = options.index(current)
-    except ValueError:
-        index = 0
-    selected = st.radio(
-        "Search engine",
-        options=options,
-        index=index,
-        format_func=backend_choice.label_for,
-        key="sidebar_backend_radio",
-        help=backend_choice.description_for(current),
-    )
-    if selected != current:
-        backend_choice.set_backend(selected)
-        st.rerun()
-    st.caption(backend_choice.description_for(selected))
 
 
 def _render_session_list(sessions: list[dict[str, Any]], *, current_id: str) -> None:

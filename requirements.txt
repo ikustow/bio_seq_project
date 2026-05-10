@@ -1,22 +1,42 @@
-h5py
-numpy
-pandas
-plotly
-py3Dmol
-requests
-tqdm
-scikit-learn
-faiss-cpu
-networkx
-pyarrow
-neo4j
-torch
-pyvis
-langchain
-langchain-openai
-langchain-mistralai
-langgraph
-langgraph-checkpoint-postgres
-psycopg[binary]
-streamlit
-streamlit-cookies-controller
+# BioSeq Investigator — pinned for HF Spaces deploy.
+# Versions match the smoke-tested deploy/hf-spaces baseline plus the
+# v3.0 additions (Supabase chat history, cookie-based identity).
+
+# UI
+streamlit==1.57.0
+streamlit-cookies-controller>=0.0.4
+pandas==2.3.3
+plotly==6.7.0
+py3Dmol==2.5.4
+requests==2.33.1
+
+# Pipeline orchestration
+langchain-mistralai==1.1.2
+langgraph==1.1.10
+pydantic==2.13.3
+httpx
+
+# ProtT5 embedding (heavy: ~3 GB downloaded from HF Hub on first boot)
+transformers==5.7.0
+torch==2.10.0
+sentencepiece==0.2.1
+protobuf==7.34.1
+tokenizers==0.22.2
+
+# Vector search + embeddings file
+faiss-cpu==1.9.0.post1
+h5py==3.16.0
+numpy==1.26.4
+
+# FASTA parsing (used by bioseq_retriever.src.utils.get_first_fasta_entry)
+pyfaidx
+
+# HF Hub downloads (bootstrap pulls per-protein.h5 from a HF Dataset)
+huggingface_hub==1.13.0
+
+# Persistence — Supabase Postgres for public.chat_sessions
+psycopg[binary]>=3.1
+
+# .env loader so MISTRAL_API_KEY / SUPABASE_DB_URL can come from a local
+# .env in dev, without needing python-dotenv to be installed system-wide.
+python-dotenv==1.0.1

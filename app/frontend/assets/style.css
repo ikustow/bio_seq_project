@@ -138,21 +138,3 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     margin-top: 0.5rem;
 }
 
-/* ---------- Demo-mode pill in page header ---------- */
-.demo-badge {
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-}
-.demo-badge-pill {
-    display: inline-block;
-    padding: 4px 10px;
-    border-radius: 999px;
-    background: #fff7ed;
-    color: #9a3412;
-    border: 1px solid #fed7aa;
-    font-size: 0.78rem;
-    font-weight: 500;
-    white-space: nowrap;
-    line-height: 1.3;
-}

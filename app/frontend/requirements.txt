@@ -9,14 +9,12 @@ py3Dmol>=2.1
 requests>=2.31
 biopython>=1.83
 
-# Persistence + agent runtime (graph backend) -------------------------------
+# Persistence + agent runtime ----------------------------------------------
 psycopg[binary]>=3.1
 langgraph
-langgraph-checkpoint-postgres
 langchain
 langchain-openai
 langchain-mistralai
-neo4j
 
 # =============================================================================
 # OPTIONAL — embeddings backend (legacy ProtT5 + FAISS path).

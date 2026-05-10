@@ -185,26 +185,11 @@ def main() -> None:
     _bootstrap_session()
     session_sidebar.render()
 
-    header_cols = st.columns([8, 2], vertical_alignment="center")
-    with header_cols[0]:
-        st.title("🧬 BioSeq Investigator")
-        st.caption(
-            "Paste a biological sequence, ask a question, and get an "
-            "evidence-grounded answer backed by public bioinformatics databases."
-        )
-    with header_cols[1]:
-        if config.USE_VECTOR_DB_MODE:
-            badge = "Vector DB mode · graph retriever"
-        elif BACKEND_MODE == "real":
-            badge = "Live backend · retrieval pipeline"
-        else:
-            badge = "Demo mode · scripted responses"
-        st.markdown(
-            "<div class='demo-badge'>"
-            f"<span class='demo-badge-pill'>{badge}</span>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
+    st.title("🧬 BioSeq Investigator")
+    st.caption(
+        "Paste a biological sequence, ask a question, and get an "
+        "evidence-grounded answer backed by public bioinformatics databases."
+    )
 
     st.divider()
 

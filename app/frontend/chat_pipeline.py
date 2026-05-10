@@ -1,46 +1,19 @@
 """End-to-end turn pipeline for the Streamlit frontend.
 
-Two-level dispatch on every user turn:
+Turn dispatch:
 
-1. **Turn-position router.** First user turn in the session goes to a
-   retriever backend (graph or embeddings — see below). Subsequent turns
-   go to the chat-LLM module via ``chat_llm_pipeline``. "First" is decided
-   by reading ``working_memory.turn_count`` from ``public.chat_sessions``
-   so the rule survives page reloads, sidebar session-switches, and
-   multi-tab use. While the chat-LLM module is being built by a teammate,
-   ``chat_llm_pipeline`` is a stub that returns "module baking…" and keeps
-   the protein card untouched.
+- **First user turn** in the session goes to the embeddings retriever
+  (``embeddings_pipeline.run_turn_embeddings``). "First" is decided by
+  reading ``working_memory.turn_count`` from ``public.chat_sessions`` so
+  the rule survives page reloads, sidebar session-switches, and multi-tab
+  use.
+- **Subsequent turns** go to the chat-LLM module via
+  ``chat_llm_pipeline.run_turn_chat_llm``.
 
-2. **Retriever backend selector** (only for first turns). Picked from
-   ``backend_choice.get_backend()``:
-   - ``"graph"``     — Neo4j ``BioSeqRetrieverGraphAgent`` (this module).
-   - ``"embeddings"``— Legacy ProtT5+FAISS via ``embeddings_pipeline``.
-
-All paths return the same dict shape so the UI is backend-agnostic, and all
-write the turn to ``public.chat_sessions`` so sidebar history is uniform.
-The embeddings module is imported lazily so the heavy ML deps (~2 GB) don't
-load when only the graph backend is in use.
-
-For the graph backend, one turn is:
-
-1. Pull the per-browser identity (``user_id``, ``session_id``) from
-   ``st.session_state`` and build an ``AppContext``. The ``session_id`` is the
-   LangGraph ``thread_id``, so multi-user concurrent chats stay isolated even
-   though the agent itself is process-cached.
-2. Call ``BioSeqRetrieverGraphAgent.invoke(prompt, context)``. The agent
-   writes its compact patch to ``public.chat_sessions`` itself, then returns
-   the LangGraph result.
-3. Map ``final_results`` into UI ``Candidate`` shapes.
-4. ``session_db_adapter.save_turn`` layers UI-owned fields on top — full 5
-   candidate cards in ``working_memory.last_candidates``, the message
-   transcript, turn counters.
-
-Notes on multi-user safety:
-- We never read ``APP_SESSION_ID`` from env here — it would alias all users
-  onto one LangGraph thread.
-- The agent factory is cached with ``@st.cache_resource``; per-user state
-  lives in the LangGraph checkpointer keyed by ``thread_id=session_id``, so
-  a single shared agent instance is correct.
+The embeddings module is imported lazily so the heavy ML deps (~2 GB)
+don't load until the user actually triggers a search. The retriever does
+not write to ``public.chat_sessions`` itself — ``session_db_adapter`` is
+the sole writer for both turn kinds, so sidebar history is uniform.
 """
 
 from __future__ import annotations
@@ -61,21 +34,6 @@ for _path in (_FRONTEND_ROOT, _APP_ROOT, _PROJECT_ROOT):
 import backend_choice  # noqa: E402
 import session_db_adapter  # noqa: E402
 from mock.protein_loader import Candidate, DiseaseInfo, DomainFeature, ProteinView  # noqa: E402
-
-
-@st.cache_resource(show_spinner="Connecting to retriever…")
-def _get_agent():
-    # Lazy import so the graph-backend deps (Neo4j driver, langgraph postgres)
-    # are only resolved when the user actually picks the graph backend.
-    from backend.app_services.service_factory import create_bioseq_retriever_graph_agent
-    return create_bioseq_retriever_graph_agent(use_llm_extractor=False)
-
-
-def get_agent_warnings() -> list[str]:
-    try:
-        return list(_get_agent().warnings)
-    except Exception as exc:
-        return [f"Could not initialize retriever agent: {exc}"]
 
 
 def run_turn(prompt: str) -> dict[str, Any]:
@@ -101,20 +59,12 @@ def run_turn(prompt: str) -> dict[str, Any]:
 
         return chat_llm_pipeline.run_turn_chat_llm(prompt)
 
-    backend = backend_choice.get_backend()
+    # First turn → embeddings retriever. Lazy import so the heavy ML deps
+    # (~2 GB) only load on first use.
+    import embeddings_pipeline  # noqa: WPS433
 
-    if backend == backend_choice.BACKEND_EMBEDDINGS:
-        # Lazy import: don't load heavy deps if user is on the graph path.
-        import embeddings_pipeline  # noqa: WPS433
-
-        outcome = embeddings_pipeline.run_turn_embeddings(prompt)
-        outcome["backend"] = backend
-        outcome.setdefault("update_card", True)
-        return outcome
-
-    # default: graph backend
-    outcome = _run_turn_graph(prompt)
-    outcome["backend"] = backend_choice.BACKEND_GRAPH
+    outcome = embeddings_pipeline.run_turn_embeddings(prompt)
+    outcome["backend"] = backend_choice.BACKEND_EMBEDDINGS
     outcome.setdefault("update_card", True)
     return outcome
 
@@ -156,95 +106,6 @@ def _is_first_turn_in_session() -> bool:
     return turn_count == 0
 
 
-def _run_turn_graph(prompt: str) -> dict[str, Any]:
-    user_id = st.session_state.get("user_id") or "anonymous"
-    session_id = st.session_state.get("session_id")
-    if not session_id:
-        raise RuntimeError("session_id is missing from st.session_state; bootstrap_identity() must run first.")
-
-    context = session_db_adapter.make_context(
-        user_id=user_id,
-        session_id=session_id,
-        workspace_id=st.session_state.get("workspace_id"),
-        user_role=st.session_state.get("user_role"),
-    )
-
-    warnings: list[str] = list(session_db_adapter.get_warnings())
-
-    try:
-        agent = _get_agent()
-    except Exception as exc:
-        reply = f"**Backend unavailable:** {exc}"
-        warnings.append(str(exc))
-        _safe_save_turn(context, prompt, reply, [], set(), warnings)
-        return {
-            "reply": reply,
-            "candidates": [],
-            "candidates_raw": [],
-            "reveals": set(),
-            "warnings": warnings,
-            "result": {"error": str(exc)},
-            "persisted": session_db_adapter.is_persistent(),
-        }
-
-    warnings.extend(agent.warnings)
-
-    try:
-        result, _state = agent.invoke(prompt, context)
-    except Exception as exc:
-        # Even on a hard agent failure we record the turn so the user's
-        # question and the failure are visible in session history.
-        reply = f"**Retriever error:** {exc}"
-        warnings.append(str(exc))
-        _safe_save_turn(context, prompt, reply, [], set(), warnings)
-        return {
-            "reply": reply,
-            "candidates": [],
-            "candidates_raw": [],
-            "reveals": set(),
-            "warnings": warnings,
-            "result": {"error": str(exc)},
-            "persisted": session_db_adapter.is_persistent(),
-        }
-
-    raw_candidates: list[dict[str, Any]] = list(result.get("final_results") or [])
-    ui_candidates = [_candidate_from_backend(item) for item in raw_candidates]
-    reply = _assistant_message(result)
-    reveals = _revealed_sections(ui_candidates)
-
-    _safe_save_turn(context, prompt, reply, raw_candidates, reveals, warnings)
-
-    return {
-        "reply": reply,
-        "candidates": ui_candidates,
-        "candidates_raw": raw_candidates,
-        "reveals": reveals,
-        "warnings": warnings,
-        "result": result,
-        "persisted": session_db_adapter.is_persistent(),
-    }
-
-
-def _safe_save_turn(
-    context,
-    prompt: str,
-    reply: str,
-    raw_candidates: list[dict[str, Any]],
-    reveals: set[str],
-    warnings: list[str],
-) -> None:
-    try:
-        session_db_adapter.save_turn(
-            context,
-            user_message=prompt,
-            assistant_message=reply,
-            candidates=raw_candidates,
-            revealed_sections=reveals,
-        )
-    except Exception as exc:
-        warnings.append(f"Could not save session turn: {exc}")
-
-
 def restore_session_state(session_id: str) -> dict[str, Any]:
     """Load a previous session into the UI state and return a status dict."""
     row = session_db_adapter.load_session(session_id)
@@ -268,15 +129,6 @@ def restore_session_state(session_id: str) -> dict[str, Any]:
         st.session_state.messages = [
             {"role": m["role"], "content": m["content"]} for m in messages
         ]
-
-    # Restore the backend the session was last using. ``current_mode`` is what
-    # the most recent turn wrote, which corresponds to the user's selection at
-    # that moment. Falls back to whatever default was already in session_state.
-    last_mode = (row.get("current_mode") or "").strip().lower()
-    if last_mode == "embeddings_retriever":
-        backend_choice.set_backend(backend_choice.BACKEND_EMBEDDINGS)
-    elif last_mode in {"bioseq_retriever_langgraph", "streamlit_ui", "graph_retriever_pipeline"}:
-        backend_choice.set_backend(backend_choice.BACKEND_GRAPH)
 
     return {
         "loaded": True,
