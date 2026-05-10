@@ -13,7 +13,7 @@ conda activate bioseq
 ### 2. Install Dependencies
 Install the required packages using Conda where available, and pip for others:
 ```bash
-conda install -c conda-forge h5py faiss-cpu numpy httpx pyfaidx transformers pytorch sentence-transformers fastapi -y
+conda install -c conda-forge h5py faiss-cpu numpy httpx pyfaidx transformers pytorch fastapi uvicorn -y
 pip install langchain-mistralai langchain-openai langgraph tiktoken sentencepiece protobuf
 ```
 
@@ -70,51 +70,35 @@ result = run_bioseq_pipeline("Compare this sequence: MKTLL... against human insu
 5. **Contextual Refinement (Reranking)**: Top 5 matches are selected based on semantic alignment with the user's query context.
 
 ## Running the System
-The system can now run in two modes: **Local** (legacy) or **Service** (microservices).
+The system relies on the **Unified Search Service** to handle sequence embedding and similarity search.
 
-### Service Mode (Recommended for Production)
-1. **Start Services**:
-   ```bash
-   python services/embedding_service.py  # Runs on port 8001
-   python services/search_service.py     # Runs on port 8002
-   ```
-2. **Run Pipeline**:
-   The services are enabled by default (`BIOSEQ_USE_SERVICES=true`). Simply run the pipeline:
-   ```bash
-   python pipeline_interface.py "I have a sequence: MALW..."
-   ```
-
-### Local Mode (Development)
-To run everything within the same process (higher memory usage):
+### Start the Unified Search Service
 ```bash
-export BIOSEQ_USE_SERVICES=false
+python bioseq_retriever/services/search_service.py
+```
+This service loads the ProtT5 model and FAISS index, exposing the `/search` endpoint for the pipeline.
+
+### Run Pipeline
+The pipeline now operates asynchronously:
+```bash
 python pipeline_interface.py "I have a sequence: MALW..."
 ```
 
 ## Project & File Structure
 - `src/`: Core logic and pipeline modules.
-  - `pipeline.py`: LangGraph workflow and LLM node orchestration.
-  - `embeddings.py`: FAISS index management, HDF5 loading, and persistence.
-  - `reranking.py`: Semantic similarity logic using Mistral cloud embeddings.
-  - `utils.py`: DNA translation tables, API environment setup, and LLM factory.
-  - `search.py`: ProtT5 interface and top-k vector search (connects to Search Service).
-  - `api_client.py`: Centralized API client with pooling and exponential backoff.
-  - `config.py`: Environment configuration and service settings.
-  - `data_fetcher.py`: REST client for UniProt using `httpx`.
-  - `scoring.py`: Similarity normalization and ranking.
-- `services/`: Standalone microservices for resource-intensive tasks.
-  - `embedding_service.py`: ProtT5 model hosting.
-  - `search_service.py`: FAISS index hosting.
+  - pipeline.py: LangGraph workflow and LLM node orchestration.
+  - reranking.py: Semantic similarity logic using Mistral cloud embeddings.
+  - utils.py: DNA translation tables, API environment setup, FASTA parsing, and sequence cleaning.
+  - search.py: Unified Search Service client.
+  - api_client.py: Centralized API client with pooling and exponential backoff.
+  - config.py: Environment configuration and service settings.
+  - data_fetcher.py: REST client for UniProt using `httpx`.
+- services/: Unified Search Service.
+  - search_service.py: Integrated embedding (ProtT5) and search (FAISS) service.
+  - config.py: Service-specific configuration (ports, FAISS params).
 - `data/`: Directory for embeddings and FAISS indexes.
 - `tests/`: Automated unit and pipeline tests.
 - `pipeline_interface.py`: CLI entry point script.
-
-## Key Classes and Functions
-- `GraphState` (TypedDict): Maintains the internal pipeline state across nodes.
-- `InputExtraction` (Pydantic Model): Schema for deterministic LLM data extraction.
-- `LocalReranker` (Class): Orchestrates semantic context-aware reranking.
-- `get_or_create_index` (Function): Manages FAISS index lifecycle.
-- `translate_dna_to_protein` (Function): Handles genetic code translation.
 
 ## Limitations and Remarks
 - **API Dependency**: Requires an active Mistral AI or OpenAI API key.

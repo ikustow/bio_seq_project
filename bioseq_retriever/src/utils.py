@@ -1,4 +1,26 @@
 import os
+import re
+from src.config import ALLOWED_DATA_DIR
+
+def is_secure_path(path: str) -> bool:
+    """Verifies if the path is within the allowed directory."""
+    abs_allowed = os.path.abspath(ALLOWED_DATA_DIR)
+    abs_path = os.path.abspath(path)
+    return abs_path.startswith(abs_allowed)
+
+def clean_sequence(sequence: str) -> str:
+    """
+    Cleans up a sequence by removing FASTA headers, whitespace, and non-letter characters.
+    """
+    sequence = sequence.strip()
+    if sequence.startswith(">"):
+        lines = sequence.splitlines()
+        # Find where the sequence starts (after the header line)
+        sequence = "".join(lines[1:])
+    
+    # Remove any non-letter characters (e.g., numbers, whitespace, punctuation)
+    cleaned = re.sub(r'[^A-Za-z]', '', sequence)
+    return cleaned.upper()
 
 standard_codon_table = {
     'TTT': 'F', 'TCT': 'S', 'TAT': 'Y', 'TGT': 'C',
@@ -102,12 +124,14 @@ def translate_dna_to_protein(dna_sequence):
     upper_dna = dna_sequence.upper()
     return build_protein(codons(upper_dna))
 
-def get_first_fasta_entry(fasta_path: str) -> str:
+def get_first_fasta_entry(fasta_path: str) -> tuple[str, str]:
     """
-    Extracts the first header and sequence from a FASTA file using pyfaidx.
+    Extracts the first header and the full sequence from a FASTA file using pyfaidx.
+    Returns a tuple (header, sequence).
     """
     from pyfaidx import Fasta
-
     fasta = Fasta(fasta_path)
     first_record = fasta[0]
-    return f">{first_record.name}\n{str(first_record)}"
+    header = f">{first_record.long_name}"
+    sequence = str(first_record)
+    return header, clean_sequence(sequence)
