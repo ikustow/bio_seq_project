@@ -23,6 +23,7 @@ chat history is persisted to a Supabase Postgres table.
 
 | Name                       | Where        | Required | Notes |
 |----------------------------|--------------|----------|-------|
+| `APP_PASSWORD`             | **Secret**   | optional | Shared password gating the UI. If set, every visitor sees a login form and must enter this value. Leave unset to keep the app open. |
 | `MISTRAL_API_KEY`          | **Secret**   | yes      | Mistral API key — drives extract/classify and reranking. |
 | `SUPABASE_DB_URL`          | **Secret**   | yes      | Postgres connection string for `public.chat_sessions`. Without it, the sidebar shows "Session history is not persisted" and only the current tab keeps state. |
 | `BIOSEQ_LLM_PROXY_URL`     | **Secret**   | yes      | Cloudflare Worker URL fronting Gemini. Required for follow-up chat turns. |

@@ -45,11 +45,19 @@ def _inject_styles() -> None:
 
 
 def _configured_password() -> str | None:
-    """Return the shared password if one is configured, else None (auth disabled)."""
-    try:
-        pw = st.secrets.get("app_password")
-    except Exception:
-        return None
+    """Return the shared password if one is configured, else None (auth disabled).
+
+    Checks the ``APP_PASSWORD`` env var first (HF Spaces and similar hosts
+    expose Secrets as env vars, not via Streamlit's secrets file), then
+    falls back to ``st.secrets["app_password"]`` for local dev with
+    ``.streamlit/secrets.toml``.
+    """
+    pw = (os.getenv("APP_PASSWORD") or "").strip()
+    if not pw:
+        try:
+            pw = (st.secrets.get("app_password") or "").strip()
+        except Exception:
+            pw = ""
     return pw or None
 
 
