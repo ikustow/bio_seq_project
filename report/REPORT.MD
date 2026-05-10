@@ -70,6 +70,11 @@ Preprocessing pipeline:
 
 Диаграмма разделяет долгоживущие артефакты retrieval-слоя и данные, которые загружаются в runtime для обработки конкретного запроса.
 
+![Data artifact lifecycle](diagrams/data-artifact-lifecycle.svg)
+
+<details>
+<summary>PlantUML source</summary>
+
 ```plantuml
 @startuml
 title Data artifact lifecycle - embeddings backend
@@ -102,9 +107,16 @@ stop
 @enduml
 ```
 
+</details>
+
 ## 3. Архитектура pipeline
 
 В текущем embedding-фокусе система состоит из Streamlit UI, adapter layer, core retrieval pipeline, Hugging Face backed data/model artifacts, runtime cache и внешних API для LLM/text embeddings и UniProt metadata.
+
+![Embedding retrieval architecture](diagrams/embedding-retrieval-architecture.svg)
+
+<details>
+<summary>PlantUML source</summary>
 
 ```plantuml
 @startuml
@@ -160,9 +172,16 @@ SessionAdapter --> PG
 @enduml
 ```
 
+</details>
+
 ### 3.1 Внутренний workflow retriever-а
 
 Диаграмма показывает retriever как исполняемый процесс: сначала вход приводится к protein sequence, затем выполняется embedding search и контекстное переранжирование.
+
+![Retriever workflow](diagrams/retriever-workflow.svg)
+
+<details>
+<summary>PlantUML source</summary>
 
 ```plantuml
 @startuml
@@ -216,7 +235,14 @@ stop
 @enduml
 ```
 
+</details>
+
 ### 3.2 Runtime flow
+
+![Runtime flow](diagrams/runtime-flow.svg)
+
+<details>
+<summary>PlantUML source</summary>
 
 ```plantuml
 @startuml
@@ -286,9 +312,16 @@ UI --> User : ranked result +\nprotein card
 @enduml
 ```
 
+</details>
+
 ### 3.3 App routing и session persistence
 
 Диаграмма показывает, как Streamlit-приложение выбирает обработчик user turn, сохраняет результат и поддерживает состояние карточки белка между retriever-turn и follow-up сообщениями.
+
+![Streamlit turn routing](diagrams/streamlit-turn-routing.svg)
+
+<details>
+<summary>PlantUML source</summary>
 
 ```plantuml
 @startuml
@@ -328,6 +361,13 @@ stop
 @enduml
 ```
 
+</details>
+
+![Session restore](diagrams/session-restore.svg)
+
+<details>
+<summary>PlantUML source</summary>
+
 ```plantuml
 @startuml
 title Session restore and persisted state
@@ -364,6 +404,8 @@ Chat -> State : restore backend choice
 State --> User : previous chat and protein card
 @enduml
 ```
+
+</details>
 
 ### 3.4 Компоненты и взаимодействие
 

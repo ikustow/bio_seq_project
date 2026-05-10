@@ -68,6 +68,11 @@ Preprocessing pipeline:
 
 The diagram separates long-lived retrieval artifacts from data loaded at runtime for a specific user query.
 
+![Data artifact lifecycle](diagrams/data-artifact-lifecycle.svg)
+
+<details>
+<summary>PlantUML source</summary>
+
 ```plantuml
 @startuml
 title Data artifact lifecycle - embeddings backend
@@ -100,9 +105,16 @@ stop
 @enduml
 ```
 
+</details>
+
 ## 3. Pipeline Architecture
 
 In the current embedding-focused scope, the system consists of a Streamlit UI, an adapter layer, the core retrieval pipeline, Hugging Face backed data/model artifacts, runtime cache, and external APIs for LLM/text embeddings and UniProt metadata.
+
+![Embedding retrieval architecture](diagrams/embedding-retrieval-architecture.svg)
+
+<details>
+<summary>PlantUML source</summary>
 
 ```plantuml
 @startuml
@@ -158,9 +170,16 @@ SessionAdapter --> PG
 @enduml
 ```
 
+</details>
+
 ### 3.1 Internal Retriever Workflow
 
 The diagram presents the retriever as an executable process: the input is first normalized into a protein sequence, then embedding search and contextual reranking are performed.
+
+![Retriever workflow](diagrams/retriever-workflow.svg)
+
+<details>
+<summary>PlantUML source</summary>
 
 ```plantuml
 @startuml
@@ -214,7 +233,14 @@ stop
 @enduml
 ```
 
+</details>
+
 ### 3.2 Runtime Flow
+
+![Runtime flow](diagrams/runtime-flow.svg)
+
+<details>
+<summary>PlantUML source</summary>
 
 ```plantuml
 @startuml
@@ -284,9 +310,16 @@ UI --> User : ranked result +\nprotein card
 @enduml
 ```
 
+</details>
+
 ### 3.3 App Routing and Session Persistence
 
 The diagram shows how the Streamlit application selects the user-turn handler, persists the result, and keeps the protein card state stable between the retriever turn and follow-up messages.
+
+![Streamlit turn routing](diagrams/streamlit-turn-routing.svg)
+
+<details>
+<summary>PlantUML source</summary>
 
 ```plantuml
 @startuml
@@ -326,6 +359,13 @@ stop
 @enduml
 ```
 
+</details>
+
+![Session restore](diagrams/session-restore.svg)
+
+<details>
+<summary>PlantUML source</summary>
+
 ```plantuml
 @startuml
 title Session restore and persisted state
@@ -362,6 +402,8 @@ Chat -> State : restore backend choice
 State --> User : previous chat and protein card
 @enduml
 ```
+
+</details>
 
 ### 3.4 Components and Responsibilities
 
