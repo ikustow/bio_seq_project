@@ -6,6 +6,7 @@ import numpy as np
 import h5py
 import asyncio
 import torch
+import traceback
 from typing import List, Tuple, Generator
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -17,7 +18,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.config import (
     DEFAULT_H5_PATH, DEFAULT_INDEX_PATH, DEFAULT_CACHE_PATH,
     HNSW_M, HNSW_EF_CONSTRUCTION, HNSW_EF_SEARCH, RANDOM_SEED,
-    SEARCH_SERVICE_HOST, SEARCH_SERVICE_PORT, MODEL_NAME
+    SEARCH_SERVICE_HOST, SEARCH_SERVICE_PORT, MODEL_NAME,
+    DEFAULT_FAISS_THREADS
 )
 
 app = FastAPI(title="Unified BioSeq Search Service")
@@ -101,34 +103,52 @@ class SearchRequest(BaseModel):
     k: int = 25
 
 def _embed(sequence: str) -> np.ndarray:
-    processed_seq = " ".join(list(sequence.upper()))
-    inputs = tokenizer(processed_seq, return_tensors="pt").to(device)
-    with torch.no_grad():
-        outputs = model(**inputs)
-        residue_embeddings = outputs.last_hidden_state.squeeze(0)
-    return residue_embeddings.mean(dim=0).cpu().numpy().astype(np.float32)
+    try:
+        print(f"[DEBUG] Embedding request: length={len(sequence)}")
+        processed_seq = " ".join(list(sequence.upper()))
+        inputs = tokenizer(processed_seq, return_tensors="pt").to(device)
+        with torch.no_grad():
+            outputs = model(**inputs)
+            residue_embeddings = outputs.last_hidden_state.squeeze(0)
+        protein_embedding = residue_embeddings.mean(dim=0).cpu().numpy()
+        print(f"[DEBUG] Embedding success: shape={protein_embedding.shape}")
+        return protein_embedding.astype(np.float32)
+    except Exception as e:
+        print(f"[ERROR] Embedding failed: {str(e)}")
+        traceback.print_exc()
+        raise
 
 def _perform_search(query_emb: np.ndarray, k: int):
-    # Single-threaded search for reproducibility
-    original_threads = faiss.get_num_threads()
-    faiss.set_num_threads(1)
     try:
         query_vec = query_emb.reshape(1, -1)
         faiss.normalize_L2(query_vec)
-        distances, indices = index.search(query_vec, k)
-    finally:
-        faiss.set_num_threads(original_threads)
-    return distances, indices
+        
+        print(f"[DEBUG] Search starting: query_vec.shape={query_vec.shape}, index.d={index.d}, k={k}")
+        
+        # Temporarily set to single thread for reproducibility
+        faiss.omp_set_num_threads(1)
+        try:
+            distances, indices = index.search(query_vec, k)
+        finally:
+            # Restore to default FAISS threads
+            faiss.omp_set_num_threads(DEFAULT_FAISS_THREADS)
+            
+        print(f"[DEBUG] Search complete: matches found={len(indices[0])}")
+        return distances, indices
+    except Exception as e:
+        print(f"[ERROR] FAISS search failed: {str(e)}")
+        traceback.print_exc()
+        raise
 
 @app.post("/search")
 async def search(request: SearchRequest):
     try:
         loop = asyncio.get_event_loop()
         
-        # 1. Embed (CPU/GPU bound)
+        # 1. Embed
         query_emb = await loop.run_in_executor(executor, _embed, request.sequence)
         
-        # 2. Search (CPU bound)
+        # 2. Search
         distances, indices = await loop.run_in_executor(executor, _perform_search, query_emb, request.k)
         
         results = [
@@ -138,7 +158,9 @@ async def search(request: SearchRequest):
         ]
         return {"results": results}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print("--- UNIFIED SEARCH SERVICE EXCEPTION ---")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Search Service Error: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

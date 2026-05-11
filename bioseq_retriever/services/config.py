@@ -19,3 +19,8 @@ RANDOM_SEED = 42
 
 # --- Model Settings ---
 MODEL_NAME = "Rostlab/prot_t5_xl_uniref50"
+
+# --- Default FAISS Threads ---
+# This is the default number of threads FAISS will use for multi-threaded operations.
+# It will be restored after single-threaded search operations.
+DEFAULT_FAISS_THREADS = int(os.getenv("FAISS_DEFAULT_THREADS", max(1, os.cpu_count())))
