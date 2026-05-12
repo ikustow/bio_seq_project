@@ -1,49 +1,43 @@
-# RefSeq to Swiss-Prot CDS Mapper
+# DNA Back-Translation and Embedding Pipeline
 
-This project provides a robust, functional Python script to map RefSeq mRNA coding sequences (CDS) to their corresponding UniProt/Swiss-Prot protein accessions.
+This project provides a script to generate synthetic DNA gene sequences from protein amino acid sequences and then compute embeddings using a specialized genomic language model.
 
-## Features
-- **Functional Architecture**: Modular design for clarity and maintainability.
-- **NCBI History Server**: Efficiently manages large-scale data retrieval using `WebEnv` and `QueryKey` to prevent memory and network bottlenecks.
-- **Robustness**: Implements exponential backoff and retry logic to gracefully handle network timeouts, HTTP errors, and NCBI rate-limiting.
-- **Pandas Integration**: Leverages Pandas for high-performance data processing, length statistics, and CSV export.
-- **Surgical Extraction**: Targets annotated `CDS` features within mRNA records to ensure accurate extraction of coding sequences.
+## Data Acquisition
+To obtain the `swissprot.tsv` file:
+1.  Go to the [UniProt website](https://www.uniprot.org/).
+2.  Search for `reviewed:true` to filter by Swiss-Prot entries.
+3.  Select the **Entry** and **Sequence** fields in the download options.
+4.  Download the results as a TSV file and save it as `swissprot.tsv` in the `data_prep` directory.
+
+## Workflow
+
+1.  **Protein Data Input**: Reads protein UniProt accessions and amino acid sequences from `swissprot.tsv`.
+2.  **DNA Gene Synthesis**: For each protein, it generates a single synthetic DNA gene sequence by randomly selecting codons from an inverse codon table for each amino acid.
+3.  **Genomic Embedding**: Each synthetic DNA gene sequence is then embedded using the HyenaDNA model, producing a fixed-size vector representation.
+4.  **Output**: The resulting embeddings are stored in a HDF5 file (`per-gene.h5`), with each UniProt accession serving as a key to a matrix of its corresponding gene variant embeddings.
 
 ## Setup
-1. **Create Conda Environment**:
-   To avoid dependency conflicts, create a new Conda environment and install dependencies natively:
 
-   ```bash
-   conda create -n bioprep-env -c conda-forge python=3.10 numpy pandas biopython certifi urllib3 -y
-   conda activate bioprep-env
-   ```
+1.  **Create Conda Environment**:
+    It is highly recommended to use a clean Conda environment to manage dependencies:
 
-2. **Configure Email**:
-   Open `refseq_to_swissprot.py` and update the `Entrez.email` field with your active email address. NCBI requires this to identify your requests.
+    ```bash
+    conda create -n bioprep-env -c conda-forge python=3.10 numpy pytorch transformers polars h5py -y
+    conda activate bioprep-env
+    ```
 
-   ```python
-   Entrez.email = "your.email@example.com"
-   ```
+2.  **Configuration**:
+    Adjust pipeline parameters (e.g., number of gene variants per protein) in `config.py`. The script will automatically load `swissprot.tsv` and use the specified HyenaDNA model.
 
-3. **(Optional) API Key**:
-   For higher rate limits (10 requests/sec instead of 3), you can register for a free NCBI account. To protect your credentials, the script loads the key from an environment variable. Set it in your terminal before running:
-   ```bash
-   # Windows (PowerShell)
-   $env:NCBI_API_KEY="your_api_key_here"
-   
-   # Linux/macOS
-   export NCBI_API_KEY="your_api_key_here"
-   ```
+3.  **Input Data**:
+    Ensure the `swissprot.tsv` file is present in the project root directory.
 
 ## Usage
-Run the script from your terminal:
+
+Run the main script:
+
 ```bash
-python refseq_to_swissprot.py
+python backtranslate_and_embed.py
 ```
 
-The script will:
-1. Search NCBI for relevant RefSeq records.
-2. Fetch them in batches.
-3. Extract mapping information and sequences.
-4. Print summary statistics (total pairs, shortest/longest/average CDS length).
-5. Save the mappings to `refseq_swissprot_cds.csv`.
+The script will process the `swissprot.tsv` file, generate DNA sequences, compute their embeddings, and save the results to `per-gene.h5`.
