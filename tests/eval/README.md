@@ -23,9 +23,28 @@ L2 (`llm_eval.py`) and L3 (`e2e_eval.py`) harnesses are **not yet implemented** 
 
 ## Prerequisites
 
-- Python 3.9+ with the `bioseq_retriever` runtime installed (i.e. you can already run `python bioseq_retriever/pipeline_interface.py`).
+- Python 3.9+ with the BioSeq runtime installed (i.e. `pip install -r requirements.txt` has run successfully — same set HF Spaces uses).
 - `pyyaml` (likely already present transitively; install with `pip install pyyaml` if not).
 - `python-dotenv` (already in `requirements.txt`) — only used by the eval harness to read a local `.env`, see below.
+
+### Retriever runtime mode
+
+`retriever_eval.py` forces `BIOSEQ_USE_SERVICES=false` by default, so the
+retriever runs **in-process** — same code path the HF Spaces frontend uses
+via `app/frontend/embeddings_pipeline.py`. No need to install fastapi or
+start the standalone `bioseq_retriever/services/*.py` daemons.
+
+On first run the harness calls `bioseq_retriever.src.bootstrap.ensure_data()`,
+which downloads `per-protein.h5` (~1.3 GB) from UniProt FTP into
+`bioseq_retriever/data/`. Idempotent — subsequent runs are no-ops. If you
+already have the file from running the Streamlit app, nothing extra happens.
+
+To pull from a private HF Hub dataset instead (faster), set
+`BIOSEQ_DATA_SOURCE=hf:OWNER/DATASET_REPO` in `.env`.
+
+If you really want services mode (rare — needs `pip install fastapi uvicorn`
+and two extra terminals running `services/embedding_service.py` and
+`services/search_service.py`), set `BIOSEQ_USE_SERVICES=true` explicitly.
 
 ### Required env vars
 

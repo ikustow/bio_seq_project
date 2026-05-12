@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import sys
 import time
 from pathlib import Path
@@ -30,6 +31,12 @@ from tests.eval._common.run_dir import REPO_ROOT, make_run_dir
 _RETRIEVER_ROOT = REPO_ROOT / "bioseq_retriever"
 if str(_RETRIEVER_ROOT) not in sys.path:
     sys.path.insert(0, str(_RETRIEVER_ROOT))
+
+# Default to local in-process mode — matches the HF Spaces deploy
+# (`embeddings_pipeline.py`) and does not need fastapi/uvicorn. Services
+# mode (BIOSEQ_USE_SERVICES=true) is a dev-time alternative; an explicit
+# env var overrides this default.
+os.environ.setdefault("BIOSEQ_USE_SERVICES", "false")
 
 
 def _build_prompt(input_seq: str, input_type: str, question: str) -> str:
@@ -170,7 +177,12 @@ def main(argv: list[str] | None = None) -> int:
 
     # Import here so `python -m tests.eval.retriever_eval --help` works even if
     # the retriever's heavy ML deps are not installed.
+    from src.bootstrap import ensure_data  # type: ignore[import-not-found]
     from src.pipeline import run_bioseq_pipeline  # type: ignore[import-not-found]
+
+    # Auto-download per-protein.h5 (~1.3 GB) on first run, like the HF
+    # Spaces deploy does. Idempotent — no-op if the file is already present.
+    ensure_data()
 
     data = load_proteins()
     test_cases = data.get("test_cases") or []
