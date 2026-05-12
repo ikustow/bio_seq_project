@@ -1,0 +1,245 @@
+# tests/eval/data/proteins.yaml
+# -----------------------------------------------------------------------------
+# L1 (Retriever) validation set. See report/EVALUATION_PLAN.md §2.
+#
+# Mental model of the retriever (what we are testing):
+#     INPUTS   : (input_seq, context_question)
+#     OUTPUT   : ordered top-5 UniProt accessions
+#     PASS     : the correct accession is at rank 1 (top-1)
+#                AND it is among the top-5 (recall@5).
+#
+# This file is therefore organised as a flat list of TEST CASES. Each test
+# case is self-contained: it carries its own `input_seq`, its own question
+# and its own expected output. The canonical UniProt sequences live on
+# UniProt — we do NOT duplicate them in this file.
+#
+# Format: YAML (multi-line sequences, inline comments).
+#
+# How to fill in:
+#   Fill the `test_cases` list. Each entry is one (input, question, expected
+#   top-5) triple. The variation rules below describe how `input_seq` is built
+#   from the canonical UniProt sequence of the chosen protein.
+#
+# Variation rules (these describe how `input_seq` relates to the canonical
+# UniProt sequence of the protein referenced by `metadata.protein_ref`).
+# NOTE: DNA-vs-protein is captured by the `input_type` field below — it is
+# orthogonal to the variant tag. Any variant can be tested in either form.
+#   V0_full                     : input_seq = canonical sequence verbatim
+#                                 (full length).
+#   V1_not_full                 : input_seq is a strict subsequence of the
+#                                 canonical (e.g. first 50%, middle 60%).
+#                                 Anything shorter than full.
+#   V2_point_mutations_3        : canonical with 3 single-aa substitutions
+#                                 at positions chosen with seed=42 (the
+#                                 harness can do this — paste canonical
+#                                 and put `__GENERATE__` in input_seq, or
+#                                 pre-compute and paste the mutated string).
+#   V3_full_exact_species       : input_seq = full canonical of some species,
+#                                 and `context_question` explicitly names a
+#                                 specific species — either the species we
+#                                 WANT (e.g. "human variant" → expect Human
+#                                 homolog at top-1) or the species we want
+#                                 to EXCLUDE (e.g. "any species except
+#                                 Human" → expect a non-Human homolog at
+#                                 top-1). The reranker is expected to use
+#                                 this hint and re-order results accordingly.
+#                                 Use this to test that species-context in
+#                                 the question actually re-orders results.
+#   NEG                         : 100 uniformly random amino acids (seed=42).
+#                                 No specific accession is expected.
+# -----------------------------------------------------------------------------
+
+
+# =============================================================================
+# 1. CONTEXT QUESTION POLICY
+# =============================================================================
+# Questions are intentionally diverse — from strict ("Identify this protein
+# and list close matches.") to short user-style ("What is it?", "What's
+# that?") to explicit species-hint phrasings. This is a deliberate trade-off
+# (see EVALUATION_PLAN.md §2.3 and §9): we gain robustness coverage but lose
+# strict isolation of wording vs. retrieval signal. When debugging a failed
+# case, inspect the top-50 (pre-rerank) — that signal is wording-independent.
+
+
+# =============================================================================
+# 2. TEST CASES — the actual eval dataset
+# =============================================================================
+# Each entry is one query sent through the retriever.
+#
+# Fields:
+#   id                  Stable string id; used in result CSVs.
+#   input_seq           The literal sequence handed to the retriever, in the
+#                       same format the UI would send. Multi-line allowed.
+#                       NO FASTA header. Whitespace is stripped on load.
+#   input_type          "protein" or "dna". Orthogonal to `variant` — any
+#                       variant can be exercised in either form.
+#   context_question    Literal string. Usually one of context_questions above,
+#                       but ANY string is allowed.
+#   expected:
+#     top1_accession            UniProt accession that MUST be at rank 1 after
+#                               rerank. `null` means "no specific top-1 is
+#                               expected" (used by the negative control).
+#     must_appear_in_top5       List of UniProt accessions that MUST appear in
+#                               the returned top-5 (any order). Usually just
+#                               [top1_accession]; can include known homologs
+#                               if the dataset author wants to enforce them.
+#                               Empty list means "no constraint on top-5".
+#     top1_score_below          (Optional, negative control only.) The top-1
+#                               similarity score must be strictly less than
+#                               this value. Use to assert that the system
+#                               reports low confidence on random input.
+#   metadata:                   Free-form. Used for reporting (group by
+#                               variant, etc.), not for assertions.
+#     protein_ref               UniProt accession of the protein this case is
+#                               about (used to group results in the report).
+#                               `null` for NEG.
+#     variant                   V0_full | V1_not_full | V2_point_mutations_3
+#                               | V3_full_exact_species | NEG
+#     notes                     Short human-readable note.
+# -----------------------------------------------------------------------------
+
+test_cases:
+
+  - id: T01_P01308_V1
+    input_seq: |
+      MALWMRLLPLLALLALWGPDPAAAFVNQHLCGSHLVEALYLVCGERGFFYTPKTRREAEDLQVGQVELGGGPGAGSLQPLALEGSLQKRGIVEQCCTSICSLYQLENYCN
+    input_type: protein
+    context_question: "I am looking for sequences involved in glucose metabolism and structurally related to human insulin."
+    expected:
+      top1_accession: P01308
+      must_appear_in_top5: [P01308, Q6YK33]
+    metadata:
+      protein_ref: P01308
+      variant: V0_full
+      notes: "Baseline — full canonical sequence, insulin Human."
+
+
+  - id: T02_Q6YK33_V1
+    input_seq: |
+      MALWMRLLPLLALLALWGPDPAAAFVNQHLCGSHLVEALYLVCGERGFFYTPKTRREAEDLQVGQVELGGGPGAGSLQPLALEGSLQKRGIVEQCCTSICSLYQLENYCN
+    input_type: protein
+    context_question: "I am interested in any species except Human."
+    expected:
+      top1_accession: Q6YK33
+      must_appear_in_top5: [Q6YK33]
+    metadata:
+      protein_ref: Q6YK33
+      variant: V3_full_exact_species
+      notes: "Baseline — full canonical sequence, insulin Gorilla"
+  
+  - id: T03_P01308_V2
+    # First 55 aa of P01308 (110 aa / 2 = 55).
+    input_seq: |
+      MALWMRLLPLLALLALWGPDPAAAFVNQHLCGSHLVEALYLVCGERGFFYTPKTR
+    input_type: protein
+    context_question: "Identify this protein and list close matches."
+    expected:
+      top1_accession: P01308
+      must_appear_in_top5: [P01308]
+    metadata:
+      protein_ref: P01308
+      variant: V1_not_full
+      notes: "Half-length fragment — tests truncation robustness. insulin, Human"
+
+  - id: T04_P01308_V3
+    # Mutations in 3 places (aminoacid replacement). 
+    input_seq: |
+      MAPWMRLLPLLALLALWGPDPAAAFVNQYLCGSHLVEALYLVCGERGFFYTPKTRREAEDLQVGQVELVGGPGAGSLQPLALEGSLQKRGIVEQCCTSICSLYQLENYCN
+    input_type: protein
+    context_question: "Identify this protein and list close matches."
+    expected:
+      top1_accession: P01308
+      must_appear_in_top5: [P01308]
+    metadata:
+      protein_ref: P01308
+      variant: V2_point_mutations_3
+      notes: "Mutations in 3 places (aminoacid replacement). insulin, Human"
+
+  - id: T05_P36845_V1
+    input_seq: |
+      ATGACAAAGAGACTCCGGGTGGAAGATGACTTCAACCCCGTCTACCCCTATGGCTACGCGCGGAATCAAAATATTCCCTTCCTCACTCCCCCCTTTGTCTCCTCCAATGGATTTCAAAACTTCCCCCCTGGGGTCCTGTCACTTAAACTGGCTGACCCAATCACCATTAACAATCAAAATGTATCACTCAAGGTTGGAGGGGGGCTAACTTTGCAAGAAGAAACTGGAAAATTAACAGTTAATACTGAACCACCTTTGCATCTTACAAATAACAAATTAGGGATAGCTTTAGACGCTCCATTTGATGTTATAGACAATAAGCTTACACTATTAGCAGGCCATGGCTTGTCTATTATAACAAAAGAAACATCAACACTGCCTGGCTTGGTTAATACTCTTGTAGTATTAACTGGAAAGGGTATTGGAACAGATTTATCAAATAATGGTGGAAATATATGTGTTAGAGTTGGAGAAGGCGGCGGCTTATCATTTAATGACAATGGAGACTTGGTAGCATTTAATAAAAAAGAAGACAAACGCACCCTATGGACAACTCCAGACACATCTCCAAATTGCAGAATTGATCAGGATAAGGACTCTAAGCTAACTTTGGTCCTTACAAAGTGTGGAAGTCAAATATTAGCCAATGTGTCATTAATTGTTGTAGCTGGAAGGTACAAAATTATCAATAACAATACTAATCCAGCTCTTAAAGGATTTACCATTAAATTGTTGTTTGATAAAAATGGAGTCCTTATGGAATCTTCAAATCTTGGTAAATCATATTGGAACTTTCGAAATCAAAATTCAATTATGTCAACAGCTTATGAAAAAGCTATTGGTTTTATGCCTAATTTGGTAGCCTATCCAAAACCTACCACTGGCTCTAAAAAATATGCAAGAGATATAGTTTATGGAAACATCTACCTTGGCGGAAAGCCACATCAACCAGTAACCATTAAAACTACCTTTAACCAGGAAACTGGATGTGAATACTCTATTACATTTGATTTTAGTTGGGCCAAAACTTATGTAAATGTTGAATTTGAAACTACCTCTTTTACCTTTTCCTATATTGCCCAAGAATAA
+    input_type: dna
+    context_question: "What is it?"
+    expected:
+      top1_accession: P36845
+      must_appear_in_top5: [P36845, P68983, P68982]
+    metadata:
+      protein_ref: P36845
+      variant: V0_full
+      notes: "DNA full sequence"
+
+  - id: T06_P36845_V2
+    # P36845 dna randomly halfly cut
+    input_seq: |
+      TTTGATGTTATAGANAATAAGCTTACACTATTAGCAGGCCATGGCTTGTCTATTATAACAAAAGAAACATCAACACTGCCTGGCTTGGTTAATACTCTTGTAGTATTAACTGGAAAGGGTATTGGAACAGATTTATCAAATAATGGTGGAAATATATGTGTTAGAGTTGGAGAAGGCGGCGGCTTATCATTTAATGACAATGGAACTTGGTAGCATTTAATAAAAAAGAAGACAAACGCACCCTATGGACAACTCCAGACACATCTCCNAATTGCAGAATTGATCAGGATAAGGACTCTAAGCTAACTTTGGTCCTTACAAAGTGTGGAAGTCAAATATTAGCCAATGTGTCATTAATTGTTGTAGCTGGAAGGTACAAAATTATCAATAACAATANTAATCCAGCTCTTAAAGGATTACCATTAANTTGTTGTTTGATAAAAATGGGNCCTTATGGAATCTTCAAATCTTGGTAAATCATATTGGAACTTTCGAAATCAAAATTCAATTATGTCAACNGCTTATGAAAAAGCTATT
+    input_type: dna
+    context_question: "What's that?"
+    expected:
+      top1_accession: P36845
+      must_appear_in_top5: [P36845, P68983]
+    metadata:
+      protein_ref: P36845
+      variant: V1_not_full
+      notes: "DNA cut sequence"
+      
+
+  - id: T07_P0DTC2_V1
+    input_seq: |
+      MFVFLVLLPLVSSQCVNLTTRTQLPPAYTNSFTRGVYYPDKVFRSSVLHSTQDLFLPFFSNVTWFHAIHVSGTNGTKRFDNPVLPFNDGVYFASTEKSNIIRGWIFGTTLDSKTQSLLIVNNATNVVIKVCEFQFCNDPFLGVYYHKNNKSWMESEFRVYSSANNCTFEYVSQPFLMDLEGKQGNFKNLREFVFKNIDGYFKIYSKHTPINLVRDLPQGFSALEPLVDLPIGINITRFQTLLALHRSYLTPGDSSSGWTAGAAAYYVGYLQPRTFLLKYNENGTITDAVDCALDPLSETKCTLKSFTVEKGIYQTSNFRVQPTESIVRFPNITNLCPFGEVFNATRFASVYAWNRKRISNCVADYSVLYNSASFSTFKCYGVSPTKLNDLCFTNVYADSFVIRGDEVRQIAPGQTGKIADYNYKLPDDFTGCVIAWNSNNLDSKVGGNYNYLYRLFRKSNLKPFERDISTEIYQAGSTPCNGVEGFNCYFPLQSYGFQPTNGVGYQPYRVVVLSFELLHAPATVCGPKKSTNLVKNKCVNFNFNGLTGTGVLTESNKKFLPFQQFGRDIADTTDAVRDPQTLEILDITPCSFGGVSVITPGTNTSNQVAVLYQDVNCTEVPVAIHADQLTPTWRVYSTGSNVFQTRAGCLIGAEHVNNSYECDIPIGAGICASYQTQTNSPRRARSVASQSIIAYTMSLGAENSVAYSNNSIAIPTNFTISVTTEILPVSMTKTSVDCTMYICGDSTECSNLLLQYGSFCTQLNRALTGIAVEQDKNTQEVFAQVKQIYKTPPIKDFGGFNFSQILPDPSKPSKRSFIEDLLFNKVTLADAGFIKQYGDCLGDIAARDLICAQKFNGLTVLPPLLTDEMIAQYTSALLAGTITSGWTFGAGAALQIPFAMQMAYRFNGIGVTQNVLYENQKLIANQFNSAIGKIQDSLSSTASALGKLQDVVNQNAQALNTLVKQLSSNFGAISSVLNDILSRLDKVEAEVQIDRLITGRLQSLQTYVTQQLIRAAEIRASANLAATKMSECVLGQSKRVDFCGKGYHLMSFPQSAPHGVVFLHVTYVPAQEKNFTTAPAICHDGKAHFPREGVFVSNGTHWFVTQRNFYEPQIITTDNTFVSGNCDVVIGIVNNTVYDPLQPELDSFKEELDKYFKNHTSPDVDLGDISGINASVVNIQKEIDRLNEVAKNLNESLIDLQELGKYEQYIKWPWYIWLGFIAGLIAIVMVTIMLCCMTSCCSCLKGCCSCGSCCKFDEDDSEPVLKGVKLHYT
+    input_type: protein
+    context_question: "What's that?"
+    expected:
+      top1_accession: P0DTC2
+      must_appear_in_top5: [P0DTC2]
+    metadata:
+      protein_ref: P0DTC2
+      variant: V0_full
+      notes: "Another human protein"
+
+  - id: T08_P0DTC2_V2
+    # P0DTC2 randomly cut
+    input_seq: |
+      FKIYSKHTPINLVRDLPQGFSALEPLVDLPIGINITRFQTLLALHRSYLTPGDSSSGWTAGAAAYYVGYLQPRTFLLKYNENGTITDAVDCALDPLSTKCTLKSFTVEKGIYQTSNFRVQPTESIVRFPNITNLCPFGEVFNATRFASVYAWNXKRISNCVADYSVLYNSASFSTFKCYGVSPTKLNDLCFTNVYADSFVIRGDEVRQIAPGQTGXIADYNYKLPDDFTGCVIAWNSNNLDSKVGGNYNYLYRLFRKSNLKPFERDISTEIYQAGSTPCNGVEGFNCYFPLQSYGFQPTNGVGYQPYRVVVLSFELLHAPATVCGPKKSTNLVKNKCVNFNFNGLTGTGVLTESNKKFLPFQQFGRDIADTTDAVRDPQTLEILDITPCSFGGVSVITPGTNTSNQVAVLYQDVNCTEVPVAIHADQLTPTWRVYSTGSNVFQTRAGCLIGAEHVNNSYECDIPIGAGICSYQTQTNSPRRARSVASQSIIAYTMSLGAENSVAYSNNSIAIPTNFTISVTTEILPVSMTKTSVDCTMYICGDSTECSNLLLQYGSFCTQLNRALTGIAVEQDKNTQEVFAQVKQIYKTPPIKDFGGFNFSQILPDPSKPSKRSFIEDLLFNKVTLADAGFIKQYGDCLGDIAARDLICAQKFNGLTVLPPLLTDEMIAQYTSALLAGTITSGWTFGAGAALQIPFAMQM
+    input_type: protein
+    context_question: "Identify this protein and list close matches."
+    expected:
+      top1_accession: P0DTC2
+      must_appear_in_top5: [P0DTC2]
+    metadata:
+      protein_ref: P0DTC2
+      variant: V1_not_full
+      notes: "Another human protein, cut"
+
+  - id: T09_O95185_V1
+    # 
+    input_seq: |
+      MRKGLRATAARCGLGLGYLLQMLVLPALALLSASGTGSAAQDDDFFHELPETFPSDPPEPLPHFLIEPEEAYIVKNKPVNLYCKASPATQIYFKCNSEWVHQKDHIVDERVDETSGLIVREVSIEISRQQVEELFGPEDYWCQCVAWSSAGTTKSRKAYVRIAYLRKTFEQEPLGKEVSLEQEVLLQCRPPEGIPVAEVEWLKNEDIIDPVEDRNFYITIDHNLIIKQARLSDTANYTCVAKNIVAKRKSTTATVIVYVNGGWSTWTEWSVCNSRCGRGYQKRTRTCTNPAPLNGGAFCEGQSVQKIACTTLCPVDGRWTPWSKWSTCGTECTHWRRRECTAPAPKNGGKDCDGLVLQSKNCTDGL
+    input_type: protein
+    context_question: "what is the best match for species Human?"
+    expected:
+      top1_accession: O95185
+      must_appear_in_top5: [O95185-2, O95185]
+    metadata:
+      protein_ref: O95185
+      variant: V3_full_exact_species
+      notes: "That demo sequence from ui"
+
+  # ---------- NEGATIVE CONTROL ---------------------------------------------
+
+  - id: T10_NEG_random
+    # 100 uniformly random amino acids; generated with:
+    #   python -c "import random; random.seed(42); \
+    #     print(''.join(random.choices('ACDEFGHIKLMNPQRSTVWY', k=100)))"
+    # Frozen here so the test is reproducible across machines.
+    input_seq: |
+      PAGFRQVCKAFMAEPMFNTATQHEYHCCTPTRMYINTPVNRAFGCFDGPIIFGWPPEREIYPNQTSFAHGFWVHQIWLGFNGNVIFYMCADPSKCIYMYV
+    input_type: protein
+    context_question: "Identify this protein and list close matches."
+    expected:
+      top1_accession: null
+      must_appear_in_top5: []
+      top1_score_below: 0.5        # adjust after baseline run
+    metadata:
+      protein_ref: null
+      variant: NEG
+      notes: "Random sequence — only checks that the system does not crash and reports low confidence."
