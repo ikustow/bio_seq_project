@@ -177,12 +177,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Import here so `python -m tests.eval.retriever_eval --help` works even if
     # the retriever's heavy ML deps are not installed.
-    from src.bootstrap import ensure_data  # type: ignore[import-not-found]
     from src.pipeline import run_bioseq_pipeline  # type: ignore[import-not-found]
-
-    # Auto-download per-protein.h5 (~1.3 GB) on first run, like the HF
-    # Spaces deploy does. Idempotent — no-op if the file is already present.
-    ensure_data()
 
     data = load_proteins()
     test_cases = data.get("test_cases") or []

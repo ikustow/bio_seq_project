@@ -34,13 +34,18 @@ retriever runs **in-process** — same code path the HF Spaces frontend uses
 via `app/frontend/embeddings_pipeline.py`. No need to install fastapi or
 start the standalone `bioseq_retriever/services/*.py` daemons.
 
-On first run the harness calls `bioseq_retriever.src.bootstrap.ensure_data()`,
-which downloads `per-protein.h5` (~1.3 GB) from UniProt FTP into
-`bioseq_retriever/data/`. Idempotent — subsequent runs are no-ops. If you
-already have the file from running the Streamlit app, nothing extra happens.
+The harness expects the same local data setup you already use when running
+the Streamlit frontend (`app/frontend/app.py`) against the retriever:
+`per-protein.h5`, FAISS `.index`, and accessions cache present where
+`BIOSEQ_H5_PATH` points (default `data/per-protein.h5` relative to cwd).
+No auto-download is triggered — keeps the eval run boring and predictable.
 
-To pull from a private HF Hub dataset instead (faster), set
-`BIOSEQ_DATA_SOURCE=hf:OWNER/DATASET_REPO` in `.env`.
+If the data is missing, the pipeline raises a clear path/load error and you
+can either:
+- run `python -m bioseq_retriever.src.bootstrap` once to populate it from
+  UniProt FTP (or set `BIOSEQ_DATA_SOURCE=hf:OWNER/DATASET_REPO` for a faster
+  pull from a HF Hub dataset),
+- or copy the file from wherever you have it.
 
 If you really want services mode (rare — needs `pip install fastapi uvicorn`
 and two extra terminals running `services/embedding_service.py` and
