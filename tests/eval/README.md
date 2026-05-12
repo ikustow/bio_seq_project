@@ -10,16 +10,21 @@ Live implementation status — see **Appendix A** of the plan.
 tests/eval/
 ├── data/                     # YAML datasets (L1 / L2 / L3) + UniProt JSON fixtures
 ├── _common/                  # shared helpers
+│   ├── env.py                #   .env loader
+│   ├── llm_clients.py        #   Gemini proxy direct caller + protein-context builder
+│   ├── judge.py              #   OpenRouter rubric scorer
 │   ├── loader.py             #   YAML loaders
 │   └── run_dir.py            #   timestamped run directories
 ├── validate_data.py          # dataset validator (run first)
 ├── retriever_eval.py         # L1
-├── aggregate_report.py       # markdown summary
+├── llm_eval.py               # L2
+├── e2e_eval.py               # L3
+├── aggregate_report.py       # markdown summary (per level)
 ├── run_all.py                # master entrypoint
 └── runs/                     # output, gitignored (except baseline/)
 ```
 
-L2 (`llm_eval.py`) and L3 (`e2e_eval.py`) harnesses are **not yet implemented** — see plan Appendix A.2.
+L2 (`llm_eval.py`) and L3 (`e2e_eval.py`) harnesses are wired and ready to run. See `report/EVALUATION_PLAN.md` Appendix A for the implementation status.
 
 ## Prerequisites
 
@@ -57,9 +62,9 @@ For L1 (retriever):
 
 - **`MISTRAL_API_KEY`** OR **`OPENAI_API_KEY`** — the retriever's LangGraph extractor needs an LLM. Set one. (Defaults to Mistral when both/none are set, matching HF Spaces deploy.)
 
-For L2 / L3 (once those harnesses land):
+For L2 (LLM scenarios) and L3 (end-to-end):
 
-- `BIOSEQ_LLM_PROXY_URL`, `BIOSEQ_LLM_PROXY_TOKEN` — Cloudflare-proxied Gemini.
+- `BIOSEQ_LLM_PROXY_URL`, `BIOSEQ_LLM_PROXY_TOKEN` — Cloudflare-proxied Gemini (same names as production).
 - `OPENROUTER_API_KEY` — judge LLM.
 
 ### Where to put them
@@ -92,18 +97,29 @@ python -m tests.eval.run_all
 
 # Explicit level
 python -m tests.eval.run_all --suite L1
+python -m tests.eval.run_all --suite L2
+python -m tests.eval.run_all --suite L3
+python -m tests.eval.run_all --suite all
 
 # Validate only (no eval)
 python -m tests.eval.validate_data
 
-# Re-aggregate the latest run without re-running the retriever
-python -m tests.eval.aggregate_report
+# Individual harnesses (useful for debugging)
+python -m tests.eval.retriever_eval
+python -m tests.eval.llm_eval --only A1,B10        # subset by scenario id
+python -m tests.eval.e2e_eval --subsets e2e_full   # subset by L3 bucket
+
+# Re-aggregate the latest run without re-running anything
+python -m tests.eval.aggregate_report --level L1
+python -m tests.eval.aggregate_report --level L2
+python -m tests.eval.aggregate_report --level L3
 ```
 
 Each run lands in `tests/eval/runs/<ISO-timestamp>-<level>/`:
 
-- `retriever_results.csv` — one row per test case (schema in `data/README.md`).
-- `report.md` — markdown summary aligned with the plan §2.4 metrics table.
+- L1 → `retriever_results.csv` + `report.md`
+- L2 → `llm_results.csv` + `llm_raw/<sc>.txt` + `judge_raw/<sc>_<item>.json` + `report.md`
+- L3 → `e2e_results.csv` + `llm_raw/<sc>_turnN.txt` + `judge_raw/...` + `report.md`
 
 `run_all.py` skips validation with `--skip-validate` if you have already
 validated manually in the same session.

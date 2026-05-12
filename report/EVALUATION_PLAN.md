@@ -305,38 +305,42 @@ python -m tests.eval.e2e_eval       --out runs/2026-05-13-e2e/       --judge ope
 
 - [x] Данные L1/L2/L3 описаны (`proteins.yaml`, `llm_scenarios.yaml`, `end_to_end.yaml`).
 - [x] NEG-последовательность зафиксирована (T10 в `proteins.yaml`, seed=42).
-- [ ] `tests/eval/_common/loader.py` — YAML → dataclasses, общий для L1/L2/L3.
-- [ ] `tests/eval/_common/run_dir.py` — создаёт `runs/<ISO-timestamp>/{retriever,llm,e2e}/`.
-- [ ] `tests/eval/validate_data.py` — парсит YAML, ловит опечатки и оставшиеся placeholder'ы.
-- [ ] `tests/eval/retriever_eval.py` — L1: прогон 10 кейсов через `bioseq_retriever`, считает top-1/top-5/MRR, пишет CSV.
-- [ ] `tests/eval/aggregate_report.py` — собирает CSV из последнего прогона в markdown для `report/REPORT.MD §4.1`.
-- [ ] `tests/eval/run_all.py` — мастер-entrypoint (`--suite L1|L2|L3|all`).
-- [ ] `tests/eval/README.md` — как запустить локально (env vars, prerequisites, команды).
+- [x] `tests/eval/_common/loader.py` — YAML → dict, общий для L1/L2/L3.
+- [x] `tests/eval/_common/run_dir.py` — создаёт `runs/<ISO-timestamp>-<suite>/`.
+- [x] `tests/eval/_common/env.py` — автоподгрузка `.env` из корня репо во всех entry points (`override=False`, не ломает HF prod).
+- [x] `tests/eval/validate_data.py` — парсит YAML, ловит опечатки, оставшиеся placeholder'ы, валидность accession-форматов и context_id ссылок.
+- [x] `tests/eval/retriever_eval.py` — L1: прогон 10 кейсов через `bioseq_retriever` в local mode, считает top-1/top-5/MRR/Top-50 recall, пишет CSV.
+- [x] `tests/eval/aggregate_report.py` — собирает CSV в markdown; поддерживает `--level L1|L2|L3`.
+- [x] `tests/eval/run_all.py` — мастер-entrypoint (`--suite L1|L2|L3|all`).
+- [x] `tests/eval/README.md` — как запустить локально (env vars, prerequisites, команды).
 - [ ] Первый baseline-прогон L1 → внести числа в `report/REPORT.MD §4.1`.
 - [ ] Ручной прогон 1× e2e + 1× grounding сценария → описание в чекпоинт-отчёте.
 
 ### A.2 Code-submission набор (20 мая)
 
-- [ ] `tests/eval/_common/llm_clients.py` — обёртка над `app/frontend/chat_llm_pipeline._call_gemini_proxy` (вызывается напрямую, в обход Streamlit-coupled `run_turn_chat_llm`).
-- [ ] `tests/eval/_common/judge.py` — OpenRouter client + rubric scorer.
-- [ ] `tests/eval/llm_eval.py` — L2: прогон 20 сценариев через Gemini + judge, CSV-выход.
-- [ ] `tests/eval/e2e_eval.py` — L3: FASTA→retriever→карточка→follow-up→judge, с `override_card` hook'ом для `grounding` сценариев, поддержкой `multi_turn` через сохранение chat-history.
-- [ ] `tests/eval/run_all.py` — поддержка `--suite L2`, `--suite L3`, `--suite all`.
+- [x] `tests/eval/_common/llm_clients.py` — прямой вызов Cloudflare-proxied Gemini в обход Streamlit-coupled `run_turn_chat_llm`. **Отклонение от исходного плана:** `_call_gemini_proxy` сам читает `st.session_state` через `_build_gemini_contents`, поэтому импортировать его не удалось — пришлось реплицировать system prompt и context-builder. Это создаёт контракт «держать `llm_clients.build_protein_context_text` в синке с `chat_llm_pipeline._get_current_protein_context`» — см. §A.3.
+- [x] `tests/eval/_common/judge.py` — OpenRouter client (через `requests`, без openai SDK) + rubric scorer.
+- [x] `tests/eval/llm_eval.py` — L2: прогон 20 сценариев через Gemini + judge, CSV + raw response files.
+- [x] `tests/eval/e2e_eval.py` — L3: FASTA→retriever→карточка→follow-up→judge, с `override_card` hook'ом для `grounding`, поддержкой `multi_turn` через сохранение chat-history (deepcopy per turn), `prompt_injection` subset.
+- [x] `tests/eval/run_all.py` — поддержка `--suite L2`, `--suite L3`, `--suite all`.
 - [ ] Полный прогон зафиксирован в `tests/eval/runs/baseline/` и закоммичен.
-- [ ] `tests/eval/README.md` обновлён (включая env vars `BIOSEQ_LLM_PROXY_URL`, `BIOSEQ_LLM_PROXY_TOKEN`, `OPENROUTER_API_KEY`).
+- [ ] `regression_baseline` diff-логика (сейчас в `end_to_end.yaml` описана, но `e2e_eval.py` её не выполняет — отложено до первого baseline).
 
 ### A.3 Архитектурные решения, уже принятые (не пересматривать без причины)
 
-- **L2/L3 не используют `run_turn_chat_llm`** — Streamlit-сцепление дороже, чем выгода. Вызываем `_call_gemini_proxy` напрямую с явным `protein_context`. Это значит: harness не пишет в session-БД, в production-логике не остаётся следов eval-прогонов.
-- **Judge — внешняя OpenRouter free model**, не Gemini (чтобы не оценивать самого себя).
+- **L2/L3 не используют `run_turn_chat_llm`** — Streamlit-сцепление дороже, чем выгода. Harness реплицирует поведение `_call_gemini_proxy` в `_common/llm_clients.py:call_gemini` с явным `protein_context` и `history`. Минус: дублирование system-prompt и protein-context-builder между prod и eval. **Контракт:** при правке `app/frontend/chat_llm_pipeline.py::_get_current_protein_context` или системного промта Gemini — синхронизировать с `tests/eval/_common/llm_clients.py`.
+- **Judge — внешняя OpenRouter free model** (`meta-llama/llama-3.1-8b-instruct:free`), не Gemini (чтобы не оценивать самого себя). Конфиг judge живёт в `llm_scenarios.yaml::judge`; `end_to_end.yaml::judge` указывает `inherit_from: llm_scenarios.yaml`.
 - **Один master-CLI** (`run_all.py`) с под-командами; каждый L-уровень также имеет автономный CLI (`python -m tests.eval.retriever_eval` и т.д.) — удобно дёргать частями при отладке.
-- **Все прогоны** пишут в `runs/<ISO-timestamp>/`; `runs/baseline/` — единственная директория, которая коммитится.
+- **Все прогоны** пишут в `runs/<ISO-timestamp>-<suite>/`; `runs/baseline/` — единственная директория, которая коммитится.
+- **L1 harness принудительно ставит `BIOSEQ_USE_SERVICES=false`** через `os.environ.setdefault` — это соответствует HF-prod (local mode, без fastapi). Явный env var в `.env` перебивает default.
 - **C20 (match_score consistency)**, **A7 (honest about scarce data)**, **C19 (Thr835Met из disease.description)** — rubric'и явно скоупированы под то, что pipeline передаёт Gemini (см. §3.4 и §9 пункт 7).
+- **`budget` и `regression_baseline` подсекции L3** — `budget` метрики считаются автоматически из латенси-полей `e2e_full` (p50/p95 total ms). `regression_baseline` — отдельная фича, не входит в первую версию harness'а.
 
 ### A.4 Параллельные / отложенные задачи
 
 - [ ] Расширение L1 датасета до 20–50 белков (§9 риск 1) — после первого baseline-прогона.
 - [ ] Полная variation-matrix 4×4×2 (§9 риск 6) — отложено, не в чекпоинт-deliverable.
 - [ ] Ручной аудит 20% сценариев класса C (§9 риск 2) — после первого автоматического прогона L2.
+- [ ] `regression_baseline` diff-логика в L3 harness — после первого approved baseline'а.
 - [ ] `report/MANUAL_SMOKE.md` — пока не создан; ручные сценарии §4.1 описать там.
 - [ ] Разрешить открытые вопросы §10 (стабильность API чата с Иваном; live vs local L2).

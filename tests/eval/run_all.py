@@ -20,9 +20,11 @@ import argparse
 import sys
 from typing import Callable
 
-from tests.eval import validate_data
-from tests.eval import retriever_eval
 from tests.eval import aggregate_report
+from tests.eval import e2e_eval
+from tests.eval import llm_eval
+from tests.eval import retriever_eval
+from tests.eval import validate_data
 from tests.eval._common.env import load_env
 
 
@@ -35,17 +37,25 @@ def _run_L1() -> int:
     if rc != 0:
         return rc
     print("\n=== L1: aggregation ===")
-    return aggregate_report.main([])
+    return aggregate_report.main(["--level", "L1"])
 
 
 def _run_L2() -> int:
-    print("L2 (LLM) harness not yet implemented — see EVALUATION_PLAN.md Appendix A.2.", file=sys.stderr)
-    return 2
+    print("\n=== L2: LLM scenarios eval ===")
+    rc = llm_eval.main([])
+    if rc != 0:
+        return rc
+    print("\n=== L2: aggregation ===")
+    return aggregate_report.main(["--level", "L2"])
 
 
 def _run_L3() -> int:
-    print("L3 (end-to-end) harness not yet implemented — see EVALUATION_PLAN.md Appendix A.2.", file=sys.stderr)
-    return 2
+    print("\n=== L3: end-to-end eval ===")
+    rc = e2e_eval.main([])
+    if rc != 0:
+        return rc
+    print("\n=== L3: aggregation ===")
+    return aggregate_report.main(["--level", "L3"])
 
 
 SUITE_DISPATCH: dict[str, Callable[[], int]] = {
