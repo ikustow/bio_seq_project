@@ -1,4 +1,4 @@
-# BioSeq Investigator — Evaluation Plan (Functional / Quality Testing)
+# BioSeq Investigator — Validation Plan (Functional / Quality Testing)
 
 Документ описывает план функционального тестирования качества системы (не unit-тестов кода): как мы измеряем, что **retriever находит правильные белки**, а **production LLM отвечает по делу**. Документ адресован менторам и закрывает чекпоинтные требования от 14 мая 2026:
 
@@ -97,7 +97,7 @@ Production LLM (Gemini через Cloudflare proxy) генерирует отв�
 
 ### 3.2 Какой judge LLM использовать
 
-**OpenRouter free model** — `meta-llama/llama-3.3-70b-instruct:free`. Независим от Gemini, изоляция judge от production. Изначально планировался `meta-llama/llama-3.1-8b-instruct:free`, но OpenRouter удалил его из каталога в мае 2026; Llama 3.3 70B (тоже бесплатная) — прямой апгрейд: 70B на порядок надёжнее для class-C rubric scoring.
+**OpenRouter free model** — `meta-llama/llama-3.3-70b-instruct:free`. Независим от Gemini, изоляция judge от production. 
 
 Альтернативы на случай регрессии каталога: `openai/gpt-oss-120b:free` (другое семейство — сильнее изоляция от Gemini), `nvidia/nemotron-nano-9b-v2:free` (быстрее, но слабее).
 

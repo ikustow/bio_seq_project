@@ -8,7 +8,7 @@ and chat history explicitly.
 
 The `build_protein_context_text` function below mirrors the production helper
 `chat_llm_pipeline._get_current_protein_context`. If the production format
-changes, this must be updated in lock-step — see EVALUATION_PLAN.md §A.3.
+changes, this must be updated in lock-step — see VALIDATION_PLAN.md §A.3.
 
 Env vars (same names used by production):
   BIOSEQ_LLM_PROXY_URL    — Cloudflare proxy URL.

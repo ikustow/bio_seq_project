@@ -1,6 +1,6 @@
 # tests/eval/data/end_to_end.yaml
 # -----------------------------------------------------------------------------
-# L3 (end-to-end) validation set. See report/EVALUATION_PLAN.md §4.
+# L3 (end-to-end) validation set. See report/VALIDATION_PLAN.md §4.
 #
 # What L3 adds on top of L1 (retriever) and L2 (LLM with frozen context):
 #

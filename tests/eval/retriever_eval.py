@@ -5,7 +5,7 @@ Usage:
 
 Reads `tests/eval/data/proteins.yaml`, runs each test case through
 `bioseq_retriever.src.pipeline.run_bioseq_pipeline`, and writes a CSV per
-EVALUATION_PLAN.md §2 metrics.
+VALIDATION_PLAN.md §2 metrics.
 
 Imports the retriever by inserting `bioseq_retriever/` onto sys.path — the
 production package uses `from src.pipeline import ...` rather than a fully-

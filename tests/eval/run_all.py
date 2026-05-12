@@ -11,7 +11,7 @@ The runner first validates the YAML datasets, then dispatches to the per-
 level harnesses. Each level lands its CSV + report.md in its own
 `tests/eval/runs/<ISO-timestamp>-<level>/` directory.
 
-See `report/EVALUATION_PLAN.md` Appendix A for the implementation roadmap.
+See `report/VALIDATION_PLAN.md` Appendix A for the implementation roadmap.
 """
 
 from __future__ import annotations

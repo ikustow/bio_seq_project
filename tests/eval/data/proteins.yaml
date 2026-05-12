@@ -1,6 +1,6 @@
 # tests/eval/data/proteins.yaml
 # -----------------------------------------------------------------------------
-# L1 (Retriever) validation set. See report/EVALUATION_PLAN.md §2.
+# L1 (Retriever) validation set. See report/VALIDATION_PLAN.md §2.
 #
 # Mental model of the retriever (what we are testing):
 #     INPUTS   : (input_seq, context_question)
@@ -56,7 +56,7 @@
 # Questions are intentionally diverse — from strict ("Identify this protein
 # and list close matches.") to short user-style ("What is it?", "What's
 # that?") to explicit species-hint phrasings. This is a deliberate trade-off
-# (see EVALUATION_PLAN.md §2.3 and §9): we gain robustness coverage but lose
+# (see VALIDATION_PLAN.md §2.3 and §9): we gain robustness coverage but lose
 # strict isolation of wording vs. retrieval signal. When debugging a failed
 # case, inspect the top-50 (pre-rerank) — that signal is wording-independent.
 

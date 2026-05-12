@@ -1,6 +1,6 @@
 # tests/eval/data — validation datasets
 
-Two input datasets, two output formats. See `report/EVALUATION_PLAN.md` for the methodology.
+Two input datasets, two output formats. See `report/VALIDATION_PLAN.md` for the methodology.
 
 ## Inputs (you fill these in)
 

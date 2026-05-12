@@ -1,6 +1,6 @@
 # tests/eval — running the BioSeq evaluation suite
 
-Master document: [`report/EVALUATION_PLAN.md`](../../report/EVALUATION_PLAN.md). This README is the operational view (how to run it); the plan is the methodological view (what we measure and why).
+Master document: [`report/VALIDATION_PLAN.md`](../../report/VALIDATION_PLAN.md). This README is the operational view (how to run it); the plan is the methodological view (what we measure and why).
 
 Live implementation status — see **Appendix A** of the plan.
 
@@ -24,7 +24,7 @@ tests/eval/
 └── runs/                     # output, gitignored (except baseline/)
 ```
 
-L2 (`llm_eval.py`) and L3 (`e2e_eval.py`) harnesses are wired and ready to run. See `report/EVALUATION_PLAN.md` Appendix A for the implementation status.
+L2 (`llm_eval.py`) and L3 (`e2e_eval.py`) harnesses are wired and ready to run. See `report/VALIDATION_PLAN.md` Appendix A for the implementation status.
 
 ## Prerequisites
 

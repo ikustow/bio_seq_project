@@ -1,6 +1,6 @@
 # tests/eval/data/llm_scenarios.yaml
 # -----------------------------------------------------------------------------
-# L2 (Production LLM) validation set. See report/EVALUATION_PLAN.md §3.
+# L2 (Production LLM) validation set. See report/VALIDATION_PLAN.md §3.
 #
 # Each scenario fixes:
 #   - a frozen protein context (so the retriever is bypassed and Gemini
@@ -595,7 +595,7 @@ judge:
   # Llama 3.3 70B is OpenRouter's free Llama drop-in after the older
   # `meta-llama/llama-3.1-8b-instruct:free` was removed from the catalog
   # (it now 404s on /chat/completions). 70B is a strict upgrade for
-  # class C rubric scoring — see §9 risk 2 in EVALUATION_PLAN.md.
+  # class C rubric scoring — see §9 risk 2 in VALIDATION_PLAN.md.
   model: "meta-llama/llama-3.3-70b-instruct:free"
   temperature: 0
   max_tokens: 300
