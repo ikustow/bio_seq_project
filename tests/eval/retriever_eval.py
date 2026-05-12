@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from tests.eval._common.env import load_env
 from tests.eval._common.loader import clean_sequence, load_proteins
 from tests.eval._common.run_dir import REPO_ROOT, make_run_dir
 
@@ -165,6 +166,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Output directory. If omitted, a fresh tests/eval/runs/<timestamp>-retriever/ is created.",
     )
     args = parser.parse_args(argv)
+    load_env()
 
     # Import here so `python -m tests.eval.retriever_eval --help` works even if
     # the retriever's heavy ML deps are not installed.

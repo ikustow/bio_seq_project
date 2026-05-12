@@ -23,6 +23,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from tests.eval._common.env import load_env
 from tests.eval._common.run_dir import latest_run_dir
 
 
@@ -130,6 +131,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Aggregate eval run into markdown.")
     parser.add_argument("--run", type=Path, default=None, help="Run directory (defaults to latest).")
     args = parser.parse_args(argv)
+    load_env()
 
     run_dir = args.run or latest_run_dir(suite_prefix="retriever")
     if not run_dir or not run_dir.exists():

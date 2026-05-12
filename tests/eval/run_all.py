@@ -23,6 +23,7 @@ from typing import Callable
 from tests.eval import validate_data
 from tests.eval import retriever_eval
 from tests.eval import aggregate_report
+from tests.eval._common.env import load_env
 
 
 SUITES = ("L1", "L2", "L3", "all")
@@ -59,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--suite", choices=SUITES, default="L1", help="Which level(s) to run. Default: L1.")
     parser.add_argument("--skip-validate", action="store_true", help="Skip dataset validation step.")
     args = parser.parse_args(argv)
+    load_env()
 
     if not args.skip_validate:
         print("=== Validating YAML datasets ===")

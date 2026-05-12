@@ -19,6 +19,7 @@ import re
 import sys
 from typing import Any
 
+from tests.eval._common.env import load_env
 from tests.eval._common.loader import load_e2e, load_llm_scenarios, load_proteins
 
 
@@ -133,6 +134,7 @@ def validate_e2e(errs: list[str]) -> None:
 
 
 def main() -> int:
+    load_env()
     errs: list[str] = []
     validate_proteins(errs)
     validate_llm_scenarios(errs)
