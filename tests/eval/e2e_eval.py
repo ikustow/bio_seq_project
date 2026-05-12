@@ -26,6 +26,7 @@ Outputs in `tests/eval/runs/<ISO-timestamp>-e2e/`:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import copy
 import csv
 import json
@@ -46,8 +47,6 @@ from tests.eval._common.run_dir import REPO_ROOT, make_run_dir
 _RETRIEVER_ROOT = REPO_ROOT / "bioseq_retriever"
 if str(_RETRIEVER_ROOT) not in sys.path:
     sys.path.insert(0, str(_RETRIEVER_ROOT))
-
-os.environ.setdefault("BIOSEQ_USE_SERVICES", "false")
 
 
 SUBSETS = ("e2e_full", "grounding", "multi_turn", "prompt_injection")
@@ -100,7 +99,8 @@ def _run_retriever(test_input: dict[str, Any], run_pipeline) -> dict[str, Any]:
 
     started = time.perf_counter()
     try:
-        result = run_pipeline(prompt)
+        # `run_bioseq_pipeline` is async (post-May-2026 retriever rewrite).
+        result = asyncio.run(run_pipeline(prompt))
         err = result.get("error") or ""
     except Exception as exc:  # noqa: BLE001
         result, err = {}, f"{type(exc).__name__}: {exc}"

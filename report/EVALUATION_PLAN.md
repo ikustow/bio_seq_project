@@ -332,7 +332,7 @@ python -m tests.eval.e2e_eval       --out runs/2026-05-13-e2e/       --judge ope
 - **Judge — внешняя OpenRouter free model** (`meta-llama/llama-3.1-8b-instruct:free`), не Gemini (чтобы не оценивать самого себя). Конфиг judge живёт в `llm_scenarios.yaml::judge`; `end_to_end.yaml::judge` указывает `inherit_from: llm_scenarios.yaml`.
 - **Один master-CLI** (`run_all.py`) с под-командами; каждый L-уровень также имеет автономный CLI (`python -m tests.eval.retriever_eval` и т.д.) — удобно дёргать частями при отладке.
 - **Все прогоны** пишут в `runs/<ISO-timestamp>-<suite>/`; `runs/baseline/` — единственная директория, которая коммитится.
-- **L1 harness принудительно ставит `BIOSEQ_USE_SERVICES=false`** через `os.environ.setdefault` — это соответствует HF-prod (local mode, без fastapi). Явный env var в `.env` перебивает default.
+- **L1/L3 harness требует поднятого `bioseq_retriever/services/search_service.py`** (по умолчанию `http://localhost:8002`). После May-2026 переписывания `bioseq_retriever/src/pipeline.py` локальный in-process режим удалён — пайплайн всегда ходит в unified search service. Старый `embedding_service.py` свёрнут в search_service. Раньше harness имел `BIOSEQ_USE_SERVICES=false` setdefault — теперь удалён как мёртвый.
 - **C20 (match_score consistency)**, **A7 (honest about scarce data)**, **C19 (Thr835Met из disease.description)** — rubric'и явно скоупированы под то, что pipeline передаёт Gemini (см. §3.4 и §9 пункт 7).
 - **`budget` и `regression_baseline` подсекции L3** — `budget` метрики считаются автоматически из латенси-полей `e2e_full` (p50/p95 total ms). `regression_baseline` — отдельная фича, не входит в первую версию harness'а.
 

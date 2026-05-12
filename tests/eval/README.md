@@ -34,27 +34,26 @@ L2 (`llm_eval.py`) and L3 (`e2e_eval.py`) harnesses are wired and ready to run. 
 
 ### Retriever runtime mode
 
-`retriever_eval.py` forces `BIOSEQ_USE_SERVICES=false` by default, so the
-retriever runs **in-process** — same code path the HF Spaces frontend uses
-via `app/frontend/embeddings_pipeline.py`. No need to install fastapi or
-start the standalone `bioseq_retriever/services/*.py` daemons.
+The May-2026 retriever rewrite removed local in-process mode — `bioseq_retriever.src.pipeline`
+now always calls the **unified search service** over HTTP. Before running
+L1 or L3, start the service in its own terminal and leave it running:
 
-The harness expects the same local data setup you already use when running
-the Streamlit frontend (`app/frontend/app.py`) against the retriever:
-`per-protein.h5`, FAISS `.index`, and accessions cache present where
-`BIOSEQ_H5_PATH` points (default `data/per-protein.h5` relative to cwd).
-No auto-download is triggered — keeps the eval run boring and predictable.
+```powershell
+python bioseq_retriever/services/search_service.py
+# listens on http://localhost:8002 by default
+```
 
-If the data is missing, the pipeline raises a clear path/load error and you
-can either:
-- run `python -m bioseq_retriever.src.bootstrap` once to populate it from
-  UniProt FTP (or set `BIOSEQ_DATA_SOURCE=hf:OWNER/DATASET_REPO` for a faster
-  pull from a HF Hub dataset),
-- or copy the file from wherever you have it.
+The unified service loads ProtT5 + FAISS itself; the harness only POSTs raw
+sequences. The older `embedding_service.py` is gone (folded into the search
+service).
 
-If you really want services mode (rare — needs `pip install fastapi uvicorn`
-and two extra terminals running `services/embedding_service.py` and
-`services/search_service.py`), set `BIOSEQ_USE_SERVICES=true` explicitly.
+`per-protein.h5` is still required (the service reads it on startup). If you
+already use this laptop for local Streamlit tests, the file is in
+`bioseq_retriever/data/`. If not — run `python -m bioseq_retriever.src.bootstrap`
+once, or copy the file from an existing setup.
+
+The harness calls `run_bioseq_pipeline` (now `async def`) via `asyncio.run`
+per test case — same pattern `bioseq_retriever/pipeline_interface.py` uses.
 
 ### Required env vars
 

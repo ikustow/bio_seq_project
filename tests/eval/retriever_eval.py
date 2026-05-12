@@ -15,8 +15,8 @@ qualified module path, so we mirror what `pipeline_interface.py` does.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import csv
-import os
 import sys
 import time
 from pathlib import Path
@@ -31,12 +31,6 @@ from tests.eval._common.run_dir import REPO_ROOT, make_run_dir
 _RETRIEVER_ROOT = REPO_ROOT / "bioseq_retriever"
 if str(_RETRIEVER_ROOT) not in sys.path:
     sys.path.insert(0, str(_RETRIEVER_ROOT))
-
-# Default to local in-process mode — matches the HF Spaces deploy
-# (`embeddings_pipeline.py`) and does not need fastapi/uvicorn. Services
-# mode (BIOSEQ_USE_SERVICES=true) is a dev-time alternative; an explicit
-# env var overrides this default.
-os.environ.setdefault("BIOSEQ_USE_SERVICES", "false")
 
 
 def _build_prompt(input_seq: str, input_type: str, question: str) -> str:
@@ -84,7 +78,10 @@ def evaluate_test_case(tc: dict[str, Any], run_pipeline) -> dict[str, Any]:
 
     started = time.perf_counter()
     try:
-        result = run_pipeline(prompt)
+        # `run_bioseq_pipeline` is async since the May 2026 retriever
+        # rewrite (pipeline uses `ainvoke` under the hood). Each test case
+        # gets its own event loop so failures don't poison subsequent runs.
+        result = asyncio.run(run_pipeline(prompt))
         err = result.get("error")
     except Exception as exc:  # noqa: BLE001 — we want every failure recorded, not raised
         result, err = {}, f"{type(exc).__name__}: {exc}"
