@@ -133,3 +133,7 @@ validated manually in the same session.
 | Top-50 recall fine, Top-1 fails after rerank | Reranker / context prompt issue (see plan §2.5). |
 | DNA test cases fail end-to-end | DNA→protein translation step regressed (`bioseq_retriever/src/utils.translate_dna_to_protein`). |
 | `ModuleNotFoundError: src.pipeline` | Running from somewhere other than the repo root. Use `python -m tests.eval.run_all` from `BioSeq investigator/`. |
+| `WinError 10061 ... target machine actively refused` | The unified retriever service isn't running. Start `python bioseq_retriever/services/search_service.py` in another terminal first (see "Retriever runtime mode" above). |
+| `OMP: Error #15: Initializing libomp140 ... already initialized` | Windows-only PyTorch/FAISS OpenMP collision. Harness already sets `KMP_DUPLICATE_LIB_OK=TRUE` automatically in `_common/env.py` — if you still see this, you're running the service or some other entry point that doesn't import our env module. Set the env var manually in that shell. |
+| Gemini 429 with body mentioning `daily limit` | Free-tier daily quota exhausted (~1500 req/day on gemini-2.0-flash). Resets at midnight Pacific Time. Either wait, or enable billing in Google AI Studio. |
+| Judge 404 from `openrouter.ai/api/v1/chat/completions` | The configured model id was removed from OpenRouter's catalog. Check `tests/eval/data/llm_scenarios.yaml::judge.model` against the live catalog at `https://openrouter.ai/models`. |
