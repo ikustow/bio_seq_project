@@ -4,9 +4,9 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 
-from src.utils import get_llm, translate_dna_to_protein, get_first_fasta_entry, is_secure_path, clean_sequence
+from src.utils import get_llm, get_first_fasta_entry, is_secure_path, clean_sequence
 from src.data_fetcher import get_uniprot_records
-from src.search import search_top_k
+from src.search import search_top_k, search_dna_top_k
 from src.reranking import LocalReranker
 
 from src.config import ALLOWED_DATA_DIR
@@ -101,14 +101,16 @@ def use_raw_sequence_node(state: GraphState) -> Dict[str, Any]:
     cleaned_seq = clean_sequence(seq)
     return {"sequence": cleaned_seq}
 
-def translate_dna_node(state: GraphState) -> Dict[str, Any]:
-    """Node to translate DNA to protein."""
-    if state.get("error"): return {}
+def rank_dna_node(state: GraphState) -> Dict[str, Any]:
+    """Performs DNA sequence similarity search (Top 50) via DNA search service."""
+    if state.get('error'): return {}
     try:
-        protein_seq = translate_dna_to_protein(state['sequence'])
-        return {"protein_sequence": protein_seq}
+        # Uses raw DNA sequence for search
+        matches = search_dna_top_k(state['sequence'], k=50)
+        records = get_uniprot_records([m[0] for m in matches])
+        return {"ranked_results": records}
     except Exception as e:
-        return {"error": f"Translation failed: {str(e)}"}
+        return {"error": f"DNA Ranking failed: {str(e)}"}
 
 def pass_protein_node(state: GraphState) -> Dict[str, Any]:
     """Node for when sequence is already protein."""
@@ -116,7 +118,7 @@ def pass_protein_node(state: GraphState) -> Dict[str, Any]:
     return {"protein_sequence": state['sequence']}
 
 def rank_node(state: GraphState) -> Dict[str, Any]:
-    """Performs sequence similarity search via service client."""
+    """Performs protein sequence similarity search via service client."""
     if state.get('error'): return {}
     try:
         matches = search_top_k(state['protein_sequence'], k=50)
@@ -130,6 +132,7 @@ def rerank_node(state: GraphState) -> Dict[str, Any]:
     if state.get('error'): return {}
     try:
         reranker = LocalReranker()
+        # Takes top 50 matches (DNA or Protein) and reranks them
         final_records = reranker.rerank_by_context(state['ranked_results'], state['context'], top_n=5)
         return {"final_results": final_records}
     except Exception as e:
@@ -144,9 +147,9 @@ def should_resolve_filepath(state: GraphState) -> Literal["resolve", "raw", "err
     if state.get('error'): return "error"
     return "resolve" if state['input_type'] == "FILEPATH" else "raw"
 
-def should_translate(state: GraphState) -> Literal["translate", "skip", "error"]:
+def should_rank(state: GraphState) -> Literal["rank_dna", "protein_path", "error"]:
     if state.get('error'): return "error"
-    return "translate" if state['sequence_type'] == "DNA" else "skip"
+    return "rank_dna" if state['sequence_type'] == "DNA" else "protein_path"
 
 # --- Graph Construction ---
 
@@ -156,7 +159,7 @@ def create_pipeline():
     workflow.add_node("extract", extract_and_classify_node)
     workflow.add_node("resolve_file", resolve_filepath_node)
     workflow.add_node("use_raw", use_raw_sequence_node)
-    workflow.add_node("translate", translate_dna_node)
+    workflow.add_node("rank_dna", rank_dna_node)
     workflow.add_node("pass_protein", pass_protein_node)
     workflow.add_node("rank", rank_node)
     workflow.add_node("rerank", rerank_node)
@@ -164,15 +167,20 @@ def create_pipeline():
     workflow.set_entry_point("extract")
     
     workflow.add_conditional_edges("extract", should_resolve_filepath, {"resolve": "resolve_file", "raw": "use_raw", "error": END})
-    workflow.add_conditional_edges("resolve_file", should_translate, {"translate": "translate", "skip": "pass_protein", "error": END})
-    workflow.add_conditional_edges("use_raw", should_translate, {"translate": "translate", "skip": "pass_protein", "error": END})
     
-    workflow.add_conditional_edges("translate", check_error, {"error": END, "continue": "rank"})
+    # After resolution/raw input, branch to DNA search or Protein search path
+    workflow.add_conditional_edges("resolve_file", should_rank, {"rank_dna": "rank_dna", "protein_path": "pass_protein", "error": END})
+    workflow.add_conditional_edges("use_raw", should_rank, {"rank_dna": "rank_dna", "protein_path": "pass_protein", "error": END})
+    
+    # Convergence points
+    workflow.add_conditional_edges("rank_dna", check_error, {"error": END, "continue": "rerank"})
     workflow.add_conditional_edges("pass_protein", check_error, {"error": END, "continue": "rank"})
     workflow.add_conditional_edges("rank", check_error, {"error": END, "continue": "rerank"})
+    
     workflow.add_edge("rerank", END)
     
     return workflow.compile()
+
 
 async def run_bioseq_pipeline(prompt: str):
     pipeline = create_pipeline()
