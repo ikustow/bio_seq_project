@@ -416,7 +416,7 @@ def main(argv: list[str] | None = None) -> int:
     # `judge: inherit_from: llm_scenarios.yaml` pointer in end_to_end.yaml.
     judge_cfg_src = (load_llm_scenarios().get("judge") or {})
     judge_cfg = {
-        "model": judge_cfg_src.get("model") or "meta-llama/llama-3.1-8b-instruct:free",
+        "model": judge_cfg_src.get("model") or "meta-llama/llama-3.3-70b-instruct:free",
         "temperature": float(judge_cfg_src.get("temperature", 0.0)),
         "max_tokens": int(judge_cfg_src.get("max_tokens", 300)),
     }

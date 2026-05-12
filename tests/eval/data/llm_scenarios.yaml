@@ -592,7 +592,11 @@ scenarios:
 # =============================================================================
 judge:
   provider: openrouter
-  model: "meta-llama/llama-3.1-8b-instruct:free"
+  # Llama 3.3 70B is OpenRouter's free Llama drop-in after the older
+  # `meta-llama/llama-3.1-8b-instruct:free` was removed from the catalog
+  # (it now 404s on /chat/completions). 70B is a strict upgrade for
+  # class C rubric scoring — see §9 risk 2 in EVALUATION_PLAN.md.
+  model: "meta-llama/llama-3.3-70b-instruct:free"
   temperature: 0
   max_tokens: 300
   system_prompt: |

@@ -8,7 +8,7 @@ The judge prompt template and behavioural contract come from
 `llm_scenarios.yaml::judge`:
 
   - `provider: openrouter`
-  - default model: `meta-llama/llama-3.1-8b-instruct:free`
+  - default model: `meta-llama/llama-3.3-70b-instruct:free`
   - `temperature: 0`, `max_tokens: 300`
   - system prompt: judge sees ONE rubric item at a time, returns
     `{"passed": 0|1, "explanation": "..."}`.
@@ -100,7 +100,7 @@ def score_rubric_item(
     answer: str,
     rubric_check: str,
     rubric_type: str,
-    model: str = "meta-llama/llama-3.1-8b-instruct:free",
+    model: str = "meta-llama/llama-3.3-70b-instruct:free",
     temperature: float = 0.0,
     max_tokens: int = 300,
 ) -> tuple[dict[str, Any], dict[str, Any]]:

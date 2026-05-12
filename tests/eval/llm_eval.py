@@ -36,7 +36,7 @@ from tests.eval._common.run_dir import make_run_dir
 def _judge_config(data: dict[str, Any]) -> dict[str, Any]:
     cfg = data.get("judge") or {}
     return {
-        "model": cfg.get("model") or "meta-llama/llama-3.1-8b-instruct:free",
+        "model": cfg.get("model") or "meta-llama/llama-3.3-70b-instruct:free",
         "temperature": float(cfg.get("temperature", 0.0)),
         "max_tokens": int(cfg.get("max_tokens", 300)),
     }
