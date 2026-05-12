@@ -28,12 +28,14 @@ PROXY_URL_ENV = "BIOSEQ_LLM_PROXY_URL"
 PROXY_TOKEN_ENV = "BIOSEQ_LLM_PROXY_TOKEN"
 REQUEST_TIMEOUT_SECONDS = 60
 
-# Free-tier Gemini limits ~15 RPM; the Cloudflare proxy is the only thing
-# in our control. We retry on 429/5xx with exponential backoff so the
-# 20-scenario L2 run does not die after the first burst.
-GEMINI_MAX_RETRIES = 6
-GEMINI_BACKOFF_BASE_S = 5.0
-GEMINI_BACKOFF_CAP_S = 60.0
+# Free-tier Gemini limits ~15 RPM AND has a daily request quota (~1500/day
+# on 2.0-flash). The Cloudflare proxy in front of it may layer its own
+# limit on top. Retry/backoff helps with bursty per-minute hits but cannot
+# rescue an exhausted daily quota — in that case we surface the response
+# body so the user can see WHICH quota was hit.
+GEMINI_MAX_RETRIES = int(os.getenv("EVAL_GEMINI_MAX_RETRIES", "6"))
+GEMINI_BACKOFF_BASE_S = float(os.getenv("EVAL_GEMINI_BACKOFF_BASE_S", "5"))
+GEMINI_BACKOFF_CAP_S = float(os.getenv("EVAL_GEMINI_BACKOFF_CAP_S", "120"))
 
 
 # System prompt is copied verbatim from chat_llm_pipeline._call_gemini_proxy.
@@ -238,10 +240,11 @@ def call_gemini(
 def _post_with_retry(proxy_url: str, proxy_token: str, payload: dict[str, Any]) -> dict[str, Any]:
     """POST with exponential backoff on 429/5xx.
 
-    Gemini free tier rate-limits at ~15 RPM; bursting our 20-scenario L2
-    run trips that immediately. We honor a `Retry-After` header when the
+    Gemini free tier rate-limits at ~15 RPM AND has a daily request quota
+    (~1500/day on 2.0-flash). We honor a `Retry-After` header when the
     proxy passes one through, otherwise exponential backoff capped at
-    `GEMINI_BACKOFF_CAP_S`.
+    `GEMINI_BACKOFF_CAP_S`. Response body is captured on every failure
+    so the caller (and stdout) can see *which* quota was actually hit.
     """
     last_exc: Exception | None = None
     for attempt in range(GEMINI_MAX_RETRIES):
@@ -262,9 +265,14 @@ def _post_with_retry(proxy_url: str, proxy_token: str, payload: dict[str, Any]) 
         if response.status_code < 400:
             return response.json()
 
+        body_snippet = (response.text or "")[:500].replace("\n", " ").strip()
         retryable = response.status_code == 429 or 500 <= response.status_code < 600
         if not retryable or attempt == GEMINI_MAX_RETRIES - 1:
-            response.raise_for_status()  # propagate the final error
+            # Surface the body so the caller knows WHICH quota was hit.
+            raise RuntimeError(
+                f"Gemini proxy returned HTTP {response.status_code} after "
+                f"{attempt + 1} attempt(s). Body: {body_snippet or '<empty>'}"
+            )
 
         retry_after = response.headers.get("Retry-After")
         try:
@@ -272,7 +280,11 @@ def _post_with_retry(proxy_url: str, proxy_token: str, payload: dict[str, Any]) 
         except ValueError:
             wait = GEMINI_BACKOFF_BASE_S * (2 ** attempt)
         wait = min(GEMINI_BACKOFF_CAP_S, max(wait, 1.0))
-        print(f"    [gemini] HTTP {response.status_code}; retrying in {wait:.0f}s (attempt {attempt + 1}/{GEMINI_MAX_RETRIES})", flush=True)
+        print(
+            f"    [gemini] HTTP {response.status_code}; retrying in {wait:.0f}s "
+            f"(attempt {attempt + 1}/{GEMINI_MAX_RETRIES}); body: {body_snippet[:200] or '<empty>'}",
+            flush=True,
+        )
         time.sleep(wait)
 
     # All retries exhausted — surface the last requests exception if we had one.
