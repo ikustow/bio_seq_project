@@ -31,6 +31,7 @@ L2 (`llm_eval.py`) and L3 (`e2e_eval.py`) harnesses are wired and ready to run. 
 - Python 3.9+ with the BioSeq runtime installed (i.e. `pip install -r requirements.txt` has run successfully — same set HF Spaces uses).
 - `pyyaml` (likely already present transitively; install with `pip install pyyaml` if not).
 - `python-dotenv` (already in `requirements.txt`) — only used by the eval harness to read a local `.env`, see below.
+- **`fastapi` and `uvicorn`** — required to run `bioseq_retriever/services/search_service.py` (the unified retriever service). Not in `requirements.txt` because HF Spaces production uses `app/frontend/embeddings_pipeline.py` instead, which doesn't need a service. Install locally with `pip install fastapi uvicorn`.
 
 ### Retriever runtime mode
 
