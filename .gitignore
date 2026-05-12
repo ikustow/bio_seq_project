@@ -62,3 +62,8 @@ app/backend/graph_core/data/
 app/backend/graph_core/lib/
 app/backend/graph_core/output/
 bioseq_retriever/data/
+
+# Eval harness: ignore per-run outputs but keep the locked baseline
+tests/eval/runs/*
+!tests/eval/runs/baseline/
+!tests/eval/runs/.gitkeep
