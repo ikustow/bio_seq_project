@@ -4,6 +4,8 @@ import argparse
 from src.pipeline import run_bioseq_pipeline
 from src.utils import setup_environment
 
+import asyncio
+
 def run_pipeline_interface(user_prompt: str):
     """
     Interface to run the bioseq pipeline with a custom prompt.
@@ -12,7 +14,8 @@ def run_pipeline_interface(user_prompt: str):
     setup_environment()
     
     print(f"Executing pipeline for prompt: {user_prompt[:50]}...")
-    result = run_bioseq_pipeline(user_prompt)
+    # run_bioseq_pipeline is now async
+    result = asyncio.run(run_bioseq_pipeline(user_prompt))
     
     if result.get("error"):
         print(f"Pipeline Error: {result['error']}")

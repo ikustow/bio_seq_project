@@ -1,24 +1,15 @@
-import os
-import json
-from typing import List, Dict, Any, Tuple, Optional, TypedDict, Literal
+from typing import List, Dict, Any, Optional, TypedDict, Literal
 from pydantic import BaseModel, Field
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 
-from src.utils import get_llm, translate_dna_to_protein, get_first_fasta_entry
+from src.utils import get_llm, translate_dna_to_protein, get_first_fasta_entry, is_secure_path, clean_sequence
 from src.data_fetcher import get_uniprot_records
-from src.embeddings import get_or_create_index
-from src.search import search_top_k, get_prottrans_embedder
+from src.search import search_top_k
 from src.reranking import LocalReranker
 
-from src.config import (
-    DEFAULT_H5_PATH, 
-    DEFAULT_INDEX_PATH, 
-    DEFAULT_CACHE_PATH, 
-    ALLOWED_DATA_DIR,
-    USE_SERVICES
-)
+from src.config import ALLOWED_DATA_DIR
 
 # --- State Definitions ---
 
@@ -43,14 +34,6 @@ class GraphState(TypedDict):
     final_results: Optional[List[Dict[str, Any]]]
     error: Optional[str]
 
-# --- Helper Functions ---
-
-def is_secure_path(path: str) -> bool:
-    """Verifies if the path is within the allowed directory."""
-    abs_allowed = os.path.abspath(ALLOWED_DATA_DIR)
-    abs_path = os.path.abspath(path)
-    return abs_path.startswith(abs_allowed)
-
 # --- Node Functions ---
 
 def extract_and_classify_node(state: GraphState) -> Dict[str, Any]:
@@ -67,28 +50,14 @@ def extract_and_classify_node(state: GraphState) -> Dict[str, Any]:
         "You must follow this multi-step Chain-of-Thought process:\n\n"
         "### 1. EXTRACTION STRATEGY\n"
         "Your first priority is to separate the core data from the surrounding metadata.\n"
-        "- Biological Sequence: Look for strings composed of single-letter codes. They may appear as raw text or within a FASTA format (starting with a '>' header line). DNA sequences usually consist of A, T, G, C, while Proteins use a wider 20-letter alphabet (M, A, L, etc.).\n"
-        "- File Path: Identify strings that resemble filesystem paths (e.g., 'data/sample.fasta', 'C:\\Sequences\\test.faa', './output.txt'). These point to external files containing sequences.\n"
-        "- Contextual Information: Everything else is context. This includes user instructions (e.g., 'Find the closest matches'), biological metadata ('This is from a mouse'), or specific queries.\n"
-        "*Rule*: If both a sequence and a path are present, prioritize the sequence for the 'sequence_or_path' field and note the path in the reasoning.\n\n"
+        "- Biological Sequence: Look for strings composed of single-letter codes. They may appear as raw text or within a FASTA format (starting with a '>' header line).\n"
+        "- File Path: Identify strings that resemble filesystem paths (e.g., 'data/sample.fasta').\n"
+        "- Contextual Information: Everything else is context.\n"
+        "*Rule*: If both a sequence and a path are present, prioritize the sequence.\n\n"
         "### 2. CLASSIFICATION REASONING\n"
-        "This is the most complex task. You must classify the sequence as either DNA or PROTEIN by weighing multiple evidence tiers:\n\n"
-        "- Tier A: Explicit Hints & Metadata: Search the prompt and FASTA headers for keywords.\n"
-        "  * DNA/RNA Indicators: 'DNA', 'RNA', 'nucleotide', 'transcript', 'gene', 'genome'. RefSeq prefixes: 'NM_', 'NR_', 'XM_', 'XR_'.\n"
-        "  * Protein Indicators: 'protein', 'peptide', 'amino acid', 'ORF', 'proteome'. RefSeq prefixes: 'NP_', 'XP_', 'YP_'.\n"
-        "- Tier B: Structural Cues: Look at the file extension if a path is provided.\n"
-        "  * DNA: .fna, .fasta, .fa, .nuc.\n"
-        "  * Protein: .faa, .pro, .pep.\n"
-        "- Tier C: Character Composition Analysis:\n"
-        "  * DNA: Strictly limited to {A, C, G, T, U} and IUPAC ambiguity codes {N, R, Y, K, M, S, W, B, D, H, V}. If the sequence contains characters like {L, I, V, F, W, Y, P, Q, E, K, H, R}, it is almost certainly a PROTEIN.\n"
-        "  * Protein: Uses a much broader character set. The presence of 'L' (Leucine), 'F' (Phenylalanine), or 'W' (Tryptophan) is a strong indicator of protein, as these are common in proteins but never found in DNA (except as errors).\n"
-        "  * Ambiguity Check: A sequence like 'ACGT' is ambiguous but defaults to DNA. A sequence like 'MAPLR' is unambiguously PROTEIN.\n"
-        "- Tier D: Length and Pattern: Consider the length. Very short sequences might require more weight on Tier A.\n\n"
+        "Classify as DNA or PROTEIN based on character set and metadata.\n"
         "### 3. CONFIDENCE ASSESSMENT\n"
-        "Evaluate the internal consistency of the evidence.\n"
-        "- High Confidence (is_confident = True): Evidence across Tiers A, B, and C is consistent (e.g., user says 'protein' and the sequence contains 'L' and 'W').\n"
-        "- Low Confidence (is_confident = False): Evidence is contradictory (e.g., user says 'DNA' but the sequence contains 'P' and 'Q'), or the sequence is too short and lacks any Tier A/B markers (e.g., a raw 'AAAAAA' with no context).\n\n"
-        "Deliver your findings in the requested structured format, ensuring the 'reasoning' field reflects this multi-tier analysis."
+        "Deliver findings in structured format."
     )
     
     try:
@@ -115,21 +84,22 @@ def resolve_filepath_node(state: GraphState) -> Dict[str, Any]:
         return {"error": f"Security violation: path {path} is not in {ALLOWED_DATA_DIR}"}
         
     try:
-        fasta_entry = get_first_fasta_entry(path)
-        lines = fasta_entry.splitlines()
-        sequence = "".join(lines[1:]) if len(lines) > 1 else ""
-        return {"sequence": sequence}
+        header, sequence = get_first_fasta_entry(path)
+        # Header is part of the context now
+        new_context = f"{state.get('context') or ''}\nFASTA Header: {header}".strip()
+        return {
+            "sequence": sequence,
+            "context": new_context
+        }
     except Exception as e:
         return {"error": f"File resolution failed: {str(e)}"}
 
 def use_raw_sequence_node(state: GraphState) -> Dict[str, Any]:
-    """Node to handle raw sequence input."""
+    """Node to handle raw sequence input with cleanup."""
     if state.get("error"): return {}
     seq = state['sequence_or_path']
-    if seq.startswith(">"):
-        lines = seq.splitlines()
-        seq = "".join(lines[1:])
-    return {"sequence": seq}
+    cleaned_seq = clean_sequence(seq)
+    return {"sequence": cleaned_seq}
 
 def translate_dna_node(state: GraphState) -> Dict[str, Any]:
     """Node to translate DNA to protein."""
@@ -146,18 +116,10 @@ def pass_protein_node(state: GraphState) -> Dict[str, Any]:
     return {"protein_sequence": state['sequence']}
 
 def rank_node(state: GraphState) -> Dict[str, Any]:
-    """Performs sequence similarity search (Top 50)."""
+    """Performs sequence similarity search via service client."""
     if state.get('error'): return {}
     try:
-        if USE_SERVICES:
-            index, accessions, embedder_tools = None, None, None
-        else:
-            os.makedirs(os.path.dirname(DEFAULT_INDEX_PATH) or ".", exist_ok=True)
-            os.makedirs(os.path.dirname(DEFAULT_CACHE_PATH) or ".", exist_ok=True)
-            index, accessions = get_or_create_index(DEFAULT_H5_PATH, DEFAULT_INDEX_PATH, DEFAULT_CACHE_PATH)
-            embedder_tools = get_prottrans_embedder()
-
-        matches = search_top_k(state['protein_sequence'], embedder_tools, index, accessions, k=50)
+        matches = search_top_k(state['protein_sequence'], k=50)
         records = get_uniprot_records([m[0] for m in matches])
         return {"ranked_results": records}
     except Exception as e:
@@ -176,7 +138,6 @@ def rerank_node(state: GraphState) -> Dict[str, Any]:
 # --- Conditional Routing Logic ---
 
 def check_error(state: GraphState) -> Literal["error", "continue"]:
-    """Conditional edge to check for errors and short-circuit to END."""
     return "error" if state.get("error") else "continue"
 
 def should_resolve_filepath(state: GraphState) -> Literal["resolve", "raw", "error"]:
@@ -202,34 +163,9 @@ def create_pipeline():
     
     workflow.set_entry_point("extract")
     
-    workflow.add_conditional_edges(
-        "extract",
-        should_resolve_filepath,
-        {
-            "resolve": "resolve_file",
-            "raw": "use_raw",
-            "error": END
-        }
-    )
-    
-    workflow.add_conditional_edges(
-        "resolve_file",
-        should_translate,
-        {
-            "translate": "translate",
-            "skip": "pass_protein",
-            "error": END
-        }
-    )
-    workflow.add_conditional_edges(
-        "use_raw",
-        should_translate,
-        {
-            "translate": "translate",
-            "skip": "pass_protein",
-            "error": END
-        }
-    )
+    workflow.add_conditional_edges("extract", should_resolve_filepath, {"resolve": "resolve_file", "raw": "use_raw", "error": END})
+    workflow.add_conditional_edges("resolve_file", should_translate, {"translate": "translate", "skip": "pass_protein", "error": END})
+    workflow.add_conditional_edges("use_raw", should_translate, {"translate": "translate", "skip": "pass_protein", "error": END})
     
     workflow.add_conditional_edges("translate", check_error, {"error": END, "continue": "rank"})
     workflow.add_conditional_edges("pass_protein", check_error, {"error": END, "continue": "rank"})
@@ -238,7 +174,7 @@ def create_pipeline():
     
     return workflow.compile()
 
-def run_bioseq_pipeline(prompt: str):
+async def run_bioseq_pipeline(prompt: str):
     pipeline = create_pipeline()
     initial_state = {
         "prompt": prompt,
@@ -253,4 +189,5 @@ def run_bioseq_pipeline(prompt: str):
         "final_results": None,
         "error": None
     }
-    return pipeline.invoke(initial_state)
+    # Using ainvoke as requested
+    return await pipeline.ainvoke(initial_state)
