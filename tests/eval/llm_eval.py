@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -187,6 +188,12 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Comma-separated scenario IDs to run (e.g. 'A1,B10,C20'). Default: all.",
     )
+    parser.add_argument(
+        "--inter-call-delay",
+        type=float,
+        default=float(os.getenv("EVAL_INTER_CALL_DELAY_S", "4")),
+        help="Seconds to sleep between scenarios. Default: 4s (Gemini free tier is ~15 RPM).",
+    )
     args = parser.parse_args(argv)
     load_env()
 
@@ -228,6 +235,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"    coverage {passed}/{len(rows)}  (gemini {rows[0]['gemini_latency_ms']}ms)")
         if rows[0].get("gemini_error"):
             print(f"    GEMINI ERROR: {rows[0]['gemini_error']}")
+        # Preventive pacing so we don't trip the Gemini free-tier RPM
+        # window on the very next call. Skipped after the last scenario.
+        if args.inter_call_delay > 0 and i < len(scenarios):
+            time.sleep(args.inter_call_delay)
 
     csv_path = write_csv(all_rows, out_dir)
     summary = summarize(all_rows)

@@ -400,6 +400,12 @@ def main(argv: list[str] | None = None) -> int:
         help=f"Comma-separated subsets to run. Default: {','.join(SUBSETS)}.",
     )
     parser.add_argument("--only", type=str, default=None, help="Comma-separated scenario IDs to keep.")
+    parser.add_argument(
+        "--inter-call-delay",
+        type=float,
+        default=float(os.getenv("EVAL_INTER_CALL_DELAY_S", "4")),
+        help="Seconds to sleep between Gemini turns/scenarios. Default: 4s.",
+    )
     args = parser.parse_args(argv)
     load_env()
 
@@ -463,6 +469,10 @@ def main(argv: list[str] | None = None) -> int:
             n_total = sum(1 for r in rows if r["passed"] in (0, 1))
             print(f"    rubric {n_pass}/{n_total}  retr_top1={rows[0]['retriever_top1'] or '-'}  "
                   f"r:{rows[0]['retriever_latency_ms']}ms g:{rows[0]['gemini_latency_ms']}ms")
+            # Preventive pacing between scenarios (multi_turn already
+            # paces itself by virtue of sequential Gemini calls).
+            if args.inter_call_delay > 0 and i < len(scenarios):
+                time.sleep(args.inter_call_delay)
 
     csv_path = write_csv(all_rows, out_dir)
     summary = summarize(all_rows)
