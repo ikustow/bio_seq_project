@@ -72,11 +72,12 @@ result = run_bioseq_pipeline("Compare this sequence: MKTLL... against human insu
 ## Running the System
 The system relies on the **Unified Search Service** to handle sequence embedding and similarity search.
 
-### Start the Unified Search Service
+### Start the Unified Search Services
 ```bash
-python bioseq_retriever/services/search_service.py
+python bioseq_retriever/services/search_service.py # Protein service
+python bioseq_retriever/services/dna_search_service.py # DNA service
 ```
-This service loads the ProtT5 model and FAISS index, exposing the `/search` endpoint for the pipeline.
+These services load the relevant models and FAISS index, exposing the `/search` endpoints for the pipeline.
 
 ### Run Pipeline
 The pipeline now operates asynchronously:
@@ -95,6 +96,7 @@ python pipeline_interface.py "I have a sequence: MALW..."
   - data_fetcher.py: REST client for UniProt using `httpx`.
 - services/: Unified Search Service.
   - search_service.py: Integrated embedding (ProtT5) and search (FAISS) service.
+  - dna_search_service.py: Integrated embedding (HyenaDNA) and search (FAISS) service.
   - config.py: Service-specific configuration (ports, FAISS params).
 - `data/`: Directory for embeddings and FAISS indexes.
 - `tests/`: Automated unit and pipeline tests.
