@@ -6,20 +6,22 @@ from src.utils import setup_environment
 
 import asyncio
 
-def run_pipeline_interface(user_prompt: str):
+def run_pipeline_interface(user_prompt: str, search_algorithm: str = "embeddings"):
     """
     Interface to run the bioseq pipeline with a custom prompt.
+    ``search_algorithm`` picks the rank step backend: "embeddings" (default,
+    ProtT5+FAISS) or "blast" (EBI REST against SwissProt).
     Returns the results dictionary.
     """
     setup_environment()
-    
-    print(f"Executing pipeline for prompt: {user_prompt[:50]}...")
+
+    print(f"Executing pipeline for prompt: {user_prompt[:50]}... (algorithm={search_algorithm})")
     # run_bioseq_pipeline is now async
-    result = asyncio.run(run_bioseq_pipeline(user_prompt))
-    
+    result = asyncio.run(run_bioseq_pipeline(user_prompt, search_algorithm=search_algorithm))
+
     if result.get("error"):
         print(f"Pipeline Error: {result['error']}")
-    
+
     return result
 
 def parse_args():

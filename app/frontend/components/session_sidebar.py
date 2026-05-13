@@ -21,6 +21,27 @@ def render() -> None:
 
     with st.sidebar:
         st.markdown("### 🧬 BioSeq Investigator")
+
+        # Search-algorithm picker. Only affects the first turn of a session
+        # (subsequent turns are chat-LLM follow-ups regardless of choice).
+        # Persisted in session_state; survives sidebar reruns.
+        _ALGO_LABELS = {
+            "embeddings": "Embeddings (ProtT5 + FAISS)",
+            "blast": "BLAST (EBI / SwissProt)",
+        }
+        _algo_keys = list(_ALGO_LABELS.keys())
+        current_algo = st.session_state.get("search_algorithm", "embeddings")
+        if current_algo not in _ALGO_LABELS:
+            current_algo = "embeddings"
+        picked = st.selectbox(
+            "Search algorithm",
+            options=_algo_keys,
+            index=_algo_keys.index(current_algo),
+            format_func=lambda key: _ALGO_LABELS[key],
+            key="sidebar_search_algorithm",
+        )
+        st.session_state["search_algorithm"] = picked
+
         if st.button("➕ New chat", width="stretch", key="sidebar_new_chat"):
             _start_fresh_session()
             st.rerun()

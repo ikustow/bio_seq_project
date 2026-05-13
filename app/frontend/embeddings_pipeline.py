@@ -188,10 +188,20 @@ def run_turn_embeddings(prompt: str) -> dict[str, Any]:
             "persisted": session_db_adapter.is_persistent(),
         }
 
+    # Retriever architecture moved embeddings/FAISS into HTTP microservices
+    # (see ``bioseq_retriever/services/``). The legacy in-process path below
+    # (``_build_pipeline_resources`` + ``_run_legacy_pipeline``) is kept intact
+    # for reference / future fallback but no longer reachable, since its
+    # imports — ``bioseq_retriever.src.embeddings`` etc. — were removed in the
+    # retriever rewrite. Route through the public entry point instead.
+    # ``search_algorithm`` picks the rank-step backend; selectable from the
+    # sidebar dropdown. Default is the embeddings (ProtT5+FAISS) path.
+    algorithm = st.session_state.get("search_algorithm", "embeddings")
     try:
-        resources = _build_pipeline_resources()
+        from bioseq_retriever.pipeline_interface import run_pipeline_interface
+        result = run_pipeline_interface(prompt, search_algorithm=algorithm)
     except Exception as exc:
-        msg = f"**Could not initialize embeddings backend:** {exc}"
+        msg = f"**Embeddings pipeline error:** {exc}"
         warnings.append(str(exc))
         _safe_save_turn(context, prompt, msg, [], set(), warnings)
         return {
@@ -204,15 +214,9 @@ def run_turn_embeddings(prompt: str) -> dict[str, Any]:
             "persisted": session_db_adapter.is_persistent(),
         }
 
-    # The legacy create_pipeline() builds a fresh-state LangGraph. Feed it the
-    # cached embedder/index/reranker via injection on rank/rerank nodes is
-    # awkward — easiest and correct path is to call the steps directly here,
-    # since rank_node and rerank_node are pure functions of state + tools.
-    try:
-        result = _run_legacy_pipeline(prompt, resources)
-    except Exception as exc:
-        msg = f"**Embeddings pipeline error:** {exc}"
-        warnings.append(str(exc))
+    if result.get("error"):
+        msg = f"**Embeddings pipeline error:** {result['error']}"
+        warnings.append(str(result["error"]))
         _safe_save_turn(context, prompt, msg, [], set(), warnings)
         return {
             "reply": msg,
@@ -220,7 +224,7 @@ def run_turn_embeddings(prompt: str) -> dict[str, Any]:
             "candidates_raw": [],
             "reveals": set(),
             "warnings": warnings,
-            "result": {"error": str(exc)},
+            "result": result,
             "persisted": session_db_adapter.is_persistent(),
         }
 

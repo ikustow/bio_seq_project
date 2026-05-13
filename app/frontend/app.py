@@ -3,6 +3,16 @@
 from __future__ import annotations
 
 import os
+
+# Windows OpenMP collision workaround. Two OpenMP runtimes (Intel ``libiomp5md``
+# from numpy/MKL and LLVM ``libomp140`` from faiss/torch) get loaded into the
+# same process and abort it with ``OMP: Error #15`` mid-request. Setting this
+# before any heavy import lets them coexist. The same workaround is applied
+# in the eval harness (see commit d42484d). Must be set before ``import faiss``
+# anywhere in the dependency chain, so it lives at the very top of the entry
+# point.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 import sys
 from pathlib import Path
 

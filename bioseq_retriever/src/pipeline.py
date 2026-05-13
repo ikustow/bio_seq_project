@@ -6,7 +6,7 @@ from langgraph.graph import StateGraph, END
 
 from src.utils import get_llm, translate_dna_to_protein, get_first_fasta_entry, is_secure_path, clean_sequence
 from src.data_fetcher import get_uniprot_records
-from src.search import search_top_k
+from src.search import search_top_k, blast_search
 from src.reranking import LocalReranker
 
 from src.config import ALLOWED_DATA_DIR
@@ -33,6 +33,8 @@ class GraphState(TypedDict):
     ranked_results: Optional[List[Dict[str, Any]]]
     final_results: Optional[List[Dict[str, Any]]]
     error: Optional[str]
+    # "embeddings" (default, ProtT5+FAISS via search-service) or "blast" (EBI REST).
+    search_algorithm: Optional[str]
 
 # --- Node Functions ---
 
@@ -116,10 +118,17 @@ def pass_protein_node(state: GraphState) -> Dict[str, Any]:
     return {"protein_sequence": state['sequence']}
 
 def rank_node(state: GraphState) -> Dict[str, Any]:
-    """Performs sequence similarity search via service client."""
+    """Performs sequence similarity search via the selected backend."""
     if state.get('error'): return {}
     try:
-        matches = search_top_k(state['protein_sequence'], k=50)
+        algorithm = (state.get("search_algorithm") or "embeddings").lower()
+        if algorithm == "blast":
+            # BLAST is slower than FAISS and returns at most ~10 hits anyway;
+            # we ask for 10 to give rerank something to reorder if a context
+            # query was supplied. Hardcoded to SwissProt for speed/quality.
+            matches = blast_search(state['protein_sequence'], k=10)
+        else:
+            matches = search_top_k(state['protein_sequence'], k=50)
         records = get_uniprot_records([m[0] for m in matches])
         return {"ranked_results": records}
     except Exception as e:
@@ -174,7 +183,7 @@ def create_pipeline():
     
     return workflow.compile()
 
-async def run_bioseq_pipeline(prompt: str):
+async def run_bioseq_pipeline(prompt: str, search_algorithm: str = "embeddings"):
     pipeline = create_pipeline()
     initial_state = {
         "prompt": prompt,
@@ -187,7 +196,8 @@ async def run_bioseq_pipeline(prompt: str):
         "is_confident": None,
         "ranked_results": None,
         "final_results": None,
-        "error": None
+        "error": None,
+        "search_algorithm": search_algorithm,
     }
     # Using ainvoke as requested
     return await pipeline.ainvoke(initial_state)
