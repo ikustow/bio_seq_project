@@ -1,8 +1,4 @@
-"""Adapter from the Streamlit UI to the bioseq_retriever pipeline.
-
-Calls `run_bioseq_pipeline(prompt)` and translates its `final_results`
-(UniProt JSON dicts) into the UI's `Candidate` view-model list.
-"""
+"""Adapter from the Streamlit UI to the backend BioSeq chat service."""
 
 from __future__ import annotations
 
@@ -10,46 +6,51 @@ import os
 import sys
 from pathlib import Path
 
-# Project root must be on sys.path so `bioseq_retriever` is importable when
-# Streamlit launches `app/frontend/app.py` directly.
+import streamlit as st
+
 _FRONTEND_ROOT = Path(__file__).resolve().parent
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_RETRIEVER_ROOT = _PROJECT_ROOT / "bioseq_retriever"
+_APP_ROOT = _PROJECT_ROOT / "app"
 
-for path in (_FRONTEND_ROOT, _PROJECT_ROOT, _RETRIEVER_ROOT):
+for path in (_FRONTEND_ROOT, _APP_ROOT, _PROJECT_ROOT):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-_DATA_DIR = _RETRIEVER_ROOT / "data"
-os.environ.setdefault("BIOSEQ_H5_PATH", str(_DATA_DIR / "per-protein.h5"))
-os.environ.setdefault("BIOSEQ_INDEX_PATH", str(_DATA_DIR / "per-protein.index"))
-# bioseq_retriever switched the accessions cache from pickle to JSON; default
-# the path extension to match (was ``.pkl``).
-os.environ.setdefault(
-    "BIOSEQ_ACCESSIONS_CACHE_PATH",
-    str(_DATA_DIR / "per-protein.accessions.json"),
-)
-# Default-off the new microservices mode; we run ProtT5+FAISS in-process.
-os.environ.setdefault("BIOSEQ_USE_SERVICES", "false")
+os.environ.setdefault("BIOSEQ_BACKEND", "runtime")
 
-from bioseq_retriever.src.pipeline import run_bioseq_pipeline  # noqa: E402
+from backend.app_contracts import ChatTurnRequest  # noqa: E402
+from backend.app_services.service_factory import create_bioseq_chat_service  # noqa: E402
+from mock.protein_loader import Candidate  # noqa: E402
 
-from mock.protein_loader import Candidate, from_dict  # noqa: E402
+
+_SERVICE = None
+
+
+def _service():
+    global _SERVICE
+    if _SERVICE is None:
+        _SERVICE = create_bioseq_chat_service()
+    return _SERVICE
 
 
 def run_search(prompt: str) -> list[Candidate]:
-    """Run the bioseq pipeline and return UI-ready Candidate list.
+    """Run the backend runtime retriever and return UI-ready candidates."""
+    request = ChatTurnRequest(
+        message=prompt,
+        session_id=str(st.session_state.get("session_id") or "frontend_runtime"),
+        user_id=str(st.session_state.get("user_id") or "anonymous"),
+        workspace_id=st.session_state.get("workspace_id"),
+        user_role=st.session_state.get("user_role"),
+    )
+    result = _service().submit_turn(request)
+    if result.pipeline and result.pipeline.error:
+        raise RuntimeError(result.pipeline.error)
+    return [_candidate_for_ui(candidate.model_dump()) for candidate in result.candidates]
 
-    Score is a placeholder (0.0) — the rerank step currently drops scores.
-    The UI should render a neutral "match-confidence unavailable" badge.
-    """
-    result = run_bioseq_pipeline(prompt)
 
-    error = result.get("error")
-    if error:
-        raise RuntimeError(error)
-
-    out: list[Candidate] = []
-    for record in result.get("final_results") or []:
-        out.append(Candidate(protein=from_dict(record), match_score=0.0))
-    return out
+def _candidate_for_ui(candidate: dict) -> Candidate:
+    output = dict(candidate)
+    match_score = output.get("match_score")
+    if isinstance(match_score, (int, float)) and 0 < match_score <= 1:
+        output["match_score"] = float(match_score) * 100.0
+    return Candidate(**output)

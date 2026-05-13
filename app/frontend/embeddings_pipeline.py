@@ -1,14 +1,13 @@
 """Legacy embeddings retrieval path (ProtT5 + FAISS + UniProt).
 
 Wraps :mod:`bioseq_retriever.src.pipeline` so it can be selected from the
-Streamlit UI as an alternative to the Neo4j graph retriever. The legacy
-pipeline does not write to ``public.chat_sessions`` itself — this adapter
-is the sole DB writer for the embeddings backend, mirroring how the graph
-path works (see ``chat_pipeline.run_turn``).
+Streamlit UI as a legacy root-level retriever path. The legacy pipeline does
+not write to ``public.chat_sessions`` itself — this adapter is the sole DB
+writer for the embeddings backend.
 
 Heavy dependencies (``torch``, ``transformers``, ``faiss``, ``h5py``,
 ``sentence-transformers``, ``pyfaidx``) are *optional*. We import them
-lazily inside the cached factory so users on the graph backend never pay
+lazily inside the cached factory so users outside this legacy path never pay
 the import cost. If anything is missing — packages, the H5 file, or the
 LLM key needed by the contextual reranker — we surface a clear instruction
 in the chat reply rather than crashing the page.
@@ -118,7 +117,7 @@ def _build_pipeline_resources():
     """
     # Bootstrap the data files before resolving paths, so the H5/index land
     # in the expected location if they were missing.
-    from bioseq_retriever.src.bootstrap import ensure_data
+    from depricated.bioseq_retriever.src.bootstrap import ensure_data
     ensure_data()
 
     # Make env-derived data paths visible to the legacy pipeline before import.
@@ -128,9 +127,9 @@ def _build_pipeline_resources():
     os.environ["BIOSEQ_ACCESSIONS_CACHE_PATH"] = str(cache_path)
 
     from bioseq_retriever.src.embeddings import get_or_create_index
-    from bioseq_retriever.src.search import get_prottrans_embedder
-    from bioseq_retriever.src.reranking import LocalReranker
-    from bioseq_retriever.src.pipeline import create_pipeline
+    from depricated.bioseq_retriever.src.search import get_prottrans_embedder
+    from depricated.bioseq_retriever.src.reranking import LocalReranker
+    from depricated.bioseq_retriever.src.pipeline import create_pipeline
 
     embedder_tools = get_prottrans_embedder()
     index, accessions = get_or_create_index(str(h5_path), str(index_path), str(cache_path))
@@ -286,15 +285,15 @@ def _run_legacy_pipeline(prompt: str, resources: dict[str, Any]) -> dict[str, An
     in sequence using the cached instances, replicating the graph's
     extract → translate/pass → rank → rerank flow.
     """
-    from bioseq_retriever.src.data_fetcher import get_uniprot_records
-    from bioseq_retriever.src.pipeline import (
+    from depricated.bioseq_retriever.src.data_fetcher import get_uniprot_records
+    from depricated.bioseq_retriever.src.pipeline import (
         extract_and_classify_node,
         pass_protein_node,
         resolve_filepath_node,
         translate_dna_node,
         use_raw_sequence_node,
     )
-    from bioseq_retriever.src.search import search_top_k
+    from depricated.bioseq_retriever.src.search import search_top_k
 
     state: dict[str, Any] = {
         "prompt": prompt,

@@ -1,8 +1,8 @@
 """Chat-LLM follow-up turn handler.
 
 Follow-up questions in an existing session are routed here after the first
-retriever turn. This module calls a configured Gemini proxy and preserves the
-currently rendered protein card, so a chat answer does not wipe the right
+retriever turn. This module calls the configured chat provider and preserves
+the currently rendered protein card, so a chat answer does not wipe the right
 column.
 """
 
@@ -28,11 +28,16 @@ import session_db_adapter  # noqa: E402
 
 PROXY_URL_ENV = "BIOSEQ_LLM_PROXY_URL"
 PROXY_TOKEN_ENV = "BIOSEQ_LLM_PROXY_TOKEN"
+CHAT_PROVIDER_ENV = "BIOSEQ_CHAT_LLM_PROVIDER"
+OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
+OPENAI_CHAT_MODEL_ENV = "BIOSEQ_OPENAI_CHAT_MODEL"
+OPENAI_MODEL_ENV = "OPENAI_MODEL"
+OPENAI_DEFAULT_MODEL = "gpt-4.1-nano"
 REQUEST_TIMEOUT_SECONDS = 45
 
 
 def run_turn_chat_llm(prompt: str) -> dict[str, Any]:
-    """Run a follow-up chat turn through the configured Gemini proxy."""
+    """Run a follow-up chat turn through the configured chat provider."""
     user_id = st.session_state.get("user_id") or "anonymous"
     session_id = st.session_state.get("session_id")
     if not session_id:
@@ -50,7 +55,8 @@ def run_turn_chat_llm(prompt: str) -> dict[str, Any]:
 
     current_mode = "chat_llm"
     try:
-        reply, result = _call_gemini_proxy(prompt)
+        reply, result = _call_chat_llm(prompt)
+        current_mode = str(result.get("mode") or "chat_llm")
     except Exception as exc:
         reply = f"**Chat LLM error:** {exc}"
         result = {"mode": "chat_llm", "error": str(exc)}
@@ -85,6 +91,30 @@ def run_turn_chat_llm(prompt: str) -> dict[str, Any]:
     }
 
 
+def _call_chat_llm(prompt: str) -> tuple[str, dict[str, Any]]:
+    provider = (os.getenv(CHAT_PROVIDER_ENV) or "auto").strip().lower()
+    if provider in {"auto", ""}:
+        proxy_url = (os.getenv(PROXY_URL_ENV) or "").strip()
+        proxy_token = (os.getenv(PROXY_TOKEN_ENV) or "").strip()
+        if proxy_url or proxy_token:
+            return _call_gemini_proxy(prompt)
+        if (os.getenv(OPENAI_API_KEY_ENV) or "").strip():
+            return _call_openai(prompt)
+        raise RuntimeError(
+            f"Set {PROXY_URL_ENV}/{PROXY_TOKEN_ENV} for Gemini proxy "
+            f"or {OPENAI_API_KEY_ENV} for OpenAI chat."
+        )
+
+    if provider in {"gemini", "gemini_proxy", "proxy"}:
+        return _call_gemini_proxy(prompt)
+    if provider in {"openai", "chatgpt"}:
+        return _call_openai(prompt)
+
+    raise RuntimeError(
+        f"{CHAT_PROVIDER_ENV} must be 'auto', 'gemini_proxy', or 'openai'."
+    )
+
+
 def _call_gemini_proxy(prompt: str) -> tuple[str, dict[str, Any]]:
     proxy_url = (os.getenv(PROXY_URL_ENV) or "").strip()
     proxy_token = (os.getenv(PROXY_TOKEN_ENV) or "").strip()
@@ -102,21 +132,7 @@ def _call_gemini_proxy(prompt: str) -> tuple[str, dict[str, Any]]:
         "systemInstruction": {
             "parts": [
                 {
-                    "text": (
-                        "You are an expert assistant for protein sequence analysis. "
-                        "Your primary goal is to answer the user's question accurately and helpfully. "
-                        "\n\n"
-                        "You have been provided with database information about the protein the user is asking about. "
-                        "Use this data to ground your answers: explain what the protein does, where it's found, how it interacts, "
-                        "and why it matters clinically or biologically. "
-                        "\n\n"
-                        "Guidelines: "
-                        "- Answer the user's question directly and concisely "
-                        "- Connect relevant data points (function, location, interactions, disease links) to build a coherent explanation "
-                        "- If information is missing from the database, acknowledge it: 'The database doesn't have data on X, but based on Y we can infer...' "
-                        "- Maintain scientific accuracy while keeping explanations clear and accessible "
-                        "- Do not claim that a new database search was performed—use only the information provided"
-                    )
+                    "text": _system_prompt()
                 }
             ]
         },
@@ -130,7 +146,78 @@ def _call_gemini_proxy(prompt: str) -> tuple[str, dict[str, Any]]:
     )
     response.raise_for_status()
     data = response.json()
-    return _extract_gemini_text(data), {"mode": "chat_llm", "gemini": data}
+    return _extract_gemini_text(data), {
+        "mode": "chat_llm",
+        "provider": "gemini_proxy",
+        "gemini": data,
+    }
+
+
+def _call_openai(prompt: str) -> tuple[str, dict[str, Any]]:
+    api_key = (os.getenv(OPENAI_API_KEY_ENV) or "").strip()
+    if not api_key:
+        raise RuntimeError(f"{OPENAI_API_KEY_ENV} is not set.")
+
+    try:
+        from langchain_openai import ChatOpenAI
+    except ImportError as exc:
+        raise RuntimeError(
+            "OpenAI chat provider requires `langchain-openai` in the frontend environment."
+        ) from exc
+
+    model = (
+        os.getenv(OPENAI_CHAT_MODEL_ENV)
+        or os.getenv(OPENAI_MODEL_ENV)
+        or OPENAI_DEFAULT_MODEL
+    ).strip()
+    llm = ChatOpenAI(
+        model=model,
+        temperature=0.2,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
+    response = llm.invoke(_build_openai_messages(prompt))
+    return _extract_openai_text(response), {
+        "mode": "chat_llm",
+        "provider": "openai",
+        "model": model,
+    }
+
+
+def _build_openai_messages(prompt: str) -> list[Any]:
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
+    session_messages = st.session_state.get("messages") or []
+    messages: list[Any] = [SystemMessage(content=_system_prompt())]
+
+    protein_context = _get_current_protein_context()
+    if protein_context:
+        messages.append(HumanMessage(content=protein_context))
+        messages.append(
+            AIMessage(
+                content=(
+                    "I understand. I have the context about the current protein. "
+                    "I'll use this information to answer your questions."
+                )
+            )
+        )
+
+    seen_current_prompt = False
+    for message in session_messages[-20:]:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        content = str(message.get("content") or "").strip()
+        if not content:
+            continue
+        if role == "user":
+            seen_current_prompt = seen_current_prompt or content == prompt
+            messages.append(HumanMessage(content=content))
+        elif role == "assistant":
+            messages.append(AIMessage(content=content))
+
+    if not seen_current_prompt:
+        messages.append(HumanMessage(content=prompt))
+    return messages
 
 
 def _build_gemini_contents(prompt: str) -> list[dict[str, Any]]:
@@ -248,6 +335,24 @@ def _get_current_protein_context() -> str | None:
     return "\n".join(lines)
 
 
+def _system_prompt() -> str:
+    return (
+        "You are an expert assistant for protein sequence analysis. "
+        "Your primary goal is to answer the user's question accurately and helpfully. "
+        "\n\n"
+        "You have been provided with database information about the protein the user is asking about. "
+        "Use this data to ground your answers: explain what the protein does, where it's found, how it interacts, "
+        "and why it matters clinically or biologically. "
+        "\n\n"
+        "Guidelines: "
+        "- Answer the user's question directly and concisely "
+        "- Connect relevant data points (function, location, interactions, disease links) to build a coherent explanation "
+        "- If information is missing from the database, acknowledge it: 'The database doesn't have data on X, but based on Y we can infer...' "
+        "- Maintain scientific accuracy while keeping explanations clear and accessible "
+        "- Do not claim that a new database search was performed—use only the information provided"
+    )
+
+
 def _extract_gemini_text(data: dict[str, Any]) -> str:
     candidates = data.get("candidates") or []
     if not candidates:
@@ -256,4 +361,26 @@ def _extract_gemini_text(data: dict[str, Any]) -> str:
     text = "\n".join(str(part.get("text") or "") for part in parts if part.get("text")).strip()
     if not text:
         raise RuntimeError("Gemini returned an empty text response.")
+    return text
+
+
+def _extract_openai_text(response: Any) -> str:
+    content = getattr(response, "content", "")
+    if isinstance(content, str):
+        text = content.strip()
+    elif isinstance(content, list):
+        chunks: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                chunks.append(item)
+            elif isinstance(item, dict):
+                value = item.get("text") or item.get("content")
+                if value:
+                    chunks.append(str(value))
+        text = "\n".join(chunks).strip()
+    else:
+        text = str(content or "").strip()
+
+    if not text:
+        raise RuntimeError("OpenAI returned an empty text response.")
     return text
