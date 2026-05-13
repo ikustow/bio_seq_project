@@ -1,12 +1,9 @@
 import os
 
 # --- Service Addresses ---
-# Unified services handle both embeddings and search
+# The unified gateway handles all biological retrieval and reranking
 SEARCH_SERVICE_HOST = os.getenv("BIOSEQ_SEARCH_HOST", "0.0.0.0")
 SEARCH_SERVICE_PORT = int(os.getenv("BIOSEQ_SEARCH_PORT", "8002"))
-
-DNA_SEARCH_SERVICE_HOST = os.getenv("BIOSEQ_DNA_SEARCH_HOST", "0.0.0.0")
-DNA_SEARCH_SERVICE_PORT = int(os.getenv("BIOSEQ_DNA_SEARCH_PORT", "8003"))
 
 # --- Paths ---
 # Protein Specific Paths
@@ -26,8 +23,11 @@ HNSW_EF_SEARCH = 2048
 RANDOM_SEED = 42
 
 # --- Model Settings ---
-MODEL_NAME = "Rostlab/prot_t5_xl_uniref50"
+PROTEIN_MODEL_NAME = "Rostlab/prot_t5_xl_uniref50"
 DNA_MODEL_NAME = "LongSafari/hyenadna-medium-160k-seqlen-hf"
+RERANK_MODEL_NAME = "intfloat/e5-large-v2"
+
+# Sequence length limits
 DNA_MAX_LENGTH = 160_000
 
 # --- Default FAISS Threads ---

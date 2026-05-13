@@ -70,14 +70,13 @@ result = run_bioseq_pipeline("Compare this sequence: MKTLL... against human insu
 5. **Contextual Refinement (Reranking)**: Top 5 matches are selected based on semantic alignment with the user's query context.
 
 ## Running the System
-The system relies on the **Unified Search Service** to handle sequence embedding and similarity search.
+The system relies on the **Unified BioSeq Gateway Service** to handle all sequence embedding, similarity search, and contextual reranking.
 
-### Start the Unified Search Services
+### Start the Unified Gateway Service
 ```bash
-python bioseq_retriever/services/search_service.py # Protein service
-python bioseq_retriever/services/dna_search_service.py # DNA service
+python bioseq_retriever/services/search_service.py
 ```
-These services load the relevant models and FAISS index, exposing the `/search` endpoints for the pipeline.
+This service loads the required models (ProtT5, HyenaDNA, BioE5) and FAISS indices, exposing endpoints for protein search, DNA search, and biological reranking.
 
 ### Run Pipeline
 The pipeline now operates asynchronously:
@@ -95,8 +94,7 @@ python pipeline_interface.py "I have a sequence: MALW..."
   - config.py: Environment configuration and service settings.
   - data_fetcher.py: REST client for UniProt using `httpx`.
 - services/: Unified Search Service.
-  - search_service.py: Integrated embedding (ProtT5) and search (FAISS) service.
-  - dna_search_service.py: Integrated embedding (HyenaDNA) and search (FAISS) service.
+  - search_service.py: Unified gateway for Protein/DNA embeddings, FAISS indices, and biological reranking.
   - config.py: Service-specific configuration (ports, FAISS params).
 - `data/`: Directory for embeddings and FAISS indexes.
 - `tests/`: Automated unit and pipeline tests.

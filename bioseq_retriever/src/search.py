@@ -9,12 +9,11 @@ def search_top_k(
 ) -> List[Tuple[str, float]]:
     """
     Client function to call the unified protein search service.
-    Sends a raw sequence directly to the service which handles embedding and search.
     """
-    print(f"Searching protein index for top {k} matches for sequence (length {len(query_sequence)})...")
+    print(f"Searching protein index for top {k} matches...")
     
     response = default_api_client.request_with_retry(
-        "POST", f"{SEARCH_SERVICE_URL}/search",
+        "POST", f"{SEARCH_SERVICE_URL}/search/protein",
         json={"sequence": query_sequence, "k": k}
     )
     results = response.json()["results"]
@@ -27,10 +26,10 @@ def search_dna_top_k(
     """
     Client function to call the unified DNA search service.
     """
-    print(f"Searching DNA index for top {k} matches for sequence (length {len(query_sequence)})...")
+    print(f"Searching DNA index for top {k} matches...")
     
     response = default_api_client.request_with_retry(
-        "POST", f"{DNA_SEARCH_SERVICE_URL}/search",
+        "POST", f"{SEARCH_SERVICE_URL}/search/dna",
         json={"sequence": query_sequence, "k": k}
     )
     results = response.json()["results"]
