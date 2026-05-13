@@ -25,12 +25,12 @@ class BioSeqChatService:
     def __init__(
         self,
         agent: "SessionGraphAgent",
-        graph_retrieval: GraphRetrievalService,
+        graph_retrieval: GraphRetrievalService | None = None,
         retriever_pipeline: BioSeqRetrieverPipeline | None = None,
     ) -> None:
         self._agent = agent
         self._graph_retrieval = graph_retrieval
-        self._retriever_pipeline = retriever_pipeline or BioSeqRetrieverPipeline(graph_retrieval)
+        self._retriever_pipeline = retriever_pipeline or BioSeqRetrieverPipeline(graph_retrieval=graph_retrieval)
 
     def submit_turn(self, request: ChatTurnRequest) -> ChatTurnResult:
         context = _context_from_request(request)
@@ -54,17 +54,21 @@ class BioSeqChatService:
         pipeline, pipeline_candidates = self._retriever_pipeline.run(request.message, limit=5)
         warnings.extend(pipeline.warnings)
         if pipeline.input_type in {"SEQUENCE", "FILEPATH"}:
+            active_sequence_id = _sequence_id(pipeline.sequence) if pipeline.sequence else None
             state_patch: dict[str, Any] = {
-                "current_mode": "graph_retriever_pipeline",
+                "current_mode": "bioseq_retriever_pipeline",
                 "working_memory": {
                     "last_pipeline": pipeline.model_dump(),
                     "last_sync_source": "bioseq_retriever_compat",
                 },
             }
-            if pipeline.sequence:
-                state_patch["active_sequence_id"] = f"seq_{uuid.uuid5(uuid.NAMESPACE_OID, pipeline.sequence).hex[:12]}"
+            if active_sequence_id:
+                state_patch["active_sequence_id"] = active_sequence_id
             if pipeline.active_accession:
                 state_patch["active_accession"] = pipeline.active_accession
+            if pipeline_candidates:
+                state_patch["proteins"] = _protein_records(pipeline_candidates)
+                state_patch["sequences"] = _sequence_records(pipeline, active_sequence_id)
             state = self._agent.update_current_state(context, state_patch)
 
             if pipeline.error or pipeline.controlled_miss:
@@ -96,7 +100,7 @@ class BioSeqChatService:
         assistant_message = _assistant_message(result)
 
         active_accession = request.selected_accession or state.get("active_accession")
-        if not active_accession:
+        if not active_accession and self._graph_retrieval is not None:
             hits = self._graph_retrieval.resolve_input(request.message, limit=1)
             active_accession = hits[0].accession if hits else None
             if active_accession:
@@ -123,6 +127,8 @@ class BioSeqChatService:
         return self._snapshot(context, self._agent.get_current_state(context))
 
     def _safe_candidates(self, accession: str) -> tuple[list[CandidateView], list[str]]:
+        if self._graph_retrieval is None:
+            return [], ["Graph retrieval is disabled; no Neo4j candidate lookup was executed."]
         try:
             return self._graph_retrieval.retrieve_candidates(accession, limit=5), []
         except Exception as exc:
@@ -214,6 +220,46 @@ def _model_dump_list(items: Any) -> list[dict[str, Any]]:
     return output
 
 
+def _sequence_id(sequence: str) -> str:
+    return f"seq_{uuid.uuid5(uuid.NAMESPACE_OID, sequence).hex[:12]}"
+
+
+def _protein_records(candidates: list[CandidateView]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, candidate in enumerate(candidates):
+        protein = candidate.protein
+        if not protein.accession or protein.accession in seen:
+            continue
+        seen.add(protein.accession)
+        records.append(
+            {
+                "accession": protein.accession,
+                "gene_name": protein.gene,
+                "protein_name": protein.name,
+                "source": "bioseq_retriever",
+                "status": "active" if index == 0 else "candidate",
+                "notes": protein.organism_scientific,
+            }
+        )
+    return records
+
+
+def _sequence_records(pipeline: BioSeqPipelineSnapshot, active_sequence_id: str | None) -> list[dict[str, Any]]:
+    if not pipeline.sequence or not active_sequence_id:
+        return []
+    return [
+        {
+            "sequence_id": active_sequence_id,
+            "sequence_type": pipeline.sequence_type.lower(),
+            "raw_sequence": pipeline.sequence,
+            "label": "retriever_input",
+            "source": "bioseq_retriever",
+            "linked_accession": pipeline.active_accession,
+        }
+    ]
+
+
 def _revealed_sections(candidates: list[CandidateView]) -> set[str]:
     """Return the set of protein-card sections the UI should unlock.
 
@@ -245,20 +291,17 @@ def _pipeline_hit_message(pipeline: BioSeqPipelineSnapshot) -> str:
     if pipeline.sequence_type == "DNA":
         return (
             f"I classified the input as DNA, translated it to a protein sequence, "
-            f"and found prepared graph accession {pipeline.active_accession}."
+            f"and found bioseq_retriever accession {pipeline.active_accession}."
         )
-    return f"I classified the input as {source} and found prepared graph accession {pipeline.active_accession}."
+    return f"I classified the input as {source} and found bioseq_retriever accession {pipeline.active_accession}."
 
 
 def _pipeline_miss_message(pipeline: BioSeqPipelineSnapshot) -> str:
     if pipeline.input_type == "FILEPATH":
         return (
-            "I detected a file path, but graph runtime does not read server-side paths. "
-            "Add that sequence through the offline ingestion pipeline first."
+            "I detected a file path, but this runtime did not resolve it. "
+            "Put the sequence in the allowed data directory or send the raw FASTA/sequence."
         )
     if pipeline.error:
-        return f"I could not process this sequence in graph-first runtime: {pipeline.error}"
-    return (
-        "I classified the input sequence, but it is outside the prepared graph dataset. "
-        "Runtime ProtT5/FAISS search is disabled here; add the sequence to offline ingestion first."
-    )
+        return f"I could not process this sequence via bioseq_retriever: {pipeline.error}"
+    return "I classified the input sequence, but bioseq_retriever did not return final matches."

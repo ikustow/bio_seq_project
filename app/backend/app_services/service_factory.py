@@ -47,11 +47,24 @@ def create_bioseq_retriever_graph_agent(use_llm_extractor: bool = True):
 
 def create_bioseq_chat_service() -> BioSeqChatService | MockBioSeqChatService:
     load_env_file(DEFAULT_ENV_PATH)
-    backend_mode = os.getenv("BIOSEQ_BACKEND", "mock").strip().lower()
+    backend_mode = os.getenv("BIOSEQ_BACKEND", "runtime").strip().lower()
     if backend_mode == "mock":
         return MockBioSeqChatService()
+    if backend_mode in {"runtime", "bioseq", "bioseq_retriever"}:
+        from backend.agents_core.retriever_agent.runtime_agent import BioSeqRuntimeSessionAgent
+        from backend.agents_core.shared.services.persistence import create_persistence_resources
+
+        exit_stack = ExitStack()
+        persistence = create_persistence_resources(os.getenv("SUPABASE_DB_URL"), exit_stack)
+        exit_stack.callback(persistence.session_repository.close)
+
+        agent = BioSeqRuntimeSessionAgent(persistence=persistence)
+        retriever_pipeline = BioSeqRetrieverPipeline(graph_retrieval=None, enable_runtime_retriever=True)
+        service = BioSeqChatService(agent=agent, graph_retrieval=None, retriever_pipeline=retriever_pipeline)
+        service._exit_stack = exit_stack  # Keep persistence contexts alive while Streamlit caches the service.
+        return service
     if backend_mode != "graph":
-        raise ValueError("BIOSEQ_BACKEND must be either 'mock' or 'graph'.")
+        raise ValueError("BIOSEQ_BACKEND must be one of: 'runtime', 'bioseq', 'mock', or 'graph'.")
 
     neo4j = resolve_neo4j_settings()
     if not neo4j.user or not neo4j.password:

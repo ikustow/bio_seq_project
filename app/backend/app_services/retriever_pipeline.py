@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import asyncio
+import importlib
 import os
 import re
-from typing import Callable
+import sys
+import threading
+from pathlib import Path
+from typing import Any, Callable
 
 from backend.app_contracts import BioSeqInputExtraction, BioSeqPipelineSnapshot, CandidateView
 
 from .graph_retrieval import GraphRetrievalService, normalize_protein_sequence
+from .protein_view_mapper import uniprot_record_to_candidate
 
 
 STANDARD_CODON_TABLE = {
@@ -88,13 +94,19 @@ def translate_dna_to_protein(dna_sequence: str) -> str:
 class BioSeqRetrieverPipeline:
     def __init__(
         self,
-        graph_retrieval: GraphRetrievalService,
+        graph_retrieval: GraphRetrievalService | None = None,
         llm_factory: Callable[[], object] | None = None,
         allow_runtime_filepaths: bool = False,
+        enable_runtime_retriever: bool | None = None,
     ) -> None:
         self._graph_retrieval = graph_retrieval
         self._llm_factory = llm_factory
         self._allow_runtime_filepaths = allow_runtime_filepaths
+        self._enable_runtime_retriever = (
+            _env_flag("BIOSEQ_ENABLE_RUNTIME_RETRIEVER", default=True)
+            if enable_runtime_retriever is None
+            else enable_runtime_retriever
+        )
 
     def run(self, prompt: str, limit: int = 5) -> tuple[BioSeqPipelineSnapshot, list[CandidateView]]:
         state = BioSeqPipelineSnapshot(prompt=prompt)
@@ -143,6 +155,20 @@ class BioSeqRetrieverPipeline:
             state.error = f"Translation failed: {exc}"
             return state, candidates
 
+        if self._enable_runtime_retriever:
+            runtime_state, runtime_candidates = self._run_runtime_retriever(prompt, state, limit=limit)
+            if runtime_candidates:
+                return runtime_state, runtime_candidates
+            if self._graph_retrieval is None:
+                return runtime_state, runtime_candidates
+            if runtime_state.error:
+                state.warnings.append(f"bioseq_retriever runtime failed; falling back to graph lookup. {runtime_state.error}")
+
+        if self._graph_retrieval is None:
+            state.controlled_miss = True
+            state.error = "bioseq_retriever runtime returned no candidates and graph fallback is disabled."
+            return state, candidates
+
         hit = None
         if state.sequence_type == "DNA":
             hit = self._graph_retrieval.find_encoded_protein_by_sequence_hash(state.sequence, state.protein_sequence)
@@ -165,6 +191,40 @@ class BioSeqRetrieverPipeline:
         )
         return state, candidates
 
+    def _run_runtime_retriever(
+        self,
+        prompt: str,
+        state: BioSeqPipelineSnapshot,
+        limit: int,
+    ) -> tuple[BioSeqPipelineSnapshot, list[CandidateView]]:
+        try:
+            result = _run_backend_bioseq_pipeline(prompt)
+        except Exception as exc:
+            state.controlled_miss = True
+            state.error = f"bioseq_retriever runtime failed: {exc}"
+            return state, []
+
+        _merge_runtime_state(state, result)
+        if state.error:
+            state.controlled_miss = True
+            return state, []
+
+        records = result.get("final_results") or []
+        candidates = [
+            uniprot_record_to_candidate(record, rank=index)
+            for index, record in enumerate(records[:limit])
+            if isinstance(record, dict)
+        ]
+        if candidates:
+            state.active_accession = candidates[0].protein.accession
+            state.controlled_miss = False
+            state.error = None
+            return state, candidates
+
+        state.controlled_miss = True
+        state.error = "bioseq_retriever runtime completed without final matches."
+        return state, []
+
     def extract_and_classify(self, prompt: str) -> BioSeqInputExtraction:
         if self._llm_factory and os.getenv("BIOSEQ_INPUT_EXTRACTOR", "deterministic").lower() == "llm":
             try:
@@ -183,6 +243,80 @@ class BioSeqRetrieverPipeline:
         structured_llm = llm.with_structured_output(BioSeqInputExtraction)
         result = structured_llm.invoke([SystemMessage(content=EXTRACTION_SYSTEM_PROMPT), HumanMessage(content=prompt)])
         return BioSeqInputExtraction.model_validate(result)
+
+
+def _run_backend_bioseq_pipeline(prompt: str) -> dict[str, Any]:
+    _ensure_backend_bioseq_import_path()
+    pipeline_module = importlib.import_module("src.pipeline")
+    run_pipeline = getattr(pipeline_module, "run_bioseq_pipeline")
+    result = _run_coro_sync(run_pipeline(prompt))
+    return dict(result or {})
+
+
+def _ensure_backend_bioseq_import_path() -> None:
+    backend_retriever_root = Path(__file__).resolve().parents[1] / "bioseq_retriever"
+    root_text = str(backend_retriever_root)
+    if root_text in sys.path:
+        sys.path.remove(root_text)
+    sys.path.insert(0, root_text)
+
+    cached_pipeline = sys.modules.get("src.pipeline")
+    cached_file = Path(getattr(cached_pipeline, "__file__", "") or "") if cached_pipeline else None
+    if cached_file and not _is_relative_to(cached_file.resolve(), backend_retriever_root.resolve()):
+        for name in list(sys.modules):
+            if name == "src" or name.startswith("src."):
+                del sys.modules[name]
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _run_coro_sync(coro):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    result: dict[str, Any] = {}
+    error: list[BaseException] = []
+
+    def runner() -> None:
+        try:
+            result["value"] = asyncio.run(coro)
+        except BaseException as exc:
+            error.append(exc)
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    thread.join()
+    if error:
+        raise error[0]
+    return result.get("value")
+
+
+def _merge_runtime_state(state: BioSeqPipelineSnapshot, result: dict[str, Any]) -> None:
+    state.sequence_or_path = result.get("sequence_or_path") or state.sequence_or_path
+    state.input_type = result.get("input_type") or state.input_type
+    state.context = result.get("context") or state.context
+    state.sequence = result.get("sequence") or state.sequence
+    state.sequence_type = result.get("sequence_type") or state.sequence_type
+    state.protein_sequence = result.get("protein_sequence") or state.protein_sequence
+    if result.get("is_confident") is not None:
+        state.is_confident = bool(result.get("is_confident"))
+    if result.get("error"):
+        state.error = str(result["error"])
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def deterministic_extract_and_classify(prompt: str) -> BioSeqInputExtraction:
