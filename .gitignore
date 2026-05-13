@@ -57,11 +57,46 @@ app/frontend/assets/AF-*.pdb
 *.swp
 *.swo
 *~
-graph_core/data/per-protein.h5
-app/backend/graph_core/data/
-app/backend/graph_core/lib/
-app/backend/graph_core/output/
-bioseq_retriever/data/
+
+# BioSeq local runtime/data artifacts. These are downloaded/generated locally
+# and should live in object storage or a dataset registry, not in git.
+/data/
+/bioseq_retriever/data/
+/app/backend/bioseq_retriever/data/
+/app/backend/graph_core/data/
+/app/backend/graph_core/lib/
+/app/backend/graph_core/output/
+/graph_core/data/
+/data_prep/swissprot.tsv
+/data_prep/*.tsv
+/data_prep/*.h5
+/data_prep/*.hdf5
+/data_prep/*.index
+/data_prep/*.faiss
+/data_prep/*.accessions.json
+/data_prep/*.accessions.pkl
+/data_prep/*.fasta
+/data_prep/*.faa
+/data_prep/*.fa
+/data_prep/*.fastq
+/data_prep/*.fq
+
+# Large ML/data binaries and generated indexes.
+*.h5
+*.hdf5
+*.faiss
+*.index
+*.accessions.json
+*.accessions.pkl
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.npy
+*.npz
+*.parquet
+*.arrow
 
 # Eval harness: ignore per-run outputs but keep the locked baseline
 tests/eval/runs/*

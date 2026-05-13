@@ -1,19 +1,8 @@
 """End-to-end turn pipeline for the Streamlit frontend.
 
-Turn dispatch:
-
-- **First user turn** in the session goes to the embeddings retriever
-  (``embeddings_pipeline.run_turn_embeddings``). "First" is decided by
-  reading ``working_memory.turn_count`` from ``public.chat_sessions`` so
-  the rule survives page reloads, sidebar session-switches, and multi-tab
-  use.
-- **Subsequent turns** go to the chat-LLM module via
-  ``chat_llm_pipeline.run_turn_chat_llm``.
-
-The embeddings module is imported lazily so the heavy ML deps (~2 GB)
-don't load until the user actually triggers a search. The retriever does
-not write to ``public.chat_sessions`` itself — ``session_db_adapter`` is
-the sole writer for both turn kinds, so sidebar history is uniform.
+First user turn goes to the backend ``BioSeqChatService`` runtime retriever.
+Subsequent turns go to the chat-LLM module and keep the existing protein card
+stable until a new sequence is submitted.
 """
 
 from __future__ import annotations
@@ -33,7 +22,19 @@ for _path in (_FRONTEND_ROOT, _APP_ROOT, _PROJECT_ROOT):
 
 import backend_choice  # noqa: E402
 import session_db_adapter  # noqa: E402
+from backend.app_contracts import ChatTurnRequest  # noqa: E402
+from backend.app_services.service_factory import create_bioseq_chat_service  # noqa: E402
 from mock.protein_loader import Candidate, DiseaseInfo, DomainFeature, ProteinView  # noqa: E402
+
+
+_CHAT_SERVICE = None
+
+
+def _chat_service():
+    global _CHAT_SERVICE
+    if _CHAT_SERVICE is None:
+        _CHAT_SERVICE = create_bioseq_chat_service()
+    return _CHAT_SERVICE
 
 
 def run_turn(prompt: str) -> dict[str, Any]:
@@ -59,14 +60,69 @@ def run_turn(prompt: str) -> dict[str, Any]:
 
         return chat_llm_pipeline.run_turn_chat_llm(prompt)
 
-    # First turn → embeddings retriever. Lazy import so the heavy ML deps
-    # (~2 GB) only load on first use.
-    import embeddings_pipeline  # noqa: WPS433
-
-    outcome = embeddings_pipeline.run_turn_embeddings(prompt)
-    outcome["backend"] = backend_choice.BACKEND_EMBEDDINGS
+    outcome = _run_turn_backend(prompt)
+    outcome["backend"] = backend_choice.BACKEND_RUNTIME
     outcome.setdefault("update_card", True)
     return outcome
+
+
+def _run_turn_backend(prompt: str) -> dict[str, Any]:
+    user_id = st.session_state.get("user_id") or "anonymous"
+    session_id = st.session_state.get("session_id")
+    if not session_id:
+        raise RuntimeError("session_id is missing from st.session_state; bootstrap_identity() must run first.")
+
+    context = session_db_adapter.make_context(
+        user_id=user_id,
+        session_id=session_id,
+        workspace_id=st.session_state.get("workspace_id"),
+        user_role=st.session_state.get("user_role"),
+    )
+    warnings: list[str] = list(session_db_adapter.get_warnings())
+
+    try:
+        response = _chat_service().submit_turn(
+            ChatTurnRequest(
+                message=prompt,
+                session_id=session_id,
+                user_id=user_id,
+                workspace_id=st.session_state.get("workspace_id"),
+                user_role=st.session_state.get("user_role"),
+            )
+        )
+    except Exception as exc:
+        reply = f"**Backend runtime error:** {exc}"
+        warnings.append(str(exc))
+        _safe_save_turn(context, prompt, reply, [], set(), warnings)
+        return {
+            "reply": reply,
+            "candidates": [],
+            "candidates_raw": [],
+            "reveals": set(),
+            "warnings": warnings,
+            "result": {"error": str(exc)},
+            "persisted": session_db_adapter.is_persistent(),
+        }
+
+    warnings.extend(response.warnings)
+    raw_candidates = [candidate.model_dump() for candidate in response.candidates]
+    ui_candidates = [_candidate_from_backend(candidate) for candidate in raw_candidates]
+    query_protein_sequence = response.pipeline.protein_sequence if response.pipeline else None
+    reveals = _revealed_sections(ui_candidates, query_protein_sequence)
+    reply = response.assistant_message
+
+    _safe_save_turn(context, prompt, reply, raw_candidates, reveals, warnings, query_protein_sequence)
+
+    return {
+        "reply": reply,
+        "candidates": ui_candidates,
+        "candidates_raw": raw_candidates,
+        "reveals": reveals,
+        "warnings": warnings,
+        "result": response.model_dump(),
+        "persisted": session_db_adapter.is_persistent(),
+        "query_protein_sequence": query_protein_sequence,
+    }
 
 
 def _is_first_turn_in_session() -> bool:
@@ -165,6 +221,29 @@ def auto_restore_if_fresh_load(session_id: str) -> bool:
 
     outcome = restore_session_state(session_id)
     return bool(outcome.get("loaded"))
+
+
+def _safe_save_turn(
+    context,
+    prompt: str,
+    reply: str,
+    raw_candidates: list[dict[str, Any]],
+    reveals: set[str],
+    warnings: list[str],
+    query_protein_sequence: str | None = None,
+) -> None:
+    try:
+        session_db_adapter.save_turn(
+            context,
+            user_message=prompt,
+            assistant_message=reply,
+            candidates=raw_candidates,
+            revealed_sections=reveals,
+            current_mode="bioseq_runtime_retriever",
+            query_protein_sequence=query_protein_sequence,
+        )
+    except Exception as exc:
+        warnings.append(f"Could not save session turn: {exc}")
 
 
 # ---------------------------------------------------------------------------

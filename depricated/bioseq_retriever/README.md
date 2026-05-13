@@ -97,7 +97,7 @@ python pipeline_interface.py "I have a sequence: MALW..."
   - search_service.py: Unified gateway for Protein/DNA embeddings, FAISS indices, and biological reranking.
   - config.py: Service-specific configuration (ports, FAISS params).
 - `data/`: Directory for embeddings and FAISS indexes.
-- `../../../tests/backend/bioseq_retriever/`: Automated unit and pipeline tests.
+- `../../tests/depricated/bioseq_retriever/`: Automated unit and pipeline tests.
 - `pipeline_interface.py`: CLI entry point script.
 
 ## Limitations and Remarks

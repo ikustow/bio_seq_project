@@ -1,5 +1,5 @@
 # =============================================================================
-# Core UI deps — required for both backends (graph and embeddings).
+# Core UI deps — required for runtime and legacy embeddings paths.
 # =============================================================================
 streamlit>=1.57,<2.0
 streamlit-cookies-controller>=0.0.4

@@ -1,50 +1,128 @@
-# BioSeq Investigator — app
+# BioSeq Investigator app
 
-Streamlit-приложение поверх Neo4j-графа белков. Полный обзор архитектуры — [ARCHITECTURE.md](ARCHITECTURE.md).
+Актуальное состояние на 2026-05-13: `app/` - основной runtime контур Streamlit-приложения. Поиск и карточки белков идут через `app/backend/bioseq_retriever`, `app/backend/app_services` и локальные FAISS/HDF5 artifacts. Neo4j/graph database контур из runtime убран.
 
-## Запуск
+## Что входит в app
+
+| Путь | Назначение |
+| --- | --- |
+| `frontend/` | Streamlit UI: чат, protein card, sidebar с историями, cookie identity. |
+| `backend/app_contracts/` | Pydantic-контракты между UI, service layer и session agent. |
+| `backend/app_services/` | `BioSeqChatService`, wrapper над retriever pipeline, mapping UniProt records в UI-карточки, factory. |
+| `backend/agents_core/` | LangGraph session agent и persistence glue для Supabase/Postgres. |
+| `backend/bioseq_retriever/` | Рабочая копия bioseq retriever внутри backend: pipeline, UniProt fetch, search-service client, rerank. |
+
+Старый root-level retriever вынесен в `depricated/bioseq_retriever/` как rollback/reference snapshot. Новую runtime-интеграцию нужно делать через `app/backend/bioseq_retriever`.
+
+## Быстрый запуск
 
 ```bash
-streamlit run app/frontend/app.py
+pip install -r app/frontend/requirements.txt
 ```
 
-Переменные окружения (в `.env`):
-- `SUPABASE_DB_URL` — без неё session history не персистится (см. TODO ниже).
-- `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `NEO4J_DATABASE` — обязательны для graph-backend.
-- `MISTRAL_API_KEY` или `OPENAI_API_KEY` — обязательны только для embeddings-backend.
-- `BIOSEQ_FRONTEND_BACKEND` — `mock` (по умолчанию демо) / `real` (legacy ProtT5+FAISS) / vector-DB режим включается отдельно через `config.USE_VECTOR_DB_MODE=True`.
+Запуск search/rerank gateway:
 
-## TODO по итогам аудита 2026-05-08
+```bash
+python app/backend/bioseq_retriever/services/search_service.py
+```
 
-### Persistence (запись белков в БД)
+Запуск Streamlit:
 
-- [ ] **Проверить `SUPABASE_DB_URL` на каждом окружении.** Если переменная не задана, repository — `NullSessionRepository`, `upsert_session` это no-op, всё живёт только в `st.session_state` + LangGraph `InMemorySaver` и пропадает после рестарта. Сайдбар в этом случае показывает warning «Session history is not persisted» — это сигнал, а не косметика.
-- [ ] **Добавить в sidebar/Debug expander индикатор `is_persistent()` и `current_mode` последнего turn-а.** Сейчас, чтобы понять «реально ли пишется», нужно лезть в SQL.
-- [ ] **Зафиксировать разделение ответственности «кто что пишет».** Сейчас:
-  - retriever-агент пишет **top-1** (`proteins[0]`, `active_accession`, agent-side `working_memory`);
-  - UI делает read-merge-write поверх и добавляет **top-5** (`proteins[*]`) + полные карточки в `working_memory.last_candidates` + transcript + `turn_count`.
-  - Это два UPDATE-а на каждый user turn по одной строке через два разных коннекшена. Для single-process Streamlit ок, но при многопроцессном/multi-tab нагрузке нужен либо advisory lock, либо один writer.
-- [ ] **Добавить smoke-test:** один turn → проверить `jsonb_array_length(proteins) == 5` и `jsonb_array_length(working_memory->'last_candidates') >= 1`. Любое расхождение значит, что один из двух writer-ов упал тихо.
+```bash
+BIOSEQ_BACKEND=runtime streamlit run app/frontend/app.py
+```
 
-### Retriever (контекст и качество результатов)
+Локально приложение доступно на стандартном Streamlit URL, обычно `http://localhost:8501`.
 
-- [ ] **Починить `neighbor_pool=50` в `GraphRetrievalService.retrieve_candidates`.** Сейчас в [graph_retrieval.py:175-176](backend/app_services/graph_retrieval.py#L175-L176) цикл обрывается на `limit=5` ДО rerank-а. Cypher достаёт 50 соседей, но reranker видит только 4 (плюс target). Пул в 50 — мёртвый код. Исправление: убрать `break`, отдавать `_rerank_candidates_by_context` весь пул, а уже rerank возвращает `limit`.
-- [ ] **Решить, должен ли target быть жёстко зафиксирован на 1-й позиции.** В `_rerank_candidates_by_context` ([graph_retrieval.py:223-233](backend/app_services/graph_retrieval.py#L223-L233)) `[target, *neighbors][:limit]` — top-1 всегда sequence-hash hit, контекст переупорядочивает только 2-5. Если sequence попадает в неправильный organism, это нельзя исправить контекстом.
-- [ ] **Заменить `_lexical_context_score` на семантический скор.** Сейчас это token-overlap по словам ≥3 символов. Запрос «human» не матчится с «Homo sapiens», запрос про функцию матчится только если те же слова буквально есть в `function_text`. В проекте уже есть Mistral/OpenAI embedder — переиспользовать.
-- [ ] **Передавать ретриверу больше, чем `prompt: str`.** Сейчас в `agent.invoke(prompt, context)` уходит только сырая строка + identity. Не передаётся: история сообщений, `selected_accession`, прошлый `active_accession`, ui_context. Контракт `app_contracts.ChatTurnRequest` уже это умеет — нужно подключить через `BioSeqChatService` (см. TODO в архитектуре).
-- [ ] **Унифицировать поведение LLM- vs deterministic-экстрактора.** В проде стоит `use_llm_extractor=False` ([chat_pipeline.py:71](frontend/chat_pipeline.py#L71)). Системный промпт LLM-экстрактора учит классифицировать DNA/protein, но не извлекает структурированный «контекст-для-rerank». То есть даже если включить LLM, rerank всё равно идёт через лексический скор. Нужно либо вынести семантический rerank в отдельный LLM-вызов, либо явно задокументировать, что контекст влияет только лексически.
-- [ ] **Залогировать `state.context` и `context_score` per candidate.** Быстрый способ убедиться, что контекст вообще доезжает до rerank — напечатать `result["context"]` и `[c.context_score for c in final_results]`. Если у всех `None` или одинаковые мизерные значения — подтверждение, что rerank-by-context фактически не работает.
+## Минимальная конфигурация
 
-### Сопутствующее (P2)
+Пример переменных лежит в `example.env.txt`. Основные переменные:
 
-- [ ] Решить судьбу legacy-адаптеров: `backend_adapter.py` (vector_db_adapter тоже ещё лежит как историческая ветка) дублирует логику `chat_pipeline`. Выпилить или явно пометить deprecated.
-- [ ] `BioSeqChatService` собран под `ChatTurnRequest/ChatTurnResult`, но frontend ходит мимо него напрямую через `chat_pipeline`. Когда дойдут руки — перевести UI на сервисный контракт, тогда `selected_accession` и история сообщений будут передаваться без новых хаков.
-- [ ] Stub `chat_llm_pipeline.py` — заменить на боевой follow-up агент (см. §7 в [ARCHITECTURE.md](ARCHITECTURE.md)).
+| Переменная | Назначение |
+| --- | --- |
+| `BIOSEQ_BACKEND=runtime` | Включает основной backend runtime. Допустим также `mock` для scripted UI demo. |
+| `BIOSEQ_SEARCH_SERVICE_URL=http://localhost:8002` | URL unified BioSeq search/rerank gateway. |
+| `BIOSEQ_ENABLE_RUNTIME_RETRIEVER=true` | Разрешает вызов `app/backend/bioseq_retriever` из service layer. |
+| `MISTRAL_API_KEY` или `OPENAI_API_KEY` | Нужен текущему `backend/bioseq_retriever/src/pipeline.py` для LLM extraction. |
+| `SUPABASE_DB_URL` | Optional, но нужен для persistent history, sidebar restore и корректного follow-up routing. |
+| `APP_WORKSPACE_ID`, `APP_USER_ROLE` | Optional metadata для session context. |
+| `APP_PASSWORD` | Optional простой password gate для Streamlit. |
 
-## Файлы
+Локальные data artifacts:
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — модули, потоки данных, decision points.
-- [frontend/](frontend/) — Streamlit UI.
-- [backend/](backend/) — agents_core, app_services, app_contracts, graph_core.
-- [backend/graph_core/how_to_use.md](backend/graph_core/how_to_use.md) — как наполнять Neo4j.
-- [frontend/TO-DO.md](frontend/TO-DO.md) — старый TO-DO по интеграции frontend ↔ backend session model (большая часть P0 уже сделана; оставшиеся пункты — в этом README).
+| Artifact | Назначение |
+| --- | --- |
+| `data/per-protein.h5` | Protein embeddings. |
+| `data/per-protein.index` | FAISS protein index. |
+| `data/per-protein.accessions.json` | FAISS row -> UniProt accession cache. |
+| `data/per-gene.*` | Optional DNA artifacts. |
+
+Эти файлы тяжелые и должны оставаться локальными или жить в dataset/object storage. Они не должны попадать в git.
+
+## Chat LLM follow-up
+
+Первый пользовательский turn с последовательностью идет в runtime retriever. Follow-up вопросы после сохраненного первого turn идут в `frontend/chat_llm_pipeline.py` и не перерисовывают protein card.
+
+Provider выбирается через:
+
+| Переменная | Поведение |
+| --- | --- |
+| `BIOSEQ_CHAT_LLM_PROVIDER=auto` | По умолчанию: Gemini proxy, если задан proxy URL/token; иначе OpenAI при наличии `OPENAI_API_KEY`. |
+| `BIOSEQ_CHAT_LLM_PROVIDER=gemini_proxy` | Явно использовать proxy. |
+| `BIOSEQ_CHAT_LLM_PROVIDER=openai` | Явно использовать OpenAI. |
+| `BIOSEQ_LLM_PROXY_URL`, `BIOSEQ_LLM_PROXY_TOKEN` | Gemini proxy endpoint/token. |
+| `OPENAI_API_KEY`, `BIOSEQ_OPENAI_CHAT_MODEL` | OpenAI key/model для follow-up chat. |
+
+`OPENAI_API_KEY` может одновременно использоваться и текущим retriever pipeline, и follow-up chat LLM. Для retriever-provider выбора есть `BIOSEQ_LLM_PROVIDER=mistral|openai`.
+
+Важно: текущий routing первого/follow-up turn опирается на `working_memory.turn_count` в `public.chat_sessions`. Без `SUPABASE_DB_URL` persistence выключается, и follow-up routing деградирует в повторный retriever turn.
+
+## Runtime data flow
+
+```text
+Streamlit submit
+  -> frontend/chat_pipeline.py
+  -> backend/app_services/BioSeqChatService
+  -> backend/app_services/BioSeqRetrieverPipeline
+  -> backend/bioseq_retriever/src/pipeline.py
+  -> backend/bioseq_retriever/services/search_service.py
+  -> UniProt metadata + CandidateView/ProteinView
+  -> agents_core/retriever_agent/runtime_agent.py
+  -> session_db_adapter -> public.chat_sessions
+  -> Streamlit protein card
+```
+
+Search service - отдельный тяжелый process, который грузит embedding models и FAISS indices. Это не FastAPI API "внутри агента"; агент и app services используют его как runtime dependency через `BIOSEQ_SEARCH_SERVICE_URL`.
+
+## Persistence
+
+Если задан `SUPABASE_DB_URL`, backend включает:
+
+- LangGraph checkpoints;
+- LangGraph store;
+- compact session rows в `public.chat_sessions`;
+- sidebar history и restore;
+- turn counter для routing retriever vs follow-up LLM.
+
+Если `SUPABASE_DB_URL` не задан или init падает, используется memory fallback. Приложение стартует, но история и follow-up routing не будут надежно сохраняться между turns/reruns.
+
+## Тесты
+
+Все тесты проекта собраны в верхнем `tests/`:
+
+| Путь | Назначение |
+| --- | --- |
+| `tests/backend/bioseq_retriever/` | Тесты рабочей backend-копии retriever. |
+| `tests/depricated/bioseq_retriever/` | Тесты deprecated snapshot. |
+| `tests/scripts/` | Тесты старых utility/scripts checks. |
+| `tests/eval/` | Evaluation suite и validation datasets. |
+
+## Вне app
+
+`data_prep/` остается отдельным project-level контуром подготовки локальных artifacts. Он не является runtime частью `app/`, но нужен для генерации/обновления данных.
+
+## Legacy и cleanup
+
+- `frontend/embeddings_pipeline.py` и `frontend/vector_db_adapter.py` оставлены как legacy paths до отдельной frontend cleanup.
+- `depricated/bioseq_retriever/` оставлен как rollback/reference snapshot.
+- Neo4j, `graph_core` и graph retriever agent не являются частью актуального runtime.

@@ -9,7 +9,7 @@ Also smoke-checks that the new app_contracts models accept the extended
 fields without runtime errors.
 
 Run:
-    streamlit_ui/.venv/Scripts/python.exe scripts/test_schema_unification.py
+    python tests/scripts/test_schema_unification.py
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import sys
 import types
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "app"))
 
 

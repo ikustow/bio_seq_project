@@ -5,7 +5,7 @@ Streamlit runtime. Uses a fake ``st.session_state`` dict and a fake cookie
 controller that records ``set`` calls.
 
 Run:
-    streamlit_ui/.venv/Scripts/python.exe scripts/test_session_identity_resolver.py
+    python tests/scripts/test_session_identity_resolver.py
 """
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ class _FakeCookies:
 sys.modules.setdefault("streamlit_cookies_controller", types.ModuleType("streamlit_cookies_controller"))
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "app" / "frontend"))
 
 import session_identity  # noqa: E402

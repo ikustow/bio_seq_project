@@ -11,7 +11,6 @@ from typing import Any, Callable
 
 from backend.app_contracts import BioSeqInputExtraction, BioSeqPipelineSnapshot, CandidateView
 
-from .graph_retrieval import GraphRetrievalService, normalize_protein_sequence
 from .protein_view_mapper import uniprot_record_to_candidate
 
 
@@ -91,15 +90,20 @@ def translate_dna_to_protein(dna_sequence: str) -> str:
     return "".join(protein)
 
 
+def normalize_protein_sequence(sequence: str) -> str:
+    lines = sequence.strip().splitlines()
+    if lines and lines[0].startswith(">"):
+        lines = [line for line in lines if not line.startswith(">")]
+    return "".join("".join(lines).upper().split())
+
+
 class BioSeqRetrieverPipeline:
     def __init__(
         self,
-        graph_retrieval: GraphRetrievalService | None = None,
         llm_factory: Callable[[], object] | None = None,
         allow_runtime_filepaths: bool = False,
         enable_runtime_retriever: bool | None = None,
     ) -> None:
-        self._graph_retrieval = graph_retrieval
         self._llm_factory = llm_factory
         self._allow_runtime_filepaths = allow_runtime_filepaths
         self._enable_runtime_retriever = (
@@ -127,11 +131,11 @@ class BioSeqRetrieverPipeline:
         if state.input_type == "FILEPATH":
             if not self._allow_runtime_filepaths:
                 state.controlled_miss = True
-                state.error = "Runtime file path resolution is disabled in graph-first mode."
-                state.warnings.append("File path inputs must be ingested offline before graph runtime can search them.")
+                state.error = "Runtime file path resolution is disabled."
+                state.warnings.append("Send the raw FASTA/sequence or enable runtime file path resolution.")
                 return state, candidates
             state.controlled_miss = True
-            state.error = "Runtime file path resolution is not implemented for this graph-first service."
+            state.error = "Runtime file path resolution is not implemented for this service."
             return state, candidates
 
         state.sequence = use_raw_sequence(extraction.sequence_or_path or "")
@@ -159,36 +163,10 @@ class BioSeqRetrieverPipeline:
             runtime_state, runtime_candidates = self._run_runtime_retriever(prompt, state, limit=limit)
             if runtime_candidates:
                 return runtime_state, runtime_candidates
-            if self._graph_retrieval is None:
-                return runtime_state, runtime_candidates
-            if runtime_state.error:
-                state.warnings.append(f"bioseq_retriever runtime failed; falling back to graph lookup. {runtime_state.error}")
+            return runtime_state, runtime_candidates
 
-        if self._graph_retrieval is None:
-            state.controlled_miss = True
-            state.error = "bioseq_retriever runtime returned no candidates and graph fallback is disabled."
-            return state, candidates
-
-        hit = None
-        if state.sequence_type == "DNA":
-            hit = self._graph_retrieval.find_encoded_protein_by_sequence_hash(state.sequence, state.protein_sequence)
-        if hit is None and state.protein_sequence:
-            hit = self._graph_retrieval.find_by_sequence_hash(state.protein_sequence)
-
-        if hit is None:
-            state.controlled_miss = True
-            state.warnings.append(
-                "Sequence is outside the prepared graph dataset; runtime ProtT5/FAISS search is intentionally disabled."
-            )
-            return state, candidates
-
-        state.active_accession = hit.accession
-        candidates = self._graph_retrieval.retrieve_candidates(
-            hit.accession,
-            limit=limit,
-            neighbor_pool=50,
-            context=state.context or None,
-        )
+        state.controlled_miss = True
+        state.error = "bioseq_retriever runtime is disabled."
         return state, candidates
 
     def _run_runtime_retriever(

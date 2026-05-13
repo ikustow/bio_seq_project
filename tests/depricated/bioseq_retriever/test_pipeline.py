@@ -4,12 +4,12 @@ import os
 import sys
 from pathlib import Path
 
-BIOSEQ_RETRIEVER_ROOT = Path(__file__).resolve().parents[3] / "app" / "backend" / "bioseq_retriever"
-if str(BIOSEQ_RETRIEVER_ROOT) not in sys.path:
-    sys.path.insert(0, str(BIOSEQ_RETRIEVER_ROOT))
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-from src.pipeline import run_bioseq_pipeline, is_secure_path
-from src.config import ALLOWED_DATA_DIR
+from depricated.bioseq_retriever.src.pipeline import run_bioseq_pipeline, is_secure_path
+from depricated.bioseq_retriever.src.config import ALLOWED_DATA_DIR
 
 class TestBioSeqUtilities(unittest.TestCase):
     def test_secure_path_validation(self):
@@ -18,10 +18,10 @@ class TestBioSeqUtilities(unittest.TestCase):
         self.assertFalse(is_secure_path("non_allowed_dir/test.fasta"))
 
 class TestPipeline(unittest.TestCase):
-    @patch('src.pipeline.get_llm')
-    @patch('src.pipeline.search_top_k')
-    @patch('src.pipeline.get_uniprot_records')
-    @patch('src.pipeline.LocalReranker')
+    @patch('depricated.bioseq_retriever.src.pipeline.get_llm')
+    @patch('depricated.bioseq_retriever.src.pipeline.search_top_k')
+    @patch('depricated.bioseq_retriever.src.pipeline.get_uniprot_records')
+    @patch('depricated.bioseq_retriever.src.pipeline.LocalReranker')
     def test_run_bioseq_pipeline_mock(self, mock_reranker, mock_uniprot, mock_search, mock_llm):
         # Setup mocks
         mock_llm_instance = MagicMock()

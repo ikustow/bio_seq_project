@@ -3,11 +3,11 @@ import re
 import sys
 from pathlib import Path
 
-BIOSEQ_RETRIEVER_ROOT = Path(__file__).resolve().parents[3] / "app" / "backend" / "bioseq_retriever"
-if str(BIOSEQ_RETRIEVER_ROOT) not in sys.path:
-    sys.path.insert(0, str(BIOSEQ_RETRIEVER_ROOT))
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-from src.utils import clean_sequence, translate_dna_to_protein
+from depricated.bioseq_retriever.src.utils import clean_sequence, translate_dna_to_protein
 
 class TestUtils(unittest.TestCase):
     def test_clean_sequence(self):

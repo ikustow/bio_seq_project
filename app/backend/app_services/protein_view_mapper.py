@@ -131,7 +131,7 @@ def _disease_info(record: dict[str, Any]) -> DiseaseInfo | None:
     count = _as_int(record.get("disease_count"), default=len(names))
     if count == 0 and not names:
         return None
-    # The Neo4j graph currently carries only ``disease_names`` / ``disease_count``;
+    # Legacy compact records may carry only ``disease_names`` / ``disease_count``;
     # ``acronym`` / ``mim_id`` / ``variants`` aren't propagated yet. We surface
     # the first name as the UI-friendly ``name`` so the protein card can
     # render even on graph-only data, and leave the richer fields empty —

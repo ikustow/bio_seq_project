@@ -3,14 +3,14 @@ from unittest.mock import patch, MagicMock
 import sys
 from pathlib import Path
 
-BIOSEQ_RETRIEVER_ROOT = Path(__file__).resolve().parents[3] / "app" / "backend" / "bioseq_retriever"
-if str(BIOSEQ_RETRIEVER_ROOT) not in sys.path:
-    sys.path.insert(0, str(BIOSEQ_RETRIEVER_ROOT))
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-from src.search import search_top_k
+from depricated.bioseq_retriever.src.search import search_top_k
 
 class TestSearchClient(unittest.TestCase):
-    @patch('src.search.default_api_client')
+    @patch('depricated.bioseq_retriever.src.search.default_api_client')
     def test_search_top_k(self, mock_client):
         # Mock response
         mock_response = MagicMock()

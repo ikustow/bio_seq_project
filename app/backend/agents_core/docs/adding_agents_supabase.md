@@ -177,7 +177,7 @@ create table if not exists public.chat_sessions (
 ## Factory checklist для нового агента
 
 1. Загрузить `.env` через `load_env_file(DEFAULT_ENV_PATH)`.
-2. Собрать внешние клиенты: Neo4j, LLM, tools, domain services.
+2. Собрать внешние клиенты: LLM, tools, domain services.
 3. Создать `ExitStack`.
 4. Вызвать `create_persistence_resources(os.getenv("SUPABASE_DB_URL"), exit_stack)`.
 5. Зарегистрировать `exit_stack.callback(persistence.session_repository.close)`.
