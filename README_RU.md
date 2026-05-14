@@ -15,6 +15,7 @@ Streamlit-приложение для исследовательского ан�
 - [app/backend/bioseq_retriever/README.md](app/backend/bioseq_retriever/README.md) — retriever-библиотека (LangGraph-пайплайн, ProtT5/FAISS search service, контекстный rerank).
 - [app/frontend/TO-DO.md](app/frontend/TO-DO.md) — открытые frontend TODO.
 - [tests/eval/README.md](tests/eval/README.md) — как запускать eval-харнессы.
+- [HOW_IT_WORKS.md](HOW_IT_WORKS.md) - detailed description of how it works and how to run it locally (if you don't want to use the HF interface and want to deploy it locally)
 
 ## Конфигурация (HF Space Secrets / Variables)
 
