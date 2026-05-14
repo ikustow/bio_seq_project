@@ -17,6 +17,7 @@ class ChatTurnRequest(BaseModel):
     user_role: str | None = None
     selected_accession: str | None = None
     selected_candidate_index: int | None = None
+    search_algorithm: str | None = None
     ui_context: dict[str, Any] = Field(default_factory=dict)
 
 

@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 # Ensure this folder is on sys.path so `from mock...` / `from components...`
 # work when Streamlit launches the file directly.
@@ -52,6 +53,98 @@ STYLE_PATH = _HERE / "assets" / "style.css"
 def _inject_styles() -> None:
     if STYLE_PATH.exists():
         st.markdown(f"<style>{STYLE_PATH.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
+
+
+# JS that adds a drag handle to the left edge of the right column and
+# persists its width to localStorage. Runs inside a 0-height components
+# iframe and reaches into ``window.parent.document`` to attach the
+# handle; a MutationObserver re-attaches after each Streamlit rerun.
+_RIGHT_PANEL_RESIZER_JS = """
+<script>
+(function () {
+    const doc = window.parent.document;
+    const root = doc.documentElement;
+    const STORAGE_KEY = "bioseq_right_panel_width";
+    const MIN_WIDTH = 320;
+    const MAX_WIDTH = 1400;
+    const DEFAULT_WIDTH = 440;
+
+    function readSaved() {
+        const raw = parseInt(window.parent.localStorage.getItem(STORAGE_KEY) || "", 10);
+        if (Number.isFinite(raw)) {
+            return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, raw));
+        }
+        return DEFAULT_WIDTH;
+    }
+
+    function applyWidth(px) {
+        const clamped = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, px));
+        root.style.setProperty("--right-panel-width", clamped + "px");
+        return clamped;
+    }
+
+    applyWidth(readSaved());
+
+    function attach() {
+        const marker = doc.querySelector(".st-key-main_layout .st-key-main_right");
+        if (!marker) return;
+        const rightCol = marker.closest('[data-testid="stColumn"]');
+        if (!rightCol || rightCol.querySelector(".right-resizer")) return;
+
+        const handle = doc.createElement("div");
+        handle.className = "right-resizer";
+        handle.title = "Drag to resize the protein-card panel";
+        rightCol.appendChild(handle);
+
+        let dragging = false;
+        let startX = 0;
+        let startWidth = 0;
+
+        handle.addEventListener("pointerdown", function (event) {
+            event.preventDefault();
+            dragging = true;
+            startX = event.clientX;
+            startWidth = rightCol.getBoundingClientRect().width;
+            handle.classList.add("is-dragging");
+            // Flag the whole document so CSS can disable selection
+            // everywhere for the duration of the drag — Streamlit/BaseWeb
+            // override body-level user-select, so we set it on <html>.
+            root.classList.add("is-resizing-right");
+            try { handle.setPointerCapture(event.pointerId); } catch (e) {}
+        });
+
+        handle.addEventListener("pointermove", function (event) {
+            if (!dragging) return;
+            event.preventDefault();
+            const delta = startX - event.clientX;
+            applyWidth(startWidth + delta);
+        });
+
+        function endDrag(event) {
+            if (!dragging) return;
+            dragging = false;
+            handle.classList.remove("is-dragging");
+            root.classList.remove("is-resizing-right");
+            try { handle.releasePointerCapture(event.pointerId); } catch (e) {}
+            const cur = parseInt(root.style.getPropertyValue("--right-panel-width"), 10);
+            if (Number.isFinite(cur)) {
+                window.parent.localStorage.setItem(STORAGE_KEY, String(cur));
+            }
+        }
+        handle.addEventListener("pointerup", endDrag);
+        handle.addEventListener("pointercancel", endDrag);
+    }
+
+    attach();
+    const observer = new MutationObserver(function () { attach(); });
+    observer.observe(doc.body, { childList: true, subtree: true });
+})();
+</script>
+"""
+
+
+def _inject_right_panel_resizer() -> None:
+    components.html(_RIGHT_PANEL_RESIZER_JS, height=0, width=0)
 
 
 def _configured_password() -> str | None:
@@ -211,18 +304,23 @@ def main() -> None:
 
     st.divider()
 
-    left, right = st.columns([5, 7], gap="large")
-    with left:
-        chat.render(
-            on_first_search=_load_protein,
-            on_submit=_handle_vector_db_submission if config.USE_VECTOR_DB_MODE else None,
-        )
-    with right:
-        protein_card.render(
-            st.session_state.candidates,
-            st.session_state.card_sections_revealed,
-            query_sequence=st.session_state.query_protein_sequence,
-        )
+    with st.container(key="main_layout"):
+        left, right = st.columns([5, 7], gap="large")
+        with left:
+            with st.container(key="main_left"):
+                chat.render(
+                    on_first_search=_load_protein,
+                    on_submit=_handle_vector_db_submission if config.USE_VECTOR_DB_MODE else None,
+                )
+        with right:
+            with st.container(key="main_right"):
+                protein_card.render(
+                    st.session_state.candidates,
+                    st.session_state.card_sections_revealed,
+                    query_sequence=st.session_state.query_protein_sequence,
+                )
+
+    _inject_right_panel_resizer()
 
 
 if __name__ == "__main__":

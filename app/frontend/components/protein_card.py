@@ -390,15 +390,31 @@ def _match_tone(score: float) -> str:
     return "red"
 
 
+_SCORE_TOOLTIPS: dict[str, str] = {
+    "EMB": (
+        "Embedding similarity — how close this candidate's protein-language-model "
+        "vector is to your query in the retrieval index. Higher means the model "
+        "considered them more semantically similar before re-ranking."
+    ),
+    "SEQ": (
+        "Sequence-alignment match — pairwise BLOSUM62 alignment of your query "
+        "against this candidate, weighted by mutual coverage. Higher means more "
+        "of the two sequences line up with identical residues."
+    ),
+}
+
+
 def _score_tile(label: str, score: float | None) -> str:
     if score is None or score <= 0:
         tone = "gray"
         value = "--"
     else:
         tone = _match_tone(score)
-        value = f"{score:.1f}%"
+        value = f"{int(round(score))}%"
+    tooltip = _SCORE_TOOLTIPS.get(label, label)
     return (
-        f"<span class='candidate-score candidate-score-{tone}'>"
+        f"<span class='candidate-score candidate-score-{tone}' "
+        f"title=\"{html.escape(tooltip)}\">"
         f"<span class='candidate-score-label'>{html.escape(label)}</span>"
         f"<span class='candidate-score-value'>{html.escape(value)}</span>"
         "</span>"
@@ -438,7 +454,7 @@ def _render_switcher(candidates: list[Candidate], query_sequence: str | None) ->
         chosen = 0
     st.session_state.selected_candidate_idx = chosen
 
-    with st.container(border=True):
+    with st.container(border=True, key="candidate_switcher"):
         st.markdown("#### Top 5 matches")
         st.caption(
             "Ranked & re-ranked by the retrieval pipeline. "
@@ -526,25 +542,26 @@ def _render_switcher(candidates: list[Candidate], query_sequence: str | None) ->
             accession = protein.get("accession") or ""
             alignment_score = _alignment_score_for_candidate(candidate, query_sequence)
             with columns[index]:
-                st.button(
-                    accession,
-                    key=f"candidate_button_{index}_{accession}",
-                    help=protein.get("name") or accession,
-                    use_container_width=True,
-                    type="primary" if index == chosen else "secondary",
-                    on_click=_select_candidate,
-                    args=(index,),
-                )
-                active_metrics_class = " candidate-metrics-active" if index == chosen else ""
-                st.markdown(
-                    f"<div class='candidate-metrics{active_metrics_class}'>"
-                    "<div class='candidate-scores'>"
-                    f"{_score_tile('EMB', candidate['match_score'])}"
-                    f"{_score_tile('SEQ', alignment_score)}"
-                    "</div>"
-                    "</div>",
-                    unsafe_allow_html=True,
-                )
+                with st.container(key=f"candidate_cell_{index}"):
+                    st.button(
+                        accession,
+                        key=f"candidate_button_{index}_{accession}",
+                        help=protein.get("name") or accession,
+                        use_container_width=True,
+                        type="primary" if index == chosen else "secondary",
+                        on_click=_select_candidate,
+                        args=(index,),
+                    )
+                    active_metrics_class = " candidate-metrics-active" if index == chosen else ""
+                    st.markdown(
+                        f"<div class='candidate-metrics{active_metrics_class}'>"
+                        "<div class='candidate-scores'>"
+                        f"{_score_tile('EMB', candidate['match_score'])}"
+                        f"{_score_tile('SEQ', alignment_score)}"
+                        "</div>"
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
         st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
     return chosen
 

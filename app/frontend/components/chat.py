@@ -82,21 +82,21 @@ def render(on_first_search, on_submit: SubmitHandler | None = None) -> None:
     """
     st.session_state.on_first_search = on_first_search
 
-    # Toolbar: title on the left, Reset button on the right — keeps controls
-    # close to the section header so the chat area can flow underneath without
-    # an awkward vertical gap.
-    head_col, reset_col = st.columns([5, 1], vertical_alignment="center")
-    with head_col:
-        st.markdown("<div class='chat-title'>Conversation</div>", unsafe_allow_html=True)
-    with reset_col:
-        if st.button(
-            "Reset",
-            width="stretch",
-            help="Clear the conversation and start over",
-            key="chat_reset_btn",
-        ):
-            _reset_conversation()
-            st.rerun()
+    # Toolbar: title on the left, Reset button on the right. We render the
+    # whole row inside a keyed container so CSS can right-align the button
+    # at a fixed width regardless of how the chat column resizes.
+    with st.container(key="chat_toolbar"):
+        head_col, reset_col = st.columns([5, 1], vertical_alignment="center")
+        with head_col:
+            st.markdown("<div class='chat-title'>Conversation</div>", unsafe_allow_html=True)
+        with reset_col:
+            if st.button(
+                "Reset",
+                help="Clear the conversation and start over",
+                key="chat_reset_btn",
+            ):
+                _reset_conversation()
+                st.rerun()
 
     # While the chat is fresh (only the welcome message), let the container
     # size to its content so the suggestion chip and input field stay visible

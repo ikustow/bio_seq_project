@@ -49,7 +49,9 @@ class BioSeqChatService:
                 warnings=warnings,
             )
 
-        pipeline, pipeline_candidates = self._retriever_pipeline.run(request.message, limit=5)
+        pipeline, pipeline_candidates = self._retriever_pipeline.run(
+            request.message, limit=5, search_algorithm=request.search_algorithm
+        )
         warnings.extend(pipeline.warnings)
         if pipeline.input_type in {"SEQUENCE", "FILEPATH"}:
             active_sequence_id = _sequence_id(pipeline.sequence) if pipeline.sequence else None

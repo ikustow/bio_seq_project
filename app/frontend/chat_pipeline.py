@@ -88,6 +88,7 @@ def _run_turn_backend(prompt: str) -> dict[str, Any]:
                 user_id=user_id,
                 workspace_id=st.session_state.get("workspace_id"),
                 user_role=st.session_state.get("user_role"),
+                search_algorithm=st.session_state.get("search_algorithm"),
             )
         )
     except Exception as exc:
@@ -108,6 +109,9 @@ def _run_turn_backend(prompt: str) -> dict[str, Any]:
     raw_candidates = [candidate.model_dump() for candidate in response.candidates]
     ui_candidates = [_candidate_from_backend(candidate) for candidate in raw_candidates]
     query_protein_sequence = response.pipeline.protein_sequence if response.pipeline else None
+    raw_candidates, ui_candidates = _sort_by_alignment(
+        query_protein_sequence, raw_candidates, ui_candidates
+    )
     reveals = _revealed_sections(ui_candidates, query_protein_sequence)
     reply = response.assistant_message
 
@@ -327,6 +331,44 @@ def _assistant_message(state: dict[str, Any]) -> str:
         suffix = f" ({gene})" if gene else ""
         lines.append(f"{index}. `{accession}` — {name}{suffix}")
     return "\n".join(lines)
+
+
+def _sort_by_alignment(
+    query_protein_sequence: str | None,
+    raw_candidates: list[dict[str, Any]],
+    ui_candidates: list[Candidate],
+) -> tuple[list[dict[str, Any]], list[Candidate]]:
+    """Re-order candidates by local pairwise alignment % vs the query sequence.
+
+    Falls back to the original order when there is no query sequence, no
+    candidate has its own sequence, or alignment scoring fails for every
+    candidate. Keeps the two lists in sync.
+    """
+    if not query_protein_sequence or not ui_candidates:
+        return raw_candidates, ui_candidates
+    from components import alignment_viewer  # lazy: pulls Bio + streamlit cache
+
+    scored: list[tuple[float, int]] = []
+    any_scored = False
+    for index, cand in enumerate(ui_candidates):
+        candidate_sequence = cand["protein"].get("sequence")
+        score: float | None = None
+        if candidate_sequence:
+            score = alignment_viewer.alignment_match_percent(
+                query_protein_sequence, candidate_sequence
+            )
+        if score is None:
+            scored.append((float("-inf"), index))
+        else:
+            any_scored = True
+            scored.append((score, index))
+
+    if not any_scored:
+        return raw_candidates, ui_candidates
+
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    order = [idx for _, idx in scored]
+    return [raw_candidates[i] for i in order], [ui_candidates[i] for i in order]
 
 
 def _candidate_from_backend(record: dict[str, Any]) -> Candidate:

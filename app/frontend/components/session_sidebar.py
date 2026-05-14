@@ -20,8 +20,6 @@ def render() -> None:
         return
 
     with st.sidebar:
-        st.markdown("### 🧬 BioSeq Investigator")
-
         # Search-algorithm picker. Only affects the first turn of a session
         # (subsequent turns are chat-LLM follow-ups regardless of choice).
         # Persisted in session_state; survives sidebar reruns.

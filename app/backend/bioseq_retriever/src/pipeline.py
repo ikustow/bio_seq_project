@@ -4,12 +4,26 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 
+import socket
+from urllib.parse import urlparse
+
 from src.utils import get_llm, get_first_fasta_entry, is_secure_path, clean_sequence
 from src.data_fetcher import get_uniprot_records
 from src.search import search_top_k, search_dna_top_k, blast_search
 from src.reranking import LocalReranker
 
-from src.config import ALLOWED_DATA_DIR
+from src.config import ALLOWED_DATA_DIR, SEARCH_SERVICE_URL
+
+
+def _rerank_service_alive(url: str = SEARCH_SERVICE_URL, timeout: float = 0.5) -> bool:
+    parsed = urlparse(url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 # --- State Definitions ---
 
@@ -137,15 +151,27 @@ def rank_node(state: GraphState) -> Dict[str, Any]:
         return {"error": f"Ranking failed: {str(e)}"}
 
 def rerank_node(state: GraphState) -> Dict[str, Any]:
-    """Performs contextual reranking (Top 5)."""
+    """Performs contextual reranking (Top 5).
+
+    Rerank service is best-effort: if the gateway is unreachable (or any other
+    error happens), fall back to the first 5 entries of ``ranked_results``
+    instead of failing the whole pipeline. The BLAST path already returns hits
+    ranked by percent identity, and the frontend re-sorts the top-N by local
+    alignment score anyway — so a missing rerank is degraded but not broken.
+    """
     if state.get('error'): return {}
+    ranked = state.get('ranked_results') or []
+    if not _rerank_service_alive():
+        print(f"Rerank service unreachable at {SEARCH_SERVICE_URL}; using top-5 of ranked_results.")
+        return {"final_results": ranked[:5]}
     try:
         reranker = LocalReranker()
         # Takes top 50 matches (DNA or Protein) and reranks them
-        final_records = reranker.rerank_by_context(state['ranked_results'], state['context'], top_n=5)
+        final_records = reranker.rerank_by_context(ranked, state['context'], top_n=5)
         return {"final_results": final_records}
     except Exception as e:
-        return {"error": f"Reranking failed: {str(e)}"}
+        print(f"Rerank skipped ({e}); falling back to top-5 of ranked_results.")
+        return {"final_results": ranked[:5]}
 
 # --- Conditional Routing Logic ---
 

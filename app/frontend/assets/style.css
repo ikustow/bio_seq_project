@@ -1,5 +1,156 @@
 /* BioSeq Investigator — mock UI styles */
 
+/* ---------- Global page layout (tighten the default Streamlit padding) ---------- */
+:root {
+    --right-panel-width: 440px;
+    --right-panel-min-width: 320px;
+    --right-panel-max-width: 1400px;
+    --right-panel-bg: #eef2f7;
+    --right-panel-border: #cbd5e1;
+}
+
+/* Make the Streamlit default header transparent so the title sits below
+   it without being visually clipped, while the menu buttons in the top
+   right still work. */
+[data-testid="stHeader"] {
+    background: transparent !important;
+    height: auto !important;
+}
+
+/* Streamlit's default block-container leaves 5–6rem of empty space above
+   the title and a wide gutter on either side. Pull them in so the chat
+   and protein card have more usable width. Top padding must still clear
+   Streamlit's fixed header (~3rem). */
+[data-testid="stMainBlockContainer"],
+[data-testid="block-container"],
+.main .block-container {
+    padding-top: 3rem !important;
+    padding-bottom: 1.5rem !important;
+    /* padding-left matches the column gap below so the visual gap to
+       the sidebar equals the gap from chat to the right panel. */
+    padding-left: 1.25rem !important;
+    padding-right: 0.5rem !important;
+    max-width: 100% !important;
+}
+
+/* Tighten the gap above the page title (st.title renders an h1 with a
+   large default margin). */
+[data-testid="stMainBlockContainer"] h1:first-of-type,
+.main .block-container h1:first-of-type {
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+}
+
+/* ---------- Selectbox: force a pointer cursor ----------
+   Streamlit's selectbox is a BaseWeb combobox with a real <input>
+   inside, so the browser defaults to a text caret. We're not using it
+   as a free-text field — override to a hand cursor. */
+[data-testid="stSelectbox"],
+[data-testid="stSelectbox"] *,
+[data-baseweb="select"],
+[data-baseweb="select"] * {
+    cursor: pointer !important;
+}
+
+/* ---------- Sidebar: drop the duplicate header and the wasted top space ---------- */
+[data-testid="stSidebar"] [data-testid="stSidebarContent"],
+[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
+    padding-top: 0.5rem !important;
+}
+[data-testid="stSidebarHeader"] {
+    height: auto !important;
+    min-height: 0 !important;
+    padding-top: 0.25rem !important;
+    padding-bottom: 0.25rem !important;
+}
+
+/* ---------- Main two-column layout: resizable right panel ----------
+   The right column is pinned to --right-panel-width (drag handle in
+   app.py updates the variable + persists to localStorage). The left
+   column flexes to fill the remaining space.
+
+   We identify the two columns by the keyed containers we placed inside
+   each — using :has() — instead of by structural position, so nested
+   columns elsewhere in the tree aren't affected. */
+.st-key-main_layout [data-testid="stColumn"]:has(.st-key-main_left) {
+    flex: 1 1 0 !important;
+    width: auto !important;
+    min-width: 0 !important;
+}
+.st-key-main_layout [data-testid="stColumn"]:has(.st-key-main_right) {
+    flex: 0 0 var(--right-panel-width) !important;
+    width: var(--right-panel-width) !important;
+    min-width: var(--right-panel-min-width) !important;
+    max-width: var(--right-panel-max-width) !important;
+    position: relative;
+    background: var(--right-panel-bg);
+    border-radius: 12px;
+    padding: 10px 12px 14px !important;
+    box-shadow: inset 1px 0 0 var(--right-panel-border);
+}
+
+/* Only the outer horizontal block (the one whose direct child columns
+   wrap the keyed left/right containers) gets position:relative so the
+   drag handle anchors to it. Also halve the gap between the chat and
+   the protein card. */
+.st-key-main_layout [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] .st-key-main_right) {
+    position: relative;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    /* Mirrors the block-container's left padding so the chat sits in a
+       symmetric visual gutter between the sidebar and the right panel. */
+    gap: 1.25rem !important;
+}
+
+/* Vertical drag handle on the left edge of the right column.
+   Matches Streamlit's native sidebar resizer: a thin vertical stripe
+   that's invisible by default and lights up red/indigo on hover or
+   drag. No background fill on the hit area itself — that produced an
+   unwanted semi-transparent block when dragging. */
+.right-resizer {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -4px;
+    width: 8px;
+    cursor: col-resize;
+    z-index: 50;
+    background: transparent;
+    /* Stops the browser from starting a text selection / touch scroll
+       when the user grabs the handle. */
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+}
+
+/* While the user is actively dragging the right-panel handle we add
+   `is-resizing-right` to <html> from JS. Force the no-select cursor
+   globally for the duration of the drag — body-level user-select gets
+   overridden by Streamlit/BaseWeb's per-element styles, but rules on
+   <html> + `!important` on every descendant win. */
+html.is-resizing-right,
+html.is-resizing-right * {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    cursor: col-resize !important;
+}
+.right-resizer::after {
+    content: "";
+    position: absolute;
+    /* Inset by the panel's border-radius so the stripe stops short of
+       the rounded corners instead of clipping into them. */
+    top: 12px;
+    bottom: 12px;
+    left: 3px;
+    width: 2px;
+    background: transparent;
+    transition: background-color 120ms ease;
+}
+.right-resizer:hover::after,
+.right-resizer.is-dragging::after {
+    background: rgba(0, 0, 0, 0.2);
+}
+
 /* ---------- Sequence block (FASTA preview in user bubble) ---------- */
 .seq-block {
     font-family: "JetBrains Mono", "Menlo", "Consolas", monospace;
@@ -136,5 +287,180 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
 /* Tighten the chat input area at the bottom */
 [data-testid="stChatInput"] {
     margin-top: 0.5rem;
+}
+
+/* ---------- Chat column: stable Reset button ----------
+   The Reset button now lives inside .st-key-chat_toolbar; CSS pins it
+   to a fixed width and right-aligns it inside its column so the right
+   edge of the button always lines up with the right edge of the chat
+   area (which is where the message bubbles end). */
+.st-key-chat_toolbar [data-testid="stHorizontalBlock"] {
+    gap: 0.5rem !important;
+    align-items: center;
+}
+/* The right-hand column that holds the Reset button: don't stretch the
+   button to fill it; align children to the end so the button sits flush
+   right. */
+.st-key-chat_toolbar [data-testid="stColumn"]:last-child {
+    display: flex !important;
+    justify-content: flex-end !important;
+    min-width: 110px;
+}
+.st-key-chat_toolbar [data-testid="stColumn"]:last-child > div {
+    width: auto !important;
+    flex: 0 0 auto !important;
+}
+.st-key-chat_reset_btn button {
+    width: 100px !important;
+    min-width: 100px !important;
+    max-width: 100px !important;
+    white-space: nowrap !important;
+    padding-left: 14px !important;
+    padding-right: 14px !important;
+}
+.st-key-chat_reset_btn button p,
+.st-key-chat_reset_btn button div {
+    white-space: nowrap !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+}
+
+/* ---------- Top 5 matches: prevent the accession label and score
+   tiles from wrapping vertically when the right panel narrows. Font
+   scales down with the column width instead.
+
+   Each candidate is wrapped in st.container(key="candidate_cell_N"),
+   which renders as a div with the class .st-key-candidate_cell_N. We
+   match any of those via attribute prefix. */
+[class*="st-key-candidate_cell_"] {
+    container-type: inline-size;
+    min-width: 0;
+}
+/* Lock the button itself. NOTE: the real DOM is
+     div.stButton  >  span[data-testid=stTooltipHoverTarget]  >  button
+   so `div.stButton > button` does NOT match — use a descendant
+   combinator. */
+[class*="st-key-candidate_cell_"] button {
+    height: 46px !important;
+    min-height: 46px !important;
+    max-height: 46px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    /* Horizontal padding scales with the cell's own width via container
+       queries — wide cells get a comfortable 6px gutter, very narrow
+       cells collapse to 0 so the text can stay large and just press
+       toward the edges instead of shrinking. */
+    padding: 0 clamp(0px, 4cqi, 6px) !important;
+    line-height: 1 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    overflow-wrap: normal !important;
+    word-break: keep-all !important;
+    text-overflow: clip !important;
+    /* Only round the TOP corners — the EMB/SEQ tile beneath stitches
+       flush onto the bottom. (Previously set via an inline rule with a
+       broken selector.) */
+    border-radius: 8px 8px 0 0 !important;
+    font-weight: 800 !important;
+}
+/* The per-letter wrap was coming from Streamlit's markdown container
+   defaulting to `overflow-wrap: break-word` (and the inner <p> to
+   `word-break: break-word`). Override both, on every element inside
+   the button, with the necessary !important. */
+[class*="st-key-candidate_cell_"] button *,
+[class*="st-key-candidate_cell_"] button [data-testid="stMarkdownContainer"],
+[class*="st-key-candidate_cell_"] button [data-testid="stMarkdownContainer"] p {
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    overflow-wrap: normal !important;
+    word-break: keep-all !important;
+    text-overflow: clip !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    line-height: 1 !important;
+    max-width: 100% !important;
+    font-size: clamp(0.6rem, 22cqi, 1.2rem) !important;
+    letter-spacing: 0;
+}
+
+/* Tighten the gap between the 5 candidate columns — at 280–320px right
+   panel width every pixel counts, and the default 1rem gap was eating
+   ~64px just on whitespace between the buttons. */
+.st-key-candidate_switcher [data-testid="stHorizontalBlock"] {
+    gap: 0.25rem !important;
+}
+
+/* The EMB / SEQ score tiles under each candidate button. The container
+   query context lives on the tile itself, not on the pair — so `cqi`
+   is the tile's own width and the font grows up to ~17–19px on a
+   roomy panel while still gracefully shrinking on a narrow one. */
+.candidate-score {
+    cursor: help;
+    position: relative;
+    container-type: inline-size;
+}
+.candidate-score-label,
+.candidate-score-value {
+    white-space: nowrap;
+    overflow: hidden;
+    overflow-wrap: normal;
+    word-break: keep-all;
+}
+.candidate-score-label {
+    font-size: clamp(0.6rem, 26cqi, 1rem) !important;
+}
+.candidate-score-value {
+    font-size: clamp(0.65rem, 30cqi, 1.15rem) !important;
+}
+
+/* ---------- Alignment metrics row: shrink rather than truncate ----------
+   The six st.metric values ("100.0%") were being clipped to "1..." in
+   narrow columns. Allow the row to wrap, scale the value font with the
+   column width, and visually separate labels (muted, small) from values
+   (dark indigo, bold). */
+.st-key-alignment_metrics [data-testid="stHorizontalBlock"] {
+    flex-wrap: wrap !important;
+    row-gap: 10px !important;
+    column-gap: 6px !important;
+}
+.st-key-alignment_metrics [data-testid="stColumn"] {
+    flex: 1 1 88px !important;
+    min-width: 88px !important;
+    container-type: inline-size;
+}
+.st-key-alignment_metrics [data-testid="stMetric"] {
+    padding: 6px 8px !important;
+    border-radius: 8px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+}
+.st-key-alignment_metrics [data-testid="stMetricLabel"] {
+    font-size: clamp(0.68rem, 2.5cqi + 0.4rem, 0.78rem) !important;
+    margin-bottom: 4px !important;
+}
+.st-key-alignment_metrics [data-testid="stMetricLabel"] p,
+.st-key-alignment_metrics [data-testid="stMetricLabel"] div {
+    color: #64748b !important;
+    font-weight: 500 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+}
+.st-key-alignment_metrics [data-testid="stMetricValue"] {
+    font-size: clamp(1rem, 6cqi + 0.55rem, 1.55rem) !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: clip !important;
+    line-height: 1.1 !important;
+}
+.st-key-alignment_metrics [data-testid="stMetricValue"] > div {
+    color: #1e293b !important;
+    font-weight: 700 !important;
+    font-variant-numeric: tabular-nums;
 }
 

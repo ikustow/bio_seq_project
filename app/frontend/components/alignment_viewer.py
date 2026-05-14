@@ -1013,13 +1013,14 @@ def render_alignment(
         return
 
     metrics = analyze_alignment(result)
-    metric_cols = st.columns(6)
-    metric_cols[0].metric("Sequence match", f"{sequence_match_percent(metrics):.1f}%")
-    metric_cols[1].metric("Identity", f"{metrics.identity_paired:.1f}%")
-    metric_cols[2].metric("Similarity", f"{metrics.similarity_alignment:.1f}%")
-    metric_cols[3].metric("Gaps", f"{metrics.gap_percent:.1f}%")
-    metric_cols[4].metric("Query coverage", f"{metrics.seq1_coverage:.1f}%")
-    metric_cols[5].metric("Candidate coverage", f"{metrics.seq2_coverage:.1f}%")
+    with st.container(key="alignment_metrics"):
+        metric_cols = st.columns(6)
+        metric_cols[0].metric("Sequence match", f"{sequence_match_percent(metrics):.1f}%")
+        metric_cols[1].metric("Identity", f"{metrics.identity_paired:.1f}%")
+        metric_cols[2].metric("Similarity", f"{metrics.similarity_alignment:.1f}%")
+        metric_cols[3].metric("Gaps", f"{metrics.gap_percent:.1f}%")
+        metric_cols[4].metric("Query coverage", f"{metrics.seq1_coverage:.1f}%")
+        metric_cols[5].metric("Candidate coverage", f"{metrics.seq2_coverage:.1f}%")
 
     details = pd.DataFrame(
         [

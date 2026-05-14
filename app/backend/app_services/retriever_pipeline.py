@@ -112,7 +112,12 @@ class BioSeqRetrieverPipeline:
             else enable_runtime_retriever
         )
 
-    def run(self, prompt: str, limit: int = 5) -> tuple[BioSeqPipelineSnapshot, list[CandidateView]]:
+    def run(
+        self,
+        prompt: str,
+        limit: int = 5,
+        search_algorithm: str | None = None,
+    ) -> tuple[BioSeqPipelineSnapshot, list[CandidateView]]:
         state = BioSeqPipelineSnapshot(prompt=prompt)
         candidates: list[CandidateView] = []
 
@@ -160,7 +165,9 @@ class BioSeqRetrieverPipeline:
             return state, candidates
 
         if self._enable_runtime_retriever:
-            runtime_state, runtime_candidates = self._run_runtime_retriever(prompt, state, limit=limit)
+            runtime_state, runtime_candidates = self._run_runtime_retriever(
+                prompt, state, limit=limit, search_algorithm=search_algorithm
+            )
             if runtime_candidates:
                 return runtime_state, runtime_candidates
             return runtime_state, runtime_candidates
@@ -174,9 +181,10 @@ class BioSeqRetrieverPipeline:
         prompt: str,
         state: BioSeqPipelineSnapshot,
         limit: int,
+        search_algorithm: str | None = None,
     ) -> tuple[BioSeqPipelineSnapshot, list[CandidateView]]:
         try:
-            result = _run_backend_bioseq_pipeline(prompt)
+            result = _run_backend_bioseq_pipeline(prompt, search_algorithm=search_algorithm)
         except Exception as exc:
             state.controlled_miss = True
             state.error = f"bioseq_retriever runtime failed: {exc}"
@@ -223,11 +231,14 @@ class BioSeqRetrieverPipeline:
         return BioSeqInputExtraction.model_validate(result)
 
 
-def _run_backend_bioseq_pipeline(prompt: str) -> dict[str, Any]:
+def _run_backend_bioseq_pipeline(
+    prompt: str, search_algorithm: str | None = None
+) -> dict[str, Any]:
     _ensure_backend_bioseq_import_path()
     pipeline_module = importlib.import_module("src.pipeline")
     run_pipeline = getattr(pipeline_module, "run_bioseq_pipeline")
-    result = _run_coro_sync(run_pipeline(prompt))
+    kwargs = {"search_algorithm": search_algorithm} if search_algorithm else {}
+    result = _run_coro_sync(run_pipeline(prompt, **kwargs))
     return dict(result or {})
 
 
