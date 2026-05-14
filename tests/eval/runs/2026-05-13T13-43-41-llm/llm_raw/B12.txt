@@ -1,0 +1,36 @@
+GC content is a measure specific to DNA or RNA sequences, representing the percentage of guanine (G) and cytosine (C) bases.
+
+The information provided describes a **protein sequence** (Spike glycoprotein, 1,273 amino acids long). Therefore, the concept of GC content does not apply to this protein sequence. You would calculate GC content for the *gene* (DNA or RNA) that codes for this protein, not the protein itself.
+
+# RAW JSON:
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "GC content is a measure specific to DNA or RNA sequences, representing the percentage of guanine (G) and cytosine (C) bases.\n\nThe information provided describes a **protein sequence** (Spike glycoprotein, 1,273 amino acids long). Therefore, the concept of GC content does not apply to this protein sequence. You would calculate GC content for the *gene* (DNA or RNA) that codes for this protein, not the protein itself."
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 701,
+    "candidatesTokenCount": 95,
+    "totalTokenCount": 890,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 701
+      }
+    ],
+    "thoughtsTokenCount": 94,
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "y-IEatfPGujmnsEPh_2OuAw"
+}

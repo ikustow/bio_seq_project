@@ -1,5 +1,7 @@
 # BioSeq Investigator app
 
+🇬🇧 English version: [README_en.md](README_en.md).
+
 Актуальное состояние на 2026-05-13: `app/` - основной runtime контур Streamlit-приложения. Поиск и карточки белков идут через `app/backend/bioseq_retriever`, `app/backend/app_services` и локальные FAISS/HDF5 artifacts. Neo4j/graph database контур из runtime убран.
 
 ## Что входит в app

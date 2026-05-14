@@ -1,0 +1,34 @@
+I cannot perform a search for similar proteins. The information provided to me is specific to human insulin (P01308) and does not include data on other proteins or the capability to conduct new database searches.
+
+# RAW JSON:
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "I cannot perform a search for similar proteins. The information provided to me is specific to human insulin (P01308) and does not include data on other proteins or the capability to conduct new database searches."
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 603,
+    "candidatesTokenCount": 44,
+    "totalTokenCount": 745,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 603
+      }
+    ],
+    "thoughtsTokenCount": 98,
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "uuIEatfWDdKHnsEPgfm_iAw"
+}

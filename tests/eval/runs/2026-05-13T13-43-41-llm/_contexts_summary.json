@@ -1,0 +1,237 @@
+{
+  "CTX_INSULIN": {
+    "accession": "P01308",
+    "name": "Insulin",
+    "organism_scientific": "Homo sapiens",
+    "organism_common": "Human",
+    "length": 110,
+    "mol_weight": 11981,
+    "keywords": [
+      "3D-structure",
+      "Alternative splicing",
+      "Carbohydrate metabolism",
+      "Cleavage on pair of basic residues",
+      "Diabetes mellitus",
+      "Direct protein sequencing",
+      "Disease variant",
+      "Disulfide bond",
+      "Glucose metabolism",
+      "Hormone",
+      "Pharmaceutical",
+      "Reference proteome",
+      "Secreted",
+      "Signal"
+    ],
+    "subcellular_locations": [
+      "Secreted"
+    ],
+    "domain_names": [
+      "Signal peptide",
+      "Insulin B chain",
+      "C peptide",
+      "Insulin A chain"
+    ],
+    "interactions_genes": [
+      "INSR",
+      "IDE",
+      "HSPA8"
+    ],
+    "disease_name": "Multiple diabetes-related forms (UniProt DISEASE block)",
+    "disease_desc_excerpt": "P01308 has four DISEASE annotations in UniProt:\n  * Hyperproinsulinemia — autosomal dominant, elevated serum proinsulin.\n  * Type 1 diabetes mellitus 2 — multifactorial glucose-homeostasis disorder.\n  * Diabetes mellitus, permanent neonatal, 4 (PNDM4) — persistent hyperglycemia <6 months of age.\n  *",
+    "function_excerpt": "Insulin decreases blood glucose concentration. It increases cell\npermeability to monosaccharides, amino acids and fatty acids. It\naccelerates glycolysis, the pentose phosphate cycle, and glycogen\nsynthesis in liver.\n",
+    "subunit_excerpt": "Heterodimer of a B chain and an A chain linked by two disulfide bonds.",
+    "tissue": "Expressed by pancreatic beta-cells (at protein level)."
+  },
+  "CTX_INSULIN_GORILLA": {
+    "accession": "Q6YK33",
+    "name": "Insulin",
+    "organism_scientific": "Gorilla gorilla gorilla",
+    "organism_common": "Western lowland gorilla",
+    "length": 110,
+    "mol_weight": 11981,
+    "keywords": [
+      "Carbohydrate metabolism",
+      "Cleavage on pair of basic residues",
+      "Disulfide bond",
+      "Glucose metabolism",
+      "Hormone",
+      "Secreted",
+      "Signal"
+    ],
+    "subcellular_locations": [
+      "Secreted"
+    ],
+    "domain_names": [
+      "Signal peptide",
+      "Insulin B chain",
+      "C peptide",
+      "Insulin A chain"
+    ],
+    "interactions_genes": [],
+    "disease_name": null,
+    "disease_desc_excerpt": "",
+    "function_excerpt": "Insulin decreases blood glucose concentration. It increases cell\npermeability to monosaccharides, amino acids and fatty acids. It\naccelerates glycolysis, the pentose phosphate cycle, and glycogen\nsynthesis in liver.\n",
+    "subunit_excerpt": "Heterodimer of a B chain and an A chain linked by two disulfide bonds.",
+    "tissue": ""
+  },
+  "CTX_ADENO_FIBER": {
+    "accession": "P36845",
+    "name": "Fiber protein (SPIKE / Protein IV)",
+    "organism_scientific": "Human adenovirus D serotype 8",
+    "organism_common": "HAdV-8",
+    "length": 362,
+    "mol_weight": 39661,
+    "keywords": [
+      "Capsid protein",
+      "Host nucleus",
+      "Host-virus interaction",
+      "Late protein",
+      "Viral attachment to host cell",
+      "Virion",
+      "Virus entry into host cell"
+    ],
+    "subcellular_locations": [
+      "Virion",
+      "Host nucleus"
+    ],
+    "domain_names": [
+      "Tail region (anchors fiber to penton base)",
+      "Shaft (built from several repeated motifs)",
+      "Knob (Pfam Adeno_knob, PF00541)"
+    ],
+    "interactions_genes": [
+      null,
+      null
+    ],
+    "disease_name": null,
+    "disease_desc_excerpt": "",
+    "function_excerpt": "Forms spikes that protrude from each vertex of the icosahedral\ncapsid. Interacts with host sialic acid to provide virion initial\nattachment to target cell. Fiber proteins are shed during virus\nentry, when virus is still at the cell surface.\n",
+    "subunit_excerpt": "Homotrimer. Interacts with host sialic acid. Interacts (via N-terminal tail region) with pentons.",
+    "tissue": ""
+  },
+  "CTX_SPIKE": {
+    "accession": "P0DTC2",
+    "name": "Spike glycoprotein",
+    "organism_scientific": "Severe acute respiratory syndrome coronavirus 2",
+    "organism_common": "2019-nCoV",
+    "length": 1273,
+    "mol_weight": 141178,
+    "keywords": [
+      "3D-structure",
+      "Coiled coil",
+      "Disulfide bond",
+      "Fusion of virus membrane with host endosomal membrane",
+      "Fusion of virus membrane with host membrane",
+      "Glycoprotein",
+      "Host cell membrane",
+      "Host membrane",
+      "Host-virus interaction",
+      "Lipoprotein",
+      "Membrane",
+      "Palmitate",
+      "Signal",
+      "Superantigen",
+      "Transmembrane",
+      "Transmembrane helix",
+      "Viral attachment to host cell",
+      "Viral envelope protein",
+      "Viral immunoevasion",
+      "Viral penetration into host cytoplasm",
+      "Virion",
+      "Virulence"
+    ],
+    "subcellular_locations": [
+      "Virion membrane (single-pass type I)",
+      "Host endoplasmic reticulum-Golgi intermediate compartment membrane",
+      "Host cell membrane"
+    ],
+    "domain_names": [
+      "Signal peptide",
+      "Spike protein S1 (chain)",
+      "Spike protein S2 (chain)",
+      "Spike protein S2' (chain)",
+      "Extracellular (topological domain)",
+      "Transmembrane",
+      "Cytoplasmic (topological domain)",
+      "BetaCoV S1-NTD",
+      "BetaCoV S1-CTD",
+      "Receptor-binding domain (RBD)",
+      "Receptor-binding motif (binds human ACE2)",
+      "Fusion peptide 1",
+      "Fusion peptide 2",
+      "Heptad repeat 1 (HR1)",
+      "Heptad repeat 2 (HR2)"
+    ],
+    "interactions_genes": [
+      "ACE2",
+      "NRP1",
+      "CTSL",
+      "FURIN"
+    ],
+    "disease_name": null,
+    "disease_desc_excerpt": "",
+    "function_excerpt": "Attaches the virion to the cell membrane by interacting with host\nreceptor (major receptor: ACE2), initiating the infection. When S2/S2'\nhas been cleaved, binding to the receptor triggers direct fusion at\nthe cell membrane. S2 mediates fusion of the virion and cellular\nmembranes by functioning as a ",
+    "subunit_excerpt": "Homotrimer; each monomer consists of an S1 and an S2 subunit, and\nthe resulting peplomers protrude from the virus surface as spikes.\nBinds host ACE2 (the RBD also contacts the N-linked glycan on\nAsn-9",
+    "tissue": ""
+  },
+  "CTX_UNC5C": {
+    "accession": "O95185",
+    "name": "Netrin receptor UNC5C",
+    "organism_scientific": "Homo sapiens",
+    "organism_common": "Human",
+    "length": 931,
+    "mol_weight": 103146,
+    "keywords": [
+      "Alternative splicing",
+      "Alzheimer disease",
+      "Amyloidosis",
+      "Apoptosis",
+      "Cell membrane",
+      "Cell projection",
+      "Developmental protein",
+      "Disulfide bond",
+      "Glycoprotein",
+      "Immunoglobulin domain",
+      "Membrane",
+      "Neurodegeneration",
+      "Phosphoprotein",
+      "Receptor",
+      "Repeat",
+      "Signal",
+      "Synapse",
+      "Transmembrane"
+    ],
+    "subcellular_locations": [
+      "Cell membrane (single-pass type I)",
+      "Cell surface",
+      "Synapse, synaptosome",
+      "Cell projection, axon",
+      "Cell projection, dendrite",
+      "Cell projection, growth cone",
+      "Cell projection, lamellipodium",
+      "Cell projection, filopodium"
+    ],
+    "domain_names": [
+      "Ig-like",
+      "Ig-like C2-type",
+      "TSP type-1 (1)",
+      "TSP type-1 (2)",
+      "Transmembrane",
+      "ZU5 domain",
+      "Death domain"
+    ],
+    "interactions_genes": [
+      "TUBB3",
+      "DCC",
+      "PTPN11",
+      "DAPK1",
+      "DSCAM",
+      "FLRT3"
+    ],
+    "disease_name": "Alzheimer disease (AD)",
+    "disease_desc_excerpt": "A neurodegenerative disorder characterized by progressive dementia, amyloid plaques and neurofibrillary tangles. Disease susceptibility may be associated with the rare variant Thr835Met (T→M at position 835), which increases neuronal cell death.",
+    "function_excerpt": "Receptor for netrin required for axon guidance. Mediates axon\nrepulsion of neuronal growth cones in the developing nervous\nsystem upon ligand binding. NTN1/Netrin-1 binding dissociates\nUNC5C from polymerized TUBB3 in microtubules, increasing\nmicrotubule dynamics and axon repulsion. Axon repulsion ma",
+    "subunit_excerpt": "Interacts with DCC (cytoplasmic domain), PTPN11 (when Tyr-phosphorylated), FLRT3, DSCAM, DAPK1 (death domain) and TUBB3 (cytoplasmic domain).",
+    "tissue": "Mainly expressed in brain (temporal lobe cortical neurons and\nhippocampal pyramidal layer). Also expressed in kidney. Not\nexpressed in developing or adult lung.\n"
+  }
+}

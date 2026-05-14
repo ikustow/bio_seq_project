@@ -1,0 +1,48 @@
+Conserved regions in a protein sequence are segments that have remained similar or identical across different species or within different proteins over evolutionary time. These regions are typically critical for the protein's function, structure, or interactions.
+
+To find conserved regions, you would generally:
+
+1.  **Perform Multiple Sequence Alignment (MSA):** Align the protein sequence of interest (like human UNC5C) with its orthologs from various other species. Regions with high sequence similarity across many species are likely conserved.
+2.  **Search Domain Databases:** Use tools that scan your protein sequence against databases of known protein domains and motifs (e.g., Pfam, SMART, CDD). These databases contain profiles of evolutionarily conserved domains that are often associated with specific functions.
+3.  **Look for Functional Motifs:** Identify short, highly conserved sequence patterns that are known to be involved in binding sites, catalytic activity, or post-translational modifications.
+
+For the Netrin receptor UNC5C (Accession: O95185), the database information already highlights several **conserved regions in the form of domains**:
+
+*   **Ig-like domains** (at positions 62-159 and 161-256): These are common protein-protein interaction domains found in many cell surface receptors and adhesion molecules.
+*   **TSP type-1 domains** (at positions 260-314 and 316-368): These domains are found in extracellular matrix proteins and cell surface receptors, often involved in cell adhesion and growth factor binding.
+*   **Transmembrane domain** (at positions 381-401): This region is highly conserved as it anchors the protein to the cell membrane, which is essential for its function as a cell surface receptor.
+
+These domains are examples of conserved regions because their specific sequences and structures are crucial for UNC5C's role in axon guidance, netrin binding, and its localization to the cell membrane and synapses.
+
+# RAW JSON:
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "Conserved regions in a protein sequence are segments that have remained similar or identical across different species or within different proteins over evolutionary time. These regions are typically critical for the protein's function, structure, or interactions.\n\nTo find conserved regions, you would generally:\n\n1.  **Perform Multiple Sequence Alignment (MSA):** Align the protein sequence of interest (like human UNC5C) with its orthologs from various other species. Regions with high sequence similarity across many species are likely conserved.\n2.  **Search Domain Databases:** Use tools that scan your protein sequence against databases of known protein domains and motifs (e.g., Pfam, SMART, CDD). These databases contain profiles of evolutionarily conserved domains that are often associated with specific functions.\n3.  **Look for Functional Motifs:** Identify short, highly conserved sequence patterns that are known to be involved in binding sites, catalytic activity, or post-translational modifications.\n\nFor the Netrin receptor UNC5C (Accession: O95185), the database information already highlights several **conserved regions in the form of domains**:\n\n*   **Ig-like domains** (at positions 62-159 and 161-256): These are common protein-protein interaction domains found in many cell surface receptors and adhesion molecules.\n*   **TSP type-1 domains** (at positions 260-314 and 316-368): These domains are found in extracellular matrix proteins and cell surface receptors, often involved in cell adhesion and growth factor binding.\n*   **Transmembrane domain** (at positions 381-401): This region is highly conserved as it anchors the protein to the cell membrane, which is essential for its function as a cell surface receptor.\n\nThese domains are examples of conserved regions because their specific sequences and structures are crucial for UNC5C's role in axon guidance, netrin binding, and its localization to the cell membrane and synapses."
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 711,
+    "candidatesTokenCount": 417,
+    "totalTokenCount": 1497,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 711
+      }
+    ],
+    "thoughtsTokenCount": 369,
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "2eIEapjsJbrm7M8PxLjPyQw"
+}

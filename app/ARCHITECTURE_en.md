@@ -1,12 +1,12 @@
 # BioSeq Investigator architecture
 
-🇬🇧 English version: [ARCHITECTURE_en.md](ARCHITECTURE_en.md).
+🇷🇺 Russian version: [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Дата актуализации: 2026-05-13.
+Last updated: 2026-05-13.
 
-## Коротко
+## In short
 
-`app/` сейчас работает как Streamlit monorepo app с in-process backend service layer и отдельным heavy search/rerank gateway. Основной retriever живет в `app/backend/bioseq_retriever`. Graph database/Neo4j runtime удален из актуального контура.
+`app/` runs as a Streamlit monorepo app with an in-process backend service layer and a separate heavy search / rerank gateway. The main retriever lives in `app/backend/bioseq_retriever`. The graph database / Neo4j runtime has been removed from the active contour.
 
 ```text
 Browser
@@ -23,19 +23,19 @@ Browser
 
 ## Runtime modules
 
-| Путь | Роль |
+| Path | Role |
 | --- | --- |
 | `frontend/app.py` | Streamlit entrypoint, layout, password gate, session bootstrap. |
 | `frontend/chat_pipeline.py` | Turn router: retriever turn vs follow-up chat LLM. |
 | `frontend/chat_llm_pipeline.py` | Follow-up LLM answers over the currently selected protein card. |
 | `frontend/session_identity.py` | Cookie-based `user_id` and `session_id`. |
-| `frontend/session_db_adapter.py` | Read/merge/write adapter to `public.chat_sessions`. |
-| `frontend/components/` | Chat, protein card, sidebar, domain/alignment views. |
+| `frontend/session_db_adapter.py` | Read / merge / write adapter to `public.chat_sessions`. |
+| `frontend/components/` | Chat, protein card, sidebar, domain / alignment views. |
 | `backend/app_contracts/` | Pydantic contracts for chat, pipeline, session and protein card data. |
-| `backend/app_services/bioseq_chat.py` | Service facade: `ChatTurnRequest` -> retriever/session -> `ChatTurnResult`. |
-| `backend/app_services/retriever_pipeline.py` | Deterministic input extraction, DNA/protein classification, runtime retriever bridge. |
-| `backend/app_services/protein_view_mapper.py` | UniProt/raw records -> `CandidateView` / `ProteinView`. |
-| `backend/app_services/service_factory.py` | Builds runtime or mock chat service. |
+| `backend/app_services/bioseq_chat.py` | Service facade: `ChatTurnRequest` → retriever / session → `ChatTurnResult`. |
+| `backend/app_services/retriever_pipeline.py` | Deterministic input extraction, DNA / protein classification, runtime retriever bridge. |
+| `backend/app_services/protein_view_mapper.py` | UniProt / raw records → `CandidateView` / `ProteinView`. |
+| `backend/app_services/service_factory.py` | Builds the runtime or mock chat service. |
 | `backend/agents_core/retriever_agent/runtime_agent.py` | LangGraph-backed session state and sync to persistence. |
 | `backend/bioseq_retriever/` | Actual bioseq retriever code inside backend. |
 
@@ -73,7 +73,7 @@ chat_pipeline.run_turn()
   -> chat_llm_pipeline.run_turn_chat_llm()
   -> Gemini proxy or OpenAI
   -> session_db_adapter.save_turn(update_candidates=False)
-  -> UI keeps the previous candidates/card visible
+  -> UI keeps the previous candidates / card visible
 ```
 
 The follow-up LLM receives:
@@ -90,7 +90,7 @@ Provider selection:
 | Gemini proxy | `BIOSEQ_LLM_PROXY_URL`, `BIOSEQ_LLM_PROXY_TOKEN` |
 | OpenAI | `OPENAI_API_KEY`, optional `BIOSEQ_OPENAI_CHAT_MODEL` |
 
-Important current behavior: if `SUPABASE_DB_URL` is missing, `session_db_adapter.is_persistent()` is false and `_is_first_turn_in_session()` falls back to retriever mode. That means reliable follow-up routing requires Postgres persistence.
+Important current behaviour: if `SUPABASE_DB_URL` is missing, `session_db_adapter.is_persistent()` is false and `_is_first_turn_in_session()` falls back to retriever mode. That means reliable follow-up routing requires Postgres persistence.
 
 ## Search service
 
@@ -103,7 +103,7 @@ Important current behavior: if `SUPABASE_DB_URL` is missing, `session_db_adapter
 
 The Streamlit app and session agent do not expose a separate HTTP backend. They run in-process and call the search service through `BIOSEQ_SEARCH_SERVICE_URL`.
 
-The search service handles embedding/search/rerank. LLM provider keys are consumed by the retriever pipeline extraction layer, not by this FastAPI gateway.
+The search service handles embedding / search / rerank. LLM provider keys are consumed by the retriever pipeline extraction layer, not by this FastAPI gateway.
 
 ## Persistence model
 
@@ -118,7 +118,7 @@ With `SUPABASE_DB_URL`:
 
 Without `SUPABASE_DB_URL` or on init failure:
 
-- LangGraph falls back to in-memory checkpointer/store;
+- LangGraph falls back to in-memory checkpointer / store;
 - `NullSessionRepository` disables DB writes;
 - sidebar history, restore and follow-up turn routing are not durable.
 
@@ -126,10 +126,10 @@ Two writers touch `public.chat_sessions` during retriever turns:
 
 | Writer | Responsibility |
 | --- | --- |
-| `BioSeqRuntimeSessionAgent` | Compact LangGraph/session state: active accession, proteins, sequences, working memory summary. |
+| `BioSeqRuntimeSessionAgent` | Compact LangGraph / session state: active accession, proteins, sequences, working memory summary. |
 | `session_db_adapter.save_turn()` | UI transcript, full candidate cards, revealed card sections, turn counter. |
 
-`session_db_adapter` does read/merge/write so agent fields are preserved while UI fields are appended.
+`session_db_adapter` does read / merge / write so agent fields are preserved while UI fields are appended.
 
 ## Contracts
 
@@ -137,9 +137,9 @@ The stable service boundary is `backend/app_contracts/`:
 
 | Contract | Purpose |
 | --- | --- |
-| `ChatTurnRequest` | UI/user/session input into `BioSeqChatService`. |
+| `ChatTurnRequest` | UI / user / session input into `BioSeqChatService`. |
 | `ChatTurnResult` | Assistant text, candidates, revealed sections, session snapshot, warnings. |
-| `BioSeqPipelineSnapshot` | Extracted input, sequence type, protein sequence, active accession, warnings/errors. |
+| `BioSeqPipelineSnapshot` | Extracted input, sequence type, protein sequence, active accession, warnings / errors. |
 | `ProteinView` / `CandidateView` | UI-ready protein card data. |
 | `SessionSnapshot` | Current session state exposed by backend services. |
 
@@ -156,7 +156,7 @@ data/per-protein.accessions.json
 data/per-gene.*              # optional DNA branch
 ```
 
-These files are intentionally ignored by git. The intended source of truth is local cache, Hugging Face Dataset, object storage or a reproducible `data_prep/` run.
+These files are intentionally ignored by git. The intended source of truth is a local cache, a Hugging Face Dataset, object storage or a reproducible `data_prep/` run.
 
 `data_prep/` lives outside `app/` as a project-level offline preparation pipeline. It should not be mixed with Streamlit runtime code.
 
@@ -169,7 +169,7 @@ All tests are centralized under top-level `tests/`:
 | `tests/backend/bioseq_retriever/` | Runtime backend retriever tests. |
 | `tests/depricated/bioseq_retriever/` | Deprecated snapshot tests. |
 | `tests/scripts/` | Former script-level checks. |
-| `tests/eval/` | Validation/evaluation datasets and runners. |
+| `tests/eval/` | Validation / evaluation datasets and runners. |
 
 ## Removed and legacy contours
 
@@ -180,17 +180,17 @@ Removed from active runtime:
 - old graph retriever agent files;
 - `app/backend/graph_core/`.
 
-Still present as legacy/reference:
+Still present as legacy / reference:
 
-- `depricated/bioseq_retriever/` - old root retriever snapshot;
-- `frontend/embeddings_pipeline.py` - legacy ProtT5/FAISS frontend path;
-- `frontend/vector_db_adapter.py` - legacy adapter;
-- old frontend docs with `_old` suffix.
+- `depricated/bioseq_retriever/` — old root retriever snapshot;
+- `frontend/embeddings_pipeline.py` — legacy ProtT5 / FAISS frontend path;
+- `frontend/vector_db_adapter.py` — legacy adapter;
+- old frontend docs with the `_old` suffix.
 
 ## Operational notes
 
 - Main app command: `streamlit run app/frontend/app.py`.
 - Search service command: `python app/backend/bioseq_retriever/services/search_service.py`.
-- `BIOSEQ_BACKEND=mock` runs mock chat service; `BIOSEQ_BACKEND=runtime` is the normal mode.
-- `APP_PASSWORD` enables simple Streamlit password gate.
-- The app is not currently structured as a standalone FastAPI backend API. The only FastAPI process in the active runtime is the heavy search/rerank gateway.
+- `BIOSEQ_BACKEND=mock` runs the mock chat service; `BIOSEQ_BACKEND=runtime` is the normal mode.
+- `APP_PASSWORD` enables the simple Streamlit password gate.
+- The app is not currently structured as a standalone FastAPI backend API. The only FastAPI process in the active runtime is the heavy search / rerank gateway.

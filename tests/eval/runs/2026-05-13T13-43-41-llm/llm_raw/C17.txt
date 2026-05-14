@@ -1,0 +1,34 @@
+The Spike glycoprotein forms peplomers, or "spikes," that protrude from the virus surface. The **S1** and **S2** subunits, which together comprise the **extracellular topological domain (amino acids 14-1213)**, are exposed on the virus surface. The S1 subunit is responsible for binding to host receptors like ACE2, initiating infection.
+
+# RAW JSON:
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "The Spike glycoprotein forms peplomers, or \"spikes,\" that protrude from the virus surface. The **S1** and **S2** subunits, which together comprise the **extracellular topological domain (amino acids 14-1213)**, are exposed on the virus surface. The S1 subunit is responsible for binding to host receptors like ACE2, initiating infection."
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 699,
+    "candidatesTokenCount": 80,
+    "totalTokenCount": 1102,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 699
+      }
+    ],
+    "thoughtsTokenCount": 323,
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "FeMEarOGFJHNkdUPg96u2Q0"
+}

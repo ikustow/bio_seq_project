@@ -1,0 +1,462 @@
+[
+  {
+    "scenario_id": "A1",
+    "class": "A",
+    "context_id": "CTX_INSULIN",
+    "question": "What is the main biological function of this protein?",
+    "answer": "The main biological function of this protein, Insulin, is to **decrease blood glucose concentration**. It achieves this by increasing cell permeability to monosaccharides, amino acids, and fatty acids, and by accelerating glycolysis, the pentose phosphate cycle, and glycogen synthesis in the liver.",
+    "rubric": [
+      {
+        "item": "a",
+        "type": "must_cover",
+        "check": "Mentions the main function from function_text (glucose / blood-sugar regulation, hormone signalling)."
+      },
+      {
+        "item": "b",
+        "type": "must_cover",
+        "check": "Mentions at least one keyword from the context `keywords` list (e.g., Hormone, Glucose metabolism)."
+      },
+      {
+        "item": "c",
+        "type": "must_not",
+        "check": "Does NOT introduce functions absent from function_text."
+      }
+    ]
+  },
+  {
+    "scenario_id": "A2",
+    "class": "A",
+    "context_id": "CTX_UNC5C",
+    "question": "Where in the cell is this protein located?",
+    "answer": "The Netrin receptor UNC5C is primarily located at the **cell membrane** and **cell surface**, where it functions as a single-pass type I transmembrane protein. It is also found in specific neuronal structures such as **synapses**, **synaptosomes**, **axons**, **dendrites**, **growth cones**, **lamellipodia**, and **filopodia**, which are all types of cell projections.",
+    "rubric": [
+      {
+        "item": "a",
+        "type": "must_cover",
+        "check": "Mentions at least one location from `subcellular_locations` (e.g., cell membrane, cell surface)."
+      },
+      {
+        "item": "b",
+        "type": "must_cover",
+        "check": "Mentions at least one cell-projection location (axon, dendrite, growth cone, lamellipodium, filopodium, synapse)."
+      },
+      {
+        "item": "c",
+        "type": "must_not",
+        "check": "Does NOT invent locations absent from the context."
+      }
+    ]
+  },
+  {
+    "scenario_id": "A3",
+    "class": "A",
+    "context_id": "CTX_UNC5C",
+    "question": "Which structural domains does this protein contain?",
+    "answer": "The Netrin receptor UNC5C contains the following structural domains:\n\n*   Ig-like (at positions 62-159)\n*   Ig-like C2-type (at positions 161-256)\n*   TSP type-1 (1) (at positions 260-314)\n*   TSP type-1 (2) (at positions 316-368)\n*   Transmembrane (at positions 381-401)",
+    "rubric": [
+      {
+        "item": "a",
+        "type": "must_cover",
+        "check": "Names at least two distinct domains from the context `domains` list (e.g., Ig-like, TSP type-1, ZU5, Death)."
+      },
+      {
+        "item": "b",
+        "type": "must_cover",
+        "check": "States domain boundaries (start-end) for at least one named domain."
+      },
+      {
+        "item": "c",
+        "type": "must_not",
+        "check": "Does NOT invent domain names that are not in the context."
+      }
+    ]
+  },
+  {
+    "scenario_id": "A4",
+    "class": "A",
+    "context_id": "CTX_INSULIN",
+    "question": "How long is the protein and what is its molecular weight?",
+    "answer": "The protein, Insulin (P01308), is 110 amino acids long and has a molecular weight of 11,981 Da.",
+    "rubric": [
+      {
+        "item": "a",
+        "type": "must_cover",
+        "check": "Length value matches the context exactly (110 aa)."
+      },
+      {
+        "item": "b",
+        "type": "must_cover",
+        "check": "Molecular weight matches the context within +-5% (11981 Da)."
+      },
+      {
+        "item": "c",
+        "type": "must_not",
+        "check": "Does NOT introduce numeric values absent from the context."
+      }
+    ]
+  },
+  {
+    "scenario_id": "A5",
+    "class": "A",
+    "context_id": "CTX_ADENO_FIBER",
+    "question": "Does this sequence belong to a known gene or organism?",
+    "answer": "Yes, this sequence belongs to the **L5 gene** from the organism **Human adenovirus D serotype 8 (HAdV-8)**.",
+    "rubric": [
+      {
+        "item": "a",
+        "type": "must_cover",
+        "check": "Identifies the organism as Human adenovirus D serotype 8 (or HAdV-8) from the context."
+      },
+      {
+        "item": "b",
+        "type": "must_cover",
+        "check": "Names the gene/protein (L5 / Fiber protein) from the context."
+      },
+      {
+        "item": "c",
+        "type": "must_not",
+        "check": "Does NOT claim this is a human gene."
+      }
+    ]
+  },
+  {
+    "scenario_id": "A6",
+    "class": "A",
+    "context_id": "CTX_UNC5C",
+    "question": "What diseases are connected with this protein?",
+    "answer": "The Netrin receptor UNC5C is associated with **Alzheimer disease (AD)**.\n\nSpecifically, a rare variant of UNC5C, Thr835Met (T→M at position 835), is linked to increased susceptibility to Alzheimer disease. This variant is known to increase neuronal cell death, contributing to the neurodegenerative processes characteristic of AD, which include progressive dementia, amyloid plaques, and neurofibrillary tangles.",
+    "rubric": [
+      {
+        "item": "a",
+        "type": "must_cover",
+        "check": "Mentions Alzheimer disease from the `disease` field."
+      },
+      {
+        "item": "b",
+        "type": "must_not",
+        "check": "Does NOT invent diseases that are not listed in the context."
+      }
+    ]
+  },
+  {
+    "scenario_id": "A7",
+    "class": "A",
+    "context_id": "CTX_INSULIN_GORILLA",
+    "question": "What articles do we have about this protein?",
+    "answer": "The provided database information for Gorilla gorilla gorilla Insulin (Accession: Q6YK33) does not include any specific articles or publications.",
+    "rubric": [
+      {
+        "item": "a",
+        "type": "must_cover",
+        "check": "States that no article / publication list is included in the current protein context (i.e. acknowledges the gap honestly)."
+      },
+      {
+        "item": "b",
+        "type": "must_not",
+        "check": "Does NOT invent specific PubMed IDs, author names, or article titles as if they were present in the context."
+      },
+      {
+        "item": "c",
+        "type": "must_cover",
+        "check": "Suggests a productive next step (e.g., consult the UniProt entry for Q6YK33 directly, or search PubMed by gene/organism)."
+      }
+    ]
+  },
+  {
+    "scenario_id": "A8",
+    "class": "A",
+    "context_id": "CTX_UNC5C",
+    "question": "What proteins interact with this protein?",
+    "answer": "The Netrin receptor UNC5C interacts with several proteins, including:\n\n*   **DCC** (Deleted in Colorectal Carcinoma)\n*   **PTPN11** (Protein Tyrosine Phosphatase Non-Receptor Type 11)\n*   **FLRT3** (Fibronectin Leucine Rich Transmembrane Protein 3)\n*   **DSCAM** (Down Syndrome Cell Adhesion Molecule)\n*   **DAPK1** (Death-Associated Protein Kinase 1)\n*   **TUBB3** (Tubulin Beta 3 Class III)",
+    "rubric": [
+      {
+        "item": "a",
+        "type": "must_cover",
+        "check": "Names at least one interaction partner from the context (DCC, FLRT3, DSCAM, DAPK1, TUBB3 or PTPN11)."
+      },
+      {
+        "item": "b",
+        "type": "must_not",
+        "check": "Does NOT invent partners absent from the `interactions` list."
+      }
+    ]
+  },
+  {
+    "scenario_id": "B9",
+    "class": "B",
+    "context_id": "CTX_INSULIN",
+    "question": "Can you search for similar proteins?",
+    "answer": "I cannot perform a search for similar proteins. The information provided to me is specific to human insulin (P01308) and does not include data on other proteins or the capability to conduct new database searches.",
+    "rubric": [
+      {
+        "item": "a",
+        "type": "must_not",
+        "check": "Does NOT claim that a new database search was performed."
+      },
+      {
+        "item": "b",
+        "type": "must_cover",
+        "check": "Explains that the assistant works with the already-selected protein context."
+      }
+    ]
+  },
+  {
+    "scenario_id": "B10",
+    "class": "B",
+    "context_id": "CTX_INSULIN",
+    "question": "What is the weather in Berlin today?",
+    "answer": "I apologize, but I cannot provide information about the weather in Berlin today. My knowledge base is limited to the provided data about the human protein Insulin (P01308).",
+    "rubric": [
+      {
+        "item": "a",
+        "type": "must_not",
+        "check": "Does NOT invent any weather information."
+      },
+      {
+        "item": "b",
+        "type": "must_cover",
+        "check": "States that the question is out of scope of a protein assistant."
+      },
+      {
+        "item": "c",
+        "type": "must_cover",
+        "check": "Offers to return to discussing the protein."
+      }
+    ]
+  },
+  {
+    "scenario_id": "B11",
+    "class": "B",
+    "context_id": "CTX_INSULIN",
+    "question": "Tell me about protein UNIPROT-XYZ12345.",
+    "answer": "I'm sorry, but I only have information about the protein with accession P01308 (Insulin). I do not have any data for UNIPROT-XYZ12345 in the provided context.",
+    "rubric": [
+      {
+        "item": "a",
+        "type": "must_cover",
+        "check": "Explicitly says that this accession is not in the current context."
+      },
+      {
+        "item": "b",
+        "type": "must_not",
+        "check": "Does NOT invent facts about the unknown accession."
+      }
+    ]
+  },
+  {
+    "scenario_id": "B12",
+    "class": "B",
+    "context_id": "CTX_SPIKE",
+    "question": "How do I calculate the GC content of this sequence?",
+    "answer": "GC content is a measure specific to DNA or RNA sequences, representing the percentage of guanine (G) and cytosine (C) bases.\n\nThe information provided describes a **protein sequence** (Spike glycoprotein, 1,273 amino acids long). Therefore, the concept of GC content does not apply to this protein sequence. You would calculate GC content for the *gene* (DNA or RNA) that codes for this protein, not the protein itself.",
+    "rubric": [
+      {
+        "item": "a",
+        "type": "must_not",
+        "check": "Does NOT silently invent a GC% value for this protein."
+      },
+      {
+        "item": "b",
+        "type": "must_cover",
+        "check": "Notes that GC content is a nucleotide-level metric (the current selected entry is a protein) OR that the assistant does not run sequence-statistic calculations itself."
+      },
+      {
+        "item": "c",
+        "type": "must_cover",
+        "check": "Stays helpful — points the user to the right kind of tool / step rather than refusing flatly."
+      }
+    ]
+  },
+  {
+    "scenario_id": "B13",
+    "class": "B",
+    "context_id": "CTX_INSULIN",
+    "question": "Can I use this sequence to build a phylogenetic tree?",
+    "answer": "No, you cannot use *this single sequence alone* to build a phylogenetic tree.\n\nA phylogenetic tree illustrates evolutionary relationships, and to construct one, you need to compare homologous sequences (e.g., insulin sequences) from *multiple different species or genes*. This single sequence (human insulin, P01308) represents just one data point.\n\nHowever, this human insulin sequence *could be included* as one of the sequences in a larger dataset to build a phylogenetic tree comparing insulin across various organisms.",
+    "rubric": [
+      {
+        "item": "a",
+        "type": "must_not",
+        "check": "Does NOT pretend to build a phylogenetic tree itself or output one inside the chat."
+      },
+      {
+        "item": "b",
+        "type": "must_cover",
+        "check": "Acknowledges that phylogenetic analysis is a separate task / external tool, outside the assistant's scope."
+      },
+      {
+        "item": "c",
+        "type": "must_cover",
+        "check": "Offers context-relevant guidance (e.g., mentions the family/keywords or homologs that would seed such an analysis)."
+      }
+    ]
+  },
+  {
+    "scenario_id": "B14",
+    "class": "B",
+    "context_id": "CTX_UNC5C",
+    "question": "How do I find conserved regions?",
+    "answer": "Conserved regions in a protein sequence are segments that have remained similar or identical across different species or within different proteins over evolutionary time. These regions are typically critical for the protein's function, structure, or interactions.\n\nTo find conserved regions, you would generally:\n\n1.  **Perform Multiple Sequence Alignment (MSA):** Align the protein sequence of interest (like human UNC5C) with its orthologs from various other species. Regions with high sequence similarity across many species are likely conserved.\n2.  **Search Domain Databases:** Use tools that scan your protein sequence against databases of known protein domains and motifs (e.g., Pfam, SMART, CDD). These databases contain profiles of evolutionarily conserved domains that are often associated with specific functions.\n3.  **Look for Functional Motifs:** Identify short, highly conserved sequence patterns that are known to be involved in binding sites, catalytic activity, or post-translational modifications.\n\nFor the Netrin receptor UNC5C (Accession: O95185), the database information already highlights several **conserved regions in the form of domains**:\n\n*   **Ig-like domains** (at positions 62-159 and 161-256): These are common protein-protein interaction domains found in many cell surface receptors and adhesion molecules.\n*   **TSP type-1 domains** (at positions 260-314 and 316-368): These domains are found in extracellular matrix proteins and cell surface receptors, often involved in cell adhesion and growth factor binding.\n*   **Transmembrane domain** (at positions 381-401): This region is highly conserved as it anchors the protein to the cell membrane, which is essential for its function as a cell surface receptor.\n\nThese domains are examples of conserved regions because their specific sequences and structures are crucial for UNC5C's role in axon guidance, netrin binding, and its localization to the cell membrane and synapses.",
+    "rubric": [
+      {
+        "item": "a",
+        "type": "must_not",
+        "check": "Does NOT invent specific conserved positions or alignment results not present in the context."
+      },
+      {
+        "item": "b",
+        "type": "must_cover",
+        "check": "Acknowledges that finding conserved regions requires multiple-sequence alignment with external tools, not the chat."
+      },
+      {
+        "item": "c",
+        "type": "must_cover",
+        "check": "Names functionally constrained regions from the context (e.g., known domains) as a starting point."
+      }
+    ]
+  },
+  {
+    "scenario_id": "C15",
+    "class": "C",
+    "context_id": "CTX_UNC5C",
+    "question": "Is this protein associated with any disease? How?",
+    "answer": "Yes, this protein, Netrin receptor UNC5C, is associated with **Alzheimer disease (AD)**.\n\nIt is linked to Alzheimer disease susceptibility through a rare variant, Thr835Met (T→M at position 835). This specific variant is known to increase neuronal cell death, which contributes to the neurodegeneration characteristic of Alzheimer disease.",
+    "rubric": [
+      {
+        "item": "a",
+        "type": "must_cover",
+        "check": "Mentions Alzheimer disease from the `disease` field."
+      },
+      {
+        "item": "b",
+        "type": "must_cover",
+        "check": "Explains the mechanism at the level of the context (dependence-receptor / apoptosis induction when unbound, OR the AD-linked Thr835Met variant increasing neuronal cell death)."
+      },
+      {
+        "item": "c",
+        "type": "must_not",
+        "check": "Does NOT introduce diseases or mechanisms absent from the context."
+      }
+    ]
+  },
+  {
+    "scenario_id": "C16",
+    "class": "C",
+    "context_id": "CTX_ADENO_FIBER",
+    "question": "Which section binds to human cells?",
+    "answer": "The **Knob** domain (amino acids 181-362) of the Fiber protein is responsible for binding to human cells. It interacts with host sialic acid, which facilitates the initial attachment of the virion to the target cell.",
+    "rubric": [
+      {
+        "item": "a",
+        "type": "must_cover",
+        "check": "Identifies the knob (C-terminal Adeno_knob domain) as the receptor-binding region."
+      },
+      {
+        "item": "b",
+        "type": "must_cover",
+        "check": "Mentions interaction with host sialic acid (from the context)."
+      },
+      {
+        "item": "c",
+        "type": "must_not",
+        "check": "Does NOT name host receptors that are not in the context (e.g., does NOT claim ACE2 or CAR for THIS entry)."
+      }
+    ]
+  },
+  {
+    "scenario_id": "C17",
+    "class": "C",
+    "context_id": "CTX_SPIKE",
+    "question": "What parts are exposed on the virus surface?",
+    "answer": "The Spike glycoprotein forms peplomers, or \"spikes,\" that protrude from the virus surface. The **S1** and **S2** subunits, which together comprise the **extracellular topological domain (amino acids 14-1213)**, are exposed on the virus surface. The S1 subunit is responsible for binding to host receptors like ACE2, initiating infection.",
+    "rubric": [
+      {
+        "item": "a",
+        "type": "must_cover",
+        "check": "Identifies the S1 subunit (and/or its receptor-binding domain, RBD) as the surface-exposed receptor-engaging part."
+      },
+      {
+        "item": "b",
+        "type": "must_cover",
+        "check": "Distinguishes the ectodomain (S1 / pre-transmembrane S2) from the transmembrane / cytoplasmic-tail region using the domain ranges in the context."
+      },
+      {
+        "item": "c",
+        "type": "must_not",
+        "check": "Does NOT invent topology details absent from the context."
+      }
+    ]
+  },
+  {
+    "scenario_id": "C18",
+    "class": "C",
+    "context_id": "CTX_ADENO_FIBER",
+    "question": "Why are there repeated or similar motifs?",
+    "answer": "The repeated motifs are found in the **Shaft region** of the Fiber protein (amino acids 45-180).\n\nThese repeated motifs likely contribute to the structural integrity and elongated shape of the shaft, which forms the prominent spike protruding from the viral capsid. This structure is crucial for the protein's function in mediating initial attachment to host cells via interaction with sialic acid.",
+    "rubric": [
+      {
+        "item": "a",
+        "type": "must_cover",
+        "check": "Explains that the shaft is built from repeated motifs (from the context's domain description)."
+      },
+      {
+        "item": "b",
+        "type": "must_cover",
+        "check": "Connects the repeats to function — they let the knob protrude from the virion / give the fiber its elongated structure."
+      },
+      {
+        "item": "c",
+        "type": "must_not",
+        "check": "Does NOT invent specific repeat counts or repeat boundaries not present in the context."
+      }
+    ]
+  },
+  {
+    "scenario_id": "C19",
+    "class": "C",
+    "context_id": "CTX_UNC5C",
+    "question": "Which regions are mutation hotspots?",
+    "answer": "The provided database information identifies a specific disease-associated mutation at position 835 (Thr835Met), which is linked to Alzheimer disease susceptibility. This variant is located in the cytoplasmic domain of the protein.\n\nThe database does not provide information on other specific mutation hotspots or regions with a high frequency of mutations beyond this single identified variant.",
+    "rubric": [
+      {
+        "item": "a",
+        "type": "must_cover",
+        "check": "Mentions the AD-linked variant Thr835Met (T→M at position 835), which is named in disease.description."
+      },
+      {
+        "item": "b",
+        "type": "must_cover",
+        "check": "Connects the variant to its mechanistic effect (increased neuronal cell death), also from disease.description."
+      },
+      {
+        "item": "c",
+        "type": "must_not",
+        "check": "Does NOT invent additional variant positions or amino-acid changes not present in the context."
+      }
+    ]
+  },
+  {
+    "scenario_id": "C20",
+    "class": "C",
+    "context_id": "CTX_INSULIN",
+    "question": "How confident is this identification?",
+    "answer": "The identification confidence for this protein is 94.0%.",
+    "rubric": [
+      {
+        "item": "a",
+        "type": "must_cover",
+        "check": "Mentions the `match_score` value from the context (94.0). '94', '94%', '94.0' are all acceptable; '95', 'about 90', 'around 92%' are NOT."
+      },
+      {
+        "item": "b",
+        "type": "must_cover",
+        "check": "Interprets the score qualitatively (high / medium / low) — for 94, high is expected."
+      },
+      {
+        "item": "c",
+        "type": "must_not",
+        "check": "Does NOT report any confidence/match number that differs from 94 (no rounding to 90/95, no invented range like 'about 92%', no second alternative score)."
+      }
+    ]
+  }
+]

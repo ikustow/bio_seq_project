@@ -1,0 +1,34 @@
+The Netrin receptor UNC5C is primarily located at the **cell membrane** and **cell surface**, where it functions as a single-pass type I transmembrane protein. It is also found in specific neuronal structures such as **synapses**, **synaptosomes**, **axons**, **dendrites**, **growth cones**, **lamellipodia**, and **filopodia**, which are all types of cell projections.
+
+# RAW JSON:
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "The Netrin receptor UNC5C is primarily located at the **cell membrane** and **cell surface**, where it functions as a single-pass type I transmembrane protein. It is also found in specific neuronal structures such as **synapses**, **synaptosomes**, **axons**, **dendrites**, **growth cones**, **lamellipodia**, and **filopodia**, which are all types of cell projections."
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 713,
+    "candidatesTokenCount": 86,
+    "totalTokenCount": 831,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 713
+      }
+    ],
+    "thoughtsTokenCount": 32,
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "heIEauPfD46vnsEPzsTWkAw"
+}
