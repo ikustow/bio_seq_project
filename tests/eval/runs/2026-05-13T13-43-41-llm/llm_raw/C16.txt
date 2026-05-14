@@ -1,0 +1,34 @@
+The **Knob** domain (amino acids 181-362) of the Fiber protein is responsible for binding to human cells. It interacts with host sialic acid, which facilitates the initial attachment of the virion to the target cell.
+
+# RAW JSON:
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "The **Knob** domain (amino acids 181-362) of the Fiber protein is responsible for binding to human cells. It interacts with host sialic acid, which facilitates the initial attachment of the virion to the target cell."
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 496,
+    "candidatesTokenCount": 52,
+    "totalTokenCount": 869,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 496
+      }
+    ],
+    "thoughtsTokenCount": 321,
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "DeMEavyuMr-zkdUP2dG3qAw"
+}

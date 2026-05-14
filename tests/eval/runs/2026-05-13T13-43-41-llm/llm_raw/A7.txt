@@ -1,0 +1,34 @@
+The provided database information for Gorilla gorilla gorilla Insulin (Accession: Q6YK33) does not include any specific articles or publications.
+
+# RAW JSON:
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "The provided database information for Gorilla gorilla gorilla Insulin (Accession: Q6YK33) does not include any specific articles or publications."
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 419,
+    "candidatesTokenCount": 28,
+    "totalTokenCount": 696,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 419
+      }
+    ],
+    "thoughtsTokenCount": 249,
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "p-IEaqKWLcujnsEPsvDZsQ0"
+}

@@ -1,0 +1,40 @@
+The Netrin receptor UNC5C contains the following structural domains:
+
+*   Ig-like (at positions 62-159)
+*   Ig-like C2-type (at positions 161-256)
+*   TSP type-1 (1) (at positions 260-314)
+*   TSP type-1 (2) (at positions 316-368)
+*   Transmembrane (at positions 381-401)
+
+# RAW JSON:
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "The Netrin receptor UNC5C contains the following structural domains:\n\n*   Ig-like (at positions 62-159)\n*   Ig-like C2-type (at positions 161-256)\n*   TSP type-1 (1) (at positions 260-314)\n*   TSP type-1 (2) (at positions 316-368)\n*   Transmembrane (at positions 381-401)"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 712,
+    "candidatesTokenCount": 113,
+    "totalTokenCount": 856,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 712
+      }
+    ],
+    "thoughtsTokenCount": 31,
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "i-IEaqysKLvOnsEP0ODIyAo"
+}

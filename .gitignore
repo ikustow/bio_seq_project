@@ -99,6 +99,8 @@ app/frontend/assets/AF-*.pdb
 *.arrow
 
 # Eval harness: ignore per-run outputs but keep the locked baseline
+# and the first reference run snapshot.
 tests/eval/runs/*
 !tests/eval/runs/baseline/
+!tests/eval/runs/2026-05-13T13-43-41-llm/
 !tests/eval/runs/.gitkeep

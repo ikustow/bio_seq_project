@@ -1,0 +1,34 @@
+I apologize, but I cannot provide information about the weather in Berlin today. My knowledge base is limited to the provided data about the human protein Insulin (P01308).
+
+# RAW JSON:
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "I apologize, but I cannot provide information about the weather in Berlin today. My knowledge base is limited to the provided data about the human protein Insulin (P01308)."
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 604,
+    "candidatesTokenCount": 37,
+    "totalTokenCount": 769,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 604
+      }
+    ],
+    "thoughtsTokenCount": 128,
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "v-IEapGQO5rbxs0PuPqCuQc"
+}

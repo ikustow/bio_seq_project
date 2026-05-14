@@ -1,0 +1,34 @@
+Yes, this sequence belongs to the **L5 gene** from the organism **Human adenovirus D serotype 8 (HAdV-8)**.
+
+# RAW JSON:
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "Yes, this sequence belongs to the **L5 gene** from the organism **Human adenovirus D serotype 8 (HAdV-8)**."
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 500,
+    "candidatesTokenCount": 31,
+    "totalTokenCount": 653,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 500
+      }
+    ],
+    "thoughtsTokenCount": 122,
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "meIEasDnFZLc7M8Pzayq2A8"
+}
