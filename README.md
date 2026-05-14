@@ -32,6 +32,7 @@ chat history is persisted to a Supabase Postgres table.
 - [app/backend/bioseq_retriever/README.md](app/backend/bioseq_retriever/README.md) — retriever library (LangGraph pipeline, ProtT5/FAISS search service, contextual rerank).
 - [app/frontend/TO-DO.md](app/frontend/TO-DO.md) — open frontend TODOs.
 - [tests/eval/README.md](tests/eval/README.md) — how to run the eval harnesses.
+- [HOW_IT_WORKS.md](HOW_IT_WORKS.md) - detailed description of how it works and how to run it locally (if you don't want to use the HF interface and want to deploy it locally)
 
 ## Configuration (HF Space Secrets / Variables)
 
