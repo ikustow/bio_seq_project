@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "<string>", line 28, in <module>
+  File "D:\Python\Python3.11\Lib\encodings\cp1251.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2192' in position 8035: character maps to <undefined>

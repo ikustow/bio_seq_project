@@ -1,0 +1,34 @@
+The identification confidence for this protein is 94.0%.
+
+# RAW JSON:
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "The identification confidence for this protein is 94.0%."
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 602,
+    "candidatesTokenCount": 13,
+    "totalTokenCount": 646,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 602
+      }
+    ],
+    "thoughtsTokenCount": 31,
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "KuMEava5PPiFkdUP7K3b4Qo"
+}

@@ -1,0 +1,36 @@
+Yes, this protein, Netrin receptor UNC5C, is associated with **Alzheimer disease (AD)**.
+
+It is linked to Alzheimer disease susceptibility through a rare variant, Thr835Met (T→M at position 835). This specific variant is known to increase neuronal cell death, which contributes to the neurodegeneration characteristic of Alzheimer disease.
+
+# RAW JSON:
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "Yes, this protein, Netrin receptor UNC5C, is associated with **Alzheimer disease (AD)**.\n\nIt is linked to Alzheimer disease susceptibility through a rare variant, Thr835Met (T\u2192M at position 835). This specific variant is known to increase neuronal cell death, which contributes to the neurodegeneration characteristic of Alzheimer disease."
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 714,
+    "candidatesTokenCount": 75,
+    "totalTokenCount": 825,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 714
+      }
+    ],
+    "thoughtsTokenCount": 36,
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "B-MEaqbVFbqqnsEPltffiQw"
+}

@@ -1,0 +1,34 @@
+The main biological function of this protein, Insulin, is to **decrease blood glucose concentration**. It achieves this by increasing cell permeability to monosaccharides, amino acids, and fatty acids, and by accelerating glycolysis, the pentose phosphate cycle, and glycogen synthesis in the liver.
+
+# RAW JSON:
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "The main biological function of this protein, Insulin, is to **decrease blood glucose concentration**. It achieves this by increasing cell permeability to monosaccharides, amino acids, and fatty acids, and by accelerating glycolysis, the pentose phosphate cycle, and glycogen synthesis in the liver."
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 606,
+    "candidatesTokenCount": 54,
+    "totalTokenCount": 692,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 606
+      }
+    ],
+    "thoughtsTokenCount": 32,
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "fuIEaoqiF5qC7M8PjJHLYA"
+}

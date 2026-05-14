@@ -1,0 +1,34 @@
+The protein, Insulin (P01308), is 110 amino acids long and has a molecular weight of 11,981 Da.
+
+# RAW JSON:
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "The protein, Insulin (P01308), is 110 amino acids long and has a molecular weight of 11,981 Da."
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 608,
+    "candidatesTokenCount": 35,
+    "totalTokenCount": 675,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 608
+      }
+    ],
+    "thoughtsTokenCount": 32,
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "keIEavS_M8LkkdUPqZuyiAw"
+}

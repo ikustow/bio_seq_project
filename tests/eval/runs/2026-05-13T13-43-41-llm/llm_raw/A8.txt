@@ -1,0 +1,41 @@
+The Netrin receptor UNC5C interacts with several proteins, including:
+
+*   **DCC** (Deleted in Colorectal Carcinoma)
+*   **PTPN11** (Protein Tyrosine Phosphatase Non-Receptor Type 11)
+*   **FLRT3** (Fibronectin Leucine Rich Transmembrane Protein 3)
+*   **DSCAM** (Down Syndrome Cell Adhesion Molecule)
+*   **DAPK1** (Death-Associated Protein Kinase 1)
+*   **TUBB3** (Tubulin Beta 3 Class III)
+
+# RAW JSON:
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "The Netrin receptor UNC5C interacts with several proteins, including:\n\n*   **DCC** (Deleted in Colorectal Carcinoma)\n*   **PTPN11** (Protein Tyrosine Phosphatase Non-Receptor Type 11)\n*   **FLRT3** (Fibronectin Leucine Rich Transmembrane Protein 3)\n*   **DSCAM** (Down Syndrome Cell Adhesion Molecule)\n*   **DAPK1** (Death-Associated Protein Kinase 1)\n*   **TUBB3** (Tubulin Beta 3 Class III)"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 711,
+    "candidatesTokenCount": 126,
+    "totalTokenCount": 896,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 711
+      }
+    ],
+    "thoughtsTokenCount": 59,
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "s-IEapvUOZHNkdUPg96u2Q0"
+}

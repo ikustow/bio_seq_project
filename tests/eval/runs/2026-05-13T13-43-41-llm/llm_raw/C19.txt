@@ -1,0 +1,36 @@
+The provided database information identifies a specific disease-associated mutation at position 835 (Thr835Met), which is linked to Alzheimer disease susceptibility. This variant is located in the cytoplasmic domain of the protein.
+
+The database does not provide information on other specific mutation hotspots or regions with a high frequency of mutations beyond this single identified variant.
+
+# RAW JSON:
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "The provided database information identifies a specific disease-associated mutation at position 835 (Thr835Met), which is linked to Alzheimer disease susceptibility. This variant is located in the cytoplasmic domain of the protein.\n\nThe database does not provide information on other specific mutation hotspots or regions with a high frequency of mutations beyond this single identified variant."
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 710,
+    "candidatesTokenCount": 70,
+    "totalTokenCount": 1009,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 710
+      }
+    ],
+    "thoughtsTokenCount": 229,
+    "serviceTier": "standard"
+  },
+  "modelVersion": "gemini-2.5-flash",
+  "responseId": "JOMEasXiFLrm7M8PxLjPyQw"
+}
