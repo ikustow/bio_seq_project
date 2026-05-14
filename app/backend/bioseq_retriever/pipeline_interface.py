@@ -56,7 +56,7 @@ def main():
         print("\n--- Pipeline Summary ---")
         print(f"Detected Type: {result.get('sequence_type')}")
         print(f"Classification Confidence: {result.get('is_confident')}")
-        print(f"Protein Sequence Length: {len(result.get('protein_sequence', ''))}")
+        print(f"Sequence Length: {len(result.get('sequence') or '')}")
 
         print("\n--- Top 5 Context-Aware Matches (UniProt JSON) ---")
         final_results = result.get("final_results", [])

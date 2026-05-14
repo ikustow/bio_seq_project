@@ -42,7 +42,6 @@ class GraphState(TypedDict):
     context: Optional[str]
     sequence: Optional[str]
     sequence_type: Optional[str]
-    protein_sequence: Optional[str]
     is_confident: Optional[bool]
     ranked_results: Optional[List[Dict[str, Any]]]
     final_results: Optional[List[Dict[str, Any]]]
@@ -128,11 +127,6 @@ def rank_dna_node(state: GraphState) -> Dict[str, Any]:
     except Exception as e:
         return {"error": f"DNA Ranking failed: {str(e)}"}
 
-def pass_protein_node(state: GraphState) -> Dict[str, Any]:
-    """Node for when sequence is already protein."""
-    if state.get("error"): return {}
-    return {"protein_sequence": state['sequence']}
-
 def rank_node(state: GraphState) -> Dict[str, Any]:
     """Performs sequence similarity search via the selected backend."""
     if state.get('error'): return {}
@@ -142,9 +136,9 @@ def rank_node(state: GraphState) -> Dict[str, Any]:
             # BLAST is slower than FAISS and returns at most ~10 hits anyway;
             # we ask for 10 to give rerank something to reorder if a context
             # query was supplied. Hardcoded to SwissProt for speed/quality.
-            matches = blast_search(state['protein_sequence'], k=10)
+            matches = blast_search(state['sequence'], k=10)
         else:
-            matches = search_top_k(state['protein_sequence'], k=50)
+            matches = search_top_k(state['sequence'], k=50)
         records = get_uniprot_records([m[0] for m in matches])
         return {"ranked_results": records}
     except Exception as e:
@@ -195,7 +189,6 @@ def create_pipeline():
     workflow.add_node("resolve_file", resolve_filepath_node)
     workflow.add_node("use_raw", use_raw_sequence_node)
     workflow.add_node("rank_dna", rank_dna_node)
-    workflow.add_node("pass_protein", pass_protein_node)
     workflow.add_node("rank", rank_node)
     workflow.add_node("rerank", rerank_node)
     
@@ -204,12 +197,11 @@ def create_pipeline():
     workflow.add_conditional_edges("extract", should_resolve_filepath, {"resolve": "resolve_file", "raw": "use_raw", "error": END})
     
     # After resolution/raw input, branch to DNA search or Protein search path
-    workflow.add_conditional_edges("resolve_file", should_rank, {"rank_dna": "rank_dna", "protein_path": "pass_protein", "error": END})
-    workflow.add_conditional_edges("use_raw", should_rank, {"rank_dna": "rank_dna", "protein_path": "pass_protein", "error": END})
+    workflow.add_conditional_edges("resolve_file", should_rank, {"rank_dna": "rank_dna", "protein_path": "rank", "error": END})
+    workflow.add_conditional_edges("use_raw", should_rank, {"rank_dna": "rank_dna", "protein_path": "rank", "error": END})
     
     # Convergence points
     workflow.add_conditional_edges("rank_dna", check_error, {"error": END, "continue": "rerank"})
-    workflow.add_conditional_edges("pass_protein", check_error, {"error": END, "continue": "rank"})
     workflow.add_conditional_edges("rank", check_error, {"error": END, "continue": "rerank"})
     
     workflow.add_edge("rerank", END)
@@ -225,7 +217,6 @@ async def run_bioseq_pipeline(prompt: str, search_algorithm: str = "embeddings")
         "context": None,
         "sequence": None,
         "sequence_type": None,
-        "protein_sequence": None,
         "is_confident": None,
         "ranked_results": None,
         "final_results": None,
