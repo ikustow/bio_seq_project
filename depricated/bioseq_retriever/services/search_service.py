@@ -23,7 +23,7 @@ from depricated.bioseq_retriever.services.config import (
     HNSW_M, HNSW_EF_CONSTRUCTION, HNSW_EF_SEARCH, RANDOM_SEED,
     SEARCH_SERVICE_HOST, SEARCH_SERVICE_PORT,
     PROTEIN_MODEL_NAME, DNA_MODEL_NAME, RERANK_MODEL_NAME,
-    DNA_MAX_LENGTH, DEFAULT_FAISS_THREADS
+    DNA_MAX_LENGTH, DEFAULT_FAISS_THREADS, H5_BATCH_SIZE
 )
 
 app = FastAPI(title="Unified BioSeq Gateway Service")
@@ -101,11 +101,19 @@ init_models()
 # INDEX MANAGEMENT
 # =============================================================================
 
-def iter_embeddings(h5_path: str, batch_size: int = 1000) -> Generator[Tuple[np.ndarray, List[str]], None, None]:
-    with h5py.File(h5_path, 'r') as f:
-        accessions = list(f.keys())
-        if not accessions: raise ValueError(f"HDF5 file {h5_path} is empty.")
+def iter_embeddings(h5_path: str, batch_size: int = H5_BATCH_SIZE) -> Generator[Tuple[np.ndarray, List[str]], None, None]:
+    # Use libver='latest' to handle modern HDF5 layout messages
+    with h5py.File(h5_path, 'r', libver='latest') as f:
+        # Filter keys to ensure we only process actual datasets
+        all_keys = list(f.keys())
+        accessions = [k for k in all_keys if isinstance(f[k], h5py.Dataset)]
+        
+        if not accessions:
+            raise ValueError(f"HDF5 file {h5_path} contains no valid datasets.")
+            
+        # Infer dimension from the first valid dataset
         dim = f[accessions[0]].shape[0]
+        
         for i in range(0, len(accessions), batch_size):
             batch_accs = accessions[i : i + batch_size]
             batch_embeddings = np.zeros((len(batch_accs), dim), dtype=np.float32)
@@ -123,7 +131,8 @@ def build_index(h5_path: str, index_path: str, name: str) -> faiss.IndexHNSWFlat
             index.hnsw.efConstruction = HNSW_EF_CONSTRUCTION
         faiss.normalize_L2(batch_embeddings)
         index.add(batch_embeddings)
-    if index_path: faiss.write_index(index, index_path)
+    if index_path:
+        faiss.write_index(index, index_path)
     return index
 
 def load_or_create_index(h5_path: str, index_path: str, cache_path: str, name: str) -> Tuple[faiss.IndexHNSWFlat, List[str]]:
@@ -131,13 +140,21 @@ def load_or_create_index(h5_path: str, index_path: str, cache_path: str, name: s
         print(f"Loading existing {name} index...")
         index = faiss.read_index(index_path)
         index.hnsw.efSearch = HNSW_EF_SEARCH
-        with open(cache_path, 'r') as f: accessions = json.load(f)
+        with open(cache_path, 'r') as f:
+            accessions = json.load(f)
         return index, accessions
     
+    # If index or cache missing, build it
     index = build_index(h5_path, index_path, name)
     index.hnsw.efSearch = HNSW_EF_SEARCH
-    with h5py.File(h5_path, 'r') as f: accessions = list(f.keys())
-    with open(cache_path, 'w') as f: json.dump(accessions, f)
+    
+    # Extract and cache accessions (ensuring we only cache dataset keys)
+    with h5py.File(h5_path, 'r', libver='latest') as f:
+        accessions = [k for k in f.keys() if isinstance(f[k], h5py.Dataset)]
+    
+    with open(cache_path, 'w') as f:
+        json.dump(accessions, f)
+            
     return index, accessions
 
 print("Initializing FAISS indices...")
@@ -209,19 +226,39 @@ def _extract_rich_profile(record: Dict[str, Any]) -> Dict[str, Any]:
     profile = {
         "name": record.get('proteinDescription', {}).get('recommendedName', {}).get('fullName', {}).get('value', ''),
         "organism": record.get('organism', {}).get('scientificName', ''),
-        "lineage": lineage,
+        "lineage": [],
         "locations": [], "functions": [], "go_terms": [], "domains": [], "ec_numbers": []
     }
+    
+    # Handle lineage (can be list of dicts or list of strings)
+    raw_lineage = record.get('organism', {}).get('lineage', [])
+    for t in raw_lineage:
+        if isinstance(t, dict):
+            profile["lineage"].append(t.get('scientificName', '').lower())
+        else:
+            profile["lineage"].append(str(t).lower())
+
     for comment in record.get('comments', []):
         if comment.get('commentType') == 'SUBCELLULAR_LOCATION':
-            profile["locations"].extend([l.get('location', {}).get('value', '').lower() for l in comment.get('locations', [])])
+            for l in comment.get('locations', []):
+                loc_val = l.get('location', {}).get('value', '').lower()
+                if loc_val: profile["locations"].append(loc_val)
         if comment.get('commentType') == 'FUNCTION':
             profile["functions"].extend([t.get('value', '') for t in comment.get('note', {}).get('texts', [])])
+            
     for xref in record.get('uniProtKBCrossReferences', []):
         db = xref.get('database')
-        if db == 'EC': profile["ec_numbers"].append(xref.get('id'))
-        elif db == 'GO': profile["go_terms"].append(xref.get('properties', [{}])[0].get('value', ''))
-        elif db in ['Pfam', 'InterPro']: profile["domains"].append(xref.get('properties', [{}])[0].get('value', ''))
+        if db == 'EC': 
+            profile["ec_numbers"].append(xref.get('id'))
+        elif db == 'GO': 
+            props = xref.get('properties', [])
+            if props:
+                # Usually the first property is 'GoTerm'
+                profile["go_terms"].append(props[0].get('value', ''))
+        elif db in ['Pfam', 'InterPro']: 
+            props = xref.get('properties', [])
+            if props:
+                profile["domains"].append(props[0].get('value', ''))
     return profile
 
 # =============================================================================
