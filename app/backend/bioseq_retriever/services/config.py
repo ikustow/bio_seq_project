@@ -6,15 +6,20 @@ SEARCH_SERVICE_HOST = os.getenv("BIOSEQ_SEARCH_HOST", "0.0.0.0")
 SEARCH_SERVICE_PORT = int(os.getenv("BIOSEQ_SEARCH_PORT", "8002"))
 
 # --- Paths ---
+# Default directory matches ``bootstrap.ensure_data``'s download target so
+# search_service finds the files without extra env vars. Override any of
+# the five vars below for non-standard layouts (HF Space, custom mounts).
+_DATA_DIR = os.getenv("BIOSEQ_DATA_DIR", os.path.join("bioseq_retriever", "data"))
+
 # Protein Specific Paths
-DEFAULT_H5_PATH = os.getenv("BIOSEQ_H5_PATH", "data/per-protein.h5")
-DEFAULT_INDEX_PATH = os.getenv("BIOSEQ_INDEX_PATH", "data/per-protein.index")
-DEFAULT_CACHE_PATH = os.getenv("BIOSEQ_ACCESSIONS_CACHE_PATH", "data/per-protein.accessions.json")
+DEFAULT_H5_PATH = os.getenv("BIOSEQ_H5_PATH", os.path.join(_DATA_DIR, "per-protein.h5"))
+DEFAULT_INDEX_PATH = os.getenv("BIOSEQ_INDEX_PATH", os.path.join(_DATA_DIR, "per-protein.index"))
+DEFAULT_CACHE_PATH = os.getenv("BIOSEQ_ACCESSIONS_CACHE_PATH", os.path.join(_DATA_DIR, "per-protein.accessions.json"))
 
 # DNA Specific Paths
-DNA_H5_PATH = os.getenv("BIOSEQ_DNA_H5_PATH", "data/per-gene.h5")
-DNA_INDEX_PATH = os.getenv("BIOSEQ_DNA_INDEX_PATH", "data/per-gene.index")
-DNA_CACHE_PATH = os.getenv("BIOSEQ_DNA_ACCESSIONS_CACHE_PATH", "data/per-gene.accessions.json")
+DNA_H5_PATH = os.getenv("BIOSEQ_DNA_H5_PATH", os.path.join(_DATA_DIR, "per-gene.h5"))
+DNA_INDEX_PATH = os.getenv("BIOSEQ_DNA_INDEX_PATH", os.path.join(_DATA_DIR, "per-gene.index"))
+DNA_CACHE_PATH = os.getenv("BIOSEQ_DNA_ACCESSIONS_CACHE_PATH", os.path.join(_DATA_DIR, "per-gene.accessions.json"))
 
 # --- FAISS HNSW Tuning ---
 HNSW_M = 128

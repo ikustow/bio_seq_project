@@ -19,8 +19,7 @@
 
 /* Streamlit's default block-container leaves 5–6rem of empty space above
    the title and a wide gutter on either side. Pull them in so the chat
-   and protein card have more usable width. Top padding must still clear
-   Streamlit's fixed header (~3rem). */
+   and protein card have more usable width. */
 [data-testid="stMainBlockContainer"],
 [data-testid="block-container"],
 .main .block-container {
@@ -29,7 +28,7 @@
     /* padding-left matches the column gap below so the visual gap to
        the sidebar equals the gap from chat to the right panel. */
     padding-left: 1.25rem !important;
-    padding-right: 0.5rem !important;
+    padding-right: 0.6rem !important;
     max-width: 100% !important;
 }
 
@@ -86,7 +85,6 @@
     background: var(--right-panel-bg);
     border-radius: 12px;
     padding: 10px 12px 14px !important;
-    box-shadow: inset 1px 0 0 var(--right-panel-border);
 }
 
 /* Only the outer horizontal block (the one whose direct child columns
@@ -332,24 +330,57 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
    Each candidate is wrapped in st.container(key="candidate_cell_N"),
    which renders as a div with the class .st-key-candidate_cell_N. We
    match any of those via attribute prefix. */
+/* Each candidate is one visually unified "card": single border around
+   the whole cell, single ring on the selected state. The accession
+   button (top) and the EMB/SEQ tiles (bottom) no longer carry their
+   own borders or rings — they stitch together inside this wrapper. */
 [class*="st-key-candidate_cell_"] {
     container-type: inline-size;
     min-width: 0;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: pointer;
+    background: #ffffff;
+    transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+[class*="st-key-candidate_cell_"]:hover {
+    border-color: #94a3b8;
+}
+/* Active = the cell that contains a primary-typed button (Streamlit
+   adds that data-testid to the chosen row). Show one continuous indigo
+   ring around the whole cell, no internal seams. */
+[class*="st-key-candidate_cell_"]:has(button[data-testid="stBaseButton-primary"]) {
+    border-color: #4f46e5;
+    box-shadow: 0 0 0 1px #4f46e5;
+    background: #eef2ff;
 }
 /* Lock the button itself. NOTE: the real DOM is
      div.stButton  >  span[data-testid=stTooltipHoverTarget]  >  button
    so `div.stButton > button` does NOT match — use a descendant
    combinator. */
+/* Zero out the default vertical gap and *all* Streamlit-imposed margins
+   on wrappers inside the candidate cell. The critical one was a
+   `margin-bottom: -1rem` (Streamlit's default on stMarkdownContainer
+   that compensates for <p> margins) — it pulled the bottom of the
+   EMB/SEQ tiles ABOVE the cell's content edge, and the cell's
+   `overflow: hidden` clipped the percentages. */
+[class*="st-key-candidate_cell_"] {
+    gap: 0 !important;
+}
+[class*="st-key-candidate_cell_"] [data-testid="stElementContainer"],
+[class*="st-key-candidate_cell_"] [data-testid="stMarkdown"],
+[class*="st-key-candidate_cell_"] [data-testid="stMarkdownContainer"],
+[class*="st-key-candidate_cell_"] .stButton {
+    margin: 0 !important;
+    padding: 0 !important;
+}
 [class*="st-key-candidate_cell_"] button {
-    height: 46px !important;
-    min-height: 46px !important;
-    max-height: 46px !important;
+    height: 50px !important;
+    min-height: 50px !important;
+    max-height: 50px !important;
     width: 100% !important;
     min-width: 0 !important;
-    /* Horizontal padding scales with the cell's own width via container
-       queries — wide cells get a comfortable 6px gutter, very narrow
-       cells collapse to 0 so the text can stay large and just press
-       toward the edges instead of shrinking. */
     padding: 0 clamp(0px, 4cqi, 6px) !important;
     line-height: 1 !important;
     display: flex !important;
@@ -360,11 +391,27 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     overflow-wrap: normal !important;
     word-break: keep-all !important;
     text-overflow: clip !important;
-    /* Only round the TOP corners — the EMB/SEQ tile beneath stitches
-       flush onto the bottom. (Previously set via an inline rule with a
-       broken selector.) */
-    border-radius: 8px 8px 0 0 !important;
+    /* The cell wrapper owns the visual frame now, so the button is
+       chromeless: no border, no rounded corners, no own ring, no
+       shifting background. Click target is still the real button. */
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    color: #1e293b !important;
     font-weight: 800 !important;
+}
+/* Subtle separator between the accession row and the EMB/SEQ row so
+   the eye knows they're two zones of the same card. The cell wrapper
+   already clips by border-radius, so we don't need overflow here. */
+[class*="st-key-candidate_cell_"] .candidate-metrics {
+    border: 0 !important;
+    border-top: 1px solid rgba(17, 24, 39, 0.08) !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+}
+[class*="st-key-candidate_cell_"]:has(button[data-testid="stBaseButton-primary"]) .candidate-metrics {
+    border-top-color: rgba(79, 70, 229, 0.3) !important;
 }
 /* The per-letter wrap was coming from Streamlit's markdown container
    defaulting to `overflow-wrap: break-word` (and the inner <p> to
@@ -393,27 +440,70 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     gap: 0.25rem !important;
 }
 
-/* The EMB / SEQ score tiles under each candidate button. The container
-   query context lives on the tile itself, not on the pair — so `cqi`
-   is the tile's own width and the font grows up to ~17–19px on a
-   roomy panel while still gracefully shrinking on a narrow one. */
-.candidate-score {
+/* ---------- EMB / SEQ score tiles ----------
+   The bottom half of every candidate card is one row, height 50px (=
+   the accession button on top), split into two equal tiles. Each tile
+   is a 2-row grid (label on top half, percentage on bottom half), so
+   every text sits inside its own 25px row that's wide enough to keep
+   the digits intact at any font size we use.
+
+   All rules are scoped under the candidate-cell wrapper and marked
+   !important so they beat Streamlit's own span/markdown rules and any
+   leftover inline CSS. */
+[class*="st-key-candidate_cell_"] .candidate-metrics {
+    height: 50px !important;
+    min-height: 50px !important;
+    max-height: 50px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+}
+[class*="st-key-candidate_cell_"] .candidate-scores {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 0 !important;
+    height: 100% !important;
+    width: 100% !important;
+}
+[class*="st-key-candidate_cell_"] .candidate-score {
+    display: grid !important;
+    grid-template-rows: 1fr 1fr !important;
+    width: 100% !important;
+    height: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+    color: #111827;
+    font-weight: 700;
     cursor: help;
     position: relative;
     container-type: inline-size;
+    overflow: hidden !important;
 }
-.candidate-score-label,
-.candidate-score-value {
-    white-space: nowrap;
-    overflow: hidden;
-    overflow-wrap: normal;
-    word-break: keep-all;
+[class*="st-key-candidate_cell_"] .candidate-score + .candidate-score {
+    border-left: 1px solid rgba(17, 24, 39, 0.1) !important;
 }
-.candidate-score-label {
-    font-size: clamp(0.6rem, 26cqi, 1rem) !important;
+[class*="st-key-candidate_cell_"] .candidate-score-label,
+[class*="st-key-candidate_cell_"] .candidate-score-value {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    line-height: 1 !important;
+    font-weight: 800 !important;
+    white-space: nowrap !important;
+    overflow-wrap: normal !important;
+    word-break: keep-all !important;
+    overflow: visible !important;
+    letter-spacing: 0 !important;
 }
-.candidate-score-value {
-    font-size: clamp(0.65rem, 30cqi, 1.15rem) !important;
+[class*="st-key-candidate_cell_"] .candidate-score-label {
+    font-size: clamp(0.6rem, 24cqi, 0.95rem) !important;
+}
+[class*="st-key-candidate_cell_"] .candidate-score-value {
+    font-size: clamp(0.65rem, 26cqi, 1rem) !important;
 }
 
 /* ---------- Alignment metrics row: shrink rather than truncate ----------
@@ -464,3 +554,147 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     font-variant-numeric: tabular-nums;
 }
 
+/* ---------- LLM debug panel ----------
+   Floating, resizable panel that shows the full payload sent to the chat
+   LLM (URL, headers, JSON body, system prompt). Lives at document level so
+   it floats above the layout regardless of Streamlit columns. The user can:
+     - drag the bottom-left corner to resize (resize: both flipped via the
+       writing-mode trick — but native browser resize handle is bottom-right,
+       so we anchor the panel to the bottom-right and let resize: both grow
+       the box up-and-leftwards as needed via min/max);
+     - click the ⤢ button to toggle near-fullscreen;
+     - click the _ button to collapse to just the header;
+     - click "copy" to copy the displayed text. */
+.bioseq-llm-debug-panel {
+    position: fixed;
+    left: auto;
+    top: auto;
+    right: 8px;
+    bottom: 8px;
+    /* Start tucked into the corner at the minimum drag-resize size — just
+       enough to show the header strip. The user resizes from the bottom-
+       right corner whenever they need to read the payload. */
+    width: 110px;
+    height: 22px;
+    min-width: 90px;
+    min-height: 22px;
+    max-width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+    background: #0f172a;
+    color: #e2e8f0;
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    box-shadow: 0 18px 48px rgba(15, 23, 42, 0.45);
+    /* Must beat Streamlit's sidebar (~999990) and any modal/toasts. */
+    z-index: 2147483600;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    resize: both;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.bioseq-llm-debug-panel.is-dragging {
+    opacity: 0.95;
+    box-shadow: 0 24px 64px rgba(15, 23, 42, 0.6);
+}
+
+.lldp-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    background: #1e293b;
+    border-bottom: 1px solid #334155;
+    font-size: 10px;
+    color: #f1f5f9;
+    user-select: none;
+    cursor: move;
+    touch-action: none;
+    min-height: 22px;
+}
+
+.lldp-header strong {
+    font-weight: 600;
+}
+
+.lldp-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #22c55e;
+    box-shadow: 0 0 4px rgba(34, 197, 94, 0.7);
+}
+
+.lldp-spacer {
+    flex: 1 1 auto;
+}
+
+.lldp-selector {
+    background: #0f172a;
+    color: #e2e8f0;
+    border: 1px solid #334155;
+    border-radius: 3px;
+    padding: 1px 4px;
+    font-family: inherit;
+    font-size: 10px;
+    max-width: 180px;
+}
+
+.lldp-copy {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 16px;
+    border: 1px solid #334155;
+    border-radius: 3px;
+    background: #0f172a;
+    color: #e2e8f0;
+    font-size: 11px;
+    cursor: pointer;
+    user-select: none;
+}
+.lldp-copy:hover {
+    background: #334155;
+}
+
+.lldp-body {
+    /* min-height: 0 lets the flex item shrink below its content size so
+       overflow: auto can actually kick in. Without it browsers default
+       to min-content and the panel's height grows past max-height. */
+    flex: 1 1 0;
+    min-height: 0;
+    margin: 0;
+    padding: 10px 12px;
+    overflow: auto;
+    background: #0f172a;
+    color: #e2e8f0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.5;
+    tab-size: 2;
+}
+
+/* Streamlit's markdown renderer sometimes wraps emitted HTML in its own
+   container (e.g. data-testid="stMarkdownPre" around <pre>, generic
+   st-emotion-cache wrappers around block content). If any such wrapper
+   ends up inside our panel, neutralise it so it doesn't break the flex
+   layout that powers scrolling. */
+.bioseq-llm-debug-panel [data-testid="stMarkdownPre"],
+.bioseq-llm-debug-panel [class*="st-emotion-cache"] {
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+    display: flex !important;
+    flex-direction: column !important;
+}

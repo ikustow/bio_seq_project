@@ -30,3 +30,9 @@ class ChatTurnResult(BaseModel):
     session: SessionSnapshot
     pipeline: BioSeqPipelineSnapshot | None = None
     warnings: list[str] = Field(default_factory=list)
+    # Defaults preserve retriever-turn behaviour: replace the card, no provider info.
+    update_card: bool = True
+    current_mode: str | None = None
+    provider: str | None = None
+    provider_model: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)

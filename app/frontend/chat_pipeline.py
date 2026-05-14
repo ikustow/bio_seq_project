@@ -1,8 +1,9 @@
 """End-to-end turn pipeline for the Streamlit frontend.
 
-First user turn goes to the backend ``BioSeqChatService`` runtime retriever.
-Subsequent turns go to the chat-LLM module and keep the existing protein card
-stable until a new sequence is submitted.
+Every turn now goes to ``BioSeqChatService`` in the backend. The backend
+classifies the input, decides between retriever and Chat-LLM follow-up, and
+returns ``update_card`` so the UI knows whether to replace the protein card
+or keep the current selection stable.
 """
 
 from __future__ import annotations
@@ -38,30 +39,26 @@ def _chat_service():
 
 
 def run_turn(prompt: str) -> dict[str, Any]:
-    """Dispatch one user turn.
+    """Dispatch one user turn through the backend service.
+
+    The backend owns routing (retriever vs Chat-LLM follow-up) and returns
+    ``update_card`` so the UI knows whether to swap the protein card.
 
     Returns a dict with:
-        reply: str               — assistant text to stream
-        candidates: list[Candidate] — UI-shaped cards
-        candidates_raw: list[dict] — full backend candidate dicts (for DB)
-        reveals: set[str]        — protein-card sections to unlock
-        warnings: list[str]      — surfaced from agent + persistence
-        result: dict             — raw backend state (for debug)
-        persisted: bool          — True iff session was written to DB
-        backend: str             — which backend produced the result
-        update_card: bool        — caller should replace the protein card
-                                   when True (False on follow-up turns to
-                                   keep the existing selection stable).
+        reply: str                  — assistant text to stream
+        candidates: list[Candidate] — UI-shaped cards (empty for follow-ups)
+        candidates_raw: list[dict]  — full backend candidate dicts (for DB)
+        reveals: set[str]           — protein-card sections to unlock
+        warnings: list[str]         — surfaced from agent + persistence
+        result: dict                — raw backend state (for debug)
+        persisted: bool             — True iff session was written to DB
+        backend: str                — backend tag (mode or runtime name)
+        update_card: bool           — caller should replace the protein card
+                                      when True (False on follow-up turns
+                                      so the existing selection stays put).
     """
-    if not _is_first_turn_in_session():
-        # Follow-up turn → chat-LLM module. Lazy import keeps stub-only path
-        # decoupled from retriever code.
-        import chat_llm_pipeline  # noqa: WPS433
-
-        return chat_llm_pipeline.run_turn_chat_llm(prompt)
-
     outcome = _run_turn_backend(prompt)
-    outcome["backend"] = backend_choice.BACKEND_RUNTIME
+    outcome.setdefault("backend", backend_choice.BACKEND_RUNTIME)
     outcome.setdefault("update_card", True)
     return outcome
 
@@ -80,6 +77,8 @@ def _run_turn_backend(prompt: str) -> dict[str, Any]:
     )
     warnings: list[str] = list(session_db_adapter.get_warnings())
 
+    ui_context = _build_ui_context(session_id)
+
     try:
         response = _chat_service().submit_turn(
             ChatTurnRequest(
@@ -89,6 +88,7 @@ def _run_turn_backend(prompt: str) -> dict[str, Any]:
                 workspace_id=st.session_state.get("workspace_id"),
                 user_role=st.session_state.get("user_role"),
                 search_algorithm=st.session_state.get("search_algorithm"),
+                ui_context=ui_context,
             )
         )
     except Exception as exc:
@@ -103,19 +103,53 @@ def _run_turn_backend(prompt: str) -> dict[str, Any]:
             "warnings": warnings,
             "result": {"error": str(exc)},
             "persisted": session_db_adapter.is_persistent(),
+            "update_card": True,
+            "backend": backend_choice.BACKEND_RUNTIME,
         }
 
     warnings.extend(response.warnings)
-    raw_candidates = [candidate.model_dump() for candidate in response.candidates]
-    ui_candidates = [_candidate_from_backend(candidate) for candidate in raw_candidates]
-    query_protein_sequence = response.pipeline.protein_sequence if response.pipeline else None
-    raw_candidates, ui_candidates = _sort_by_alignment(
-        query_protein_sequence, raw_candidates, ui_candidates
-    )
-    reveals = _revealed_sections(ui_candidates, query_protein_sequence)
+    update_card = response.update_card
     reply = response.assistant_message
 
-    _safe_save_turn(context, prompt, reply, raw_candidates, reveals, warnings, query_protein_sequence)
+    if update_card:
+        raw_candidates = [candidate.model_dump() for candidate in response.candidates]
+        ui_candidates = [_candidate_from_backend(candidate) for candidate in raw_candidates]
+        query_protein_sequence = response.pipeline.protein_sequence if response.pipeline else None
+        raw_candidates, ui_candidates = _sort_by_alignment(
+            query_protein_sequence, raw_candidates, ui_candidates
+        )
+        reveals = _revealed_sections(ui_candidates, query_protein_sequence)
+        _safe_save_turn(
+            context,
+            prompt,
+            reply,
+            raw_candidates,
+            reveals,
+            warnings,
+            query_protein_sequence,
+            current_mode=response.current_mode or "bioseq_runtime_retriever",
+            update_candidates=True,
+        )
+    else:
+        # Follow-up turn: keep the existing card untouched. We still surface
+        # what the UI is rendering so callers that consume the dict (app.py
+        # guards on update_card and skips overwriting state, but legacy
+        # callers may expect candidates/reveals to be populated).
+        raw_candidates = []
+        ui_candidates = list(st.session_state.get("candidates") or [])
+        reveals = set(st.session_state.get("card_sections_revealed") or set())
+        query_protein_sequence = st.session_state.get("query_protein_sequence")
+        _safe_save_turn(
+            context,
+            prompt,
+            reply,
+            [],
+            None,
+            warnings,
+            None,
+            current_mode=response.current_mode or "chat_llm",
+            update_candidates=False,
+        )
 
     return {
         "reply": reply,
@@ -126,6 +160,8 @@ def _run_turn_backend(prompt: str) -> dict[str, Any]:
         "result": response.model_dump(),
         "persisted": session_db_adapter.is_persistent(),
         "query_protein_sequence": query_protein_sequence,
+        "update_card": update_card,
+        "backend": response.current_mode or backend_choice.BACKEND_RUNTIME,
     }
 
 
@@ -232,9 +268,12 @@ def _safe_save_turn(
     prompt: str,
     reply: str,
     raw_candidates: list[dict[str, Any]],
-    reveals: set[str],
+    reveals: set[str] | None,
     warnings: list[str],
     query_protein_sequence: str | None = None,
+    *,
+    current_mode: str = "bioseq_runtime_retriever",
+    update_candidates: bool = True,
 ) -> None:
     try:
         session_db_adapter.save_turn(
@@ -243,11 +282,69 @@ def _safe_save_turn(
             assistant_message=reply,
             candidates=raw_candidates,
             revealed_sections=reveals,
-            current_mode="bioseq_runtime_retriever",
+            current_mode=current_mode,
+            update_candidates=update_candidates,
             query_protein_sequence=query_protein_sequence,
         )
     except Exception as exc:
         warnings.append(f"Could not save session turn: {exc}")
+
+
+def _build_ui_context(session_id: str) -> dict[str, Any]:
+    """Assemble the ui_context payload the backend needs for routing.
+
+    Carries:
+        turn_count            — int from working_memory; 0 routes to retriever
+        messages              — recent chat transcript for Chat-LLM context
+        selected_candidate    — dict shape of the currently focused card
+        selected_candidate_index
+    """
+    ctx: dict[str, Any] = {}
+    ctx["turn_count"] = _read_turn_count(session_id)
+    ctx["messages"] = [
+        {"role": m.get("role"), "content": m.get("content")}
+        for m in (st.session_state.get("messages") or [])
+        if isinstance(m, dict)
+    ]
+    selected_idx = st.session_state.get("selected_candidate_idx", 0)
+    try:
+        selected_idx_int = int(selected_idx)
+    except (TypeError, ValueError):
+        selected_idx_int = 0
+    ctx["selected_candidate_index"] = selected_idx_int
+
+    candidates = st.session_state.get("candidates") or []
+    if candidates and 0 <= selected_idx_int < len(candidates):
+        candidate = candidates[selected_idx_int]
+        if isinstance(candidate, dict):
+            ctx["selected_candidate"] = candidate
+        elif hasattr(candidate, "model_dump"):
+            try:
+                ctx["selected_candidate"] = candidate.model_dump()
+            except Exception:
+                pass
+    return ctx
+
+
+def _read_turn_count(session_id: str) -> int:
+    if not session_id or not session_db_adapter.is_persistent():
+        return 0
+    row = session_db_adapter.load_session(session_id)
+    if not row:
+        return 0
+    working_memory = row.get("working_memory") or {}
+    if isinstance(working_memory, str):
+        try:
+            import json
+            working_memory = json.loads(working_memory)
+        except Exception:
+            working_memory = {}
+    if not isinstance(working_memory, dict):
+        return 0
+    try:
+        return int(working_memory.get("turn_count") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 # ---------------------------------------------------------------------------

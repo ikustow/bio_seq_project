@@ -142,7 +142,14 @@ def load_or_create_index(h5_path: str, index_path: str, cache_path: str, name: s
 
 print("Initializing FAISS indices...")
 protein_index, protein_accessions = load_or_create_index(DEFAULT_H5_PATH, DEFAULT_INDEX_PATH, DEFAULT_CACHE_PATH, "Protein")
-dna_index, dna_accessions = load_or_create_index(DNA_H5_PATH, DNA_INDEX_PATH, DNA_CACHE_PATH, "DNA")
+# DNA index is optional: many deployments only ship the protein corpus.
+# We log a warning and disable the /search/dna endpoint instead of crashing
+# the whole service when the .h5 isn't present.
+if os.path.exists(DNA_H5_PATH) or (os.path.exists(DNA_INDEX_PATH) and os.path.exists(DNA_CACHE_PATH)):
+    dna_index, dna_accessions = load_or_create_index(DNA_H5_PATH, DNA_INDEX_PATH, DNA_CACHE_PATH, "DNA")
+else:
+    print(f"DNA index disabled: {DNA_H5_PATH} not found. /search/dna will return 503.")
+    dna_index, dna_accessions = None, []
 print("Indices ready.")
 
 # =============================================================================
@@ -242,6 +249,11 @@ async def search_protein(request: SearchRequest):
 
 @app.post("/search/dna")
 async def search_dna(request: SearchRequest):
+    if dna_index is None:
+        raise HTTPException(
+            status_code=503,
+            detail=f"DNA index not loaded ({DNA_H5_PATH} missing). Provide BIOSEQ_DNA_H5_PATH to enable.",
+        )
     try:
         loop = asyncio.get_event_loop()
         emb = await loop.run_in_executor(executor, _embed_dna, request.sequence)

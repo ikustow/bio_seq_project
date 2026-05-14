@@ -1,6 +1,9 @@
 __all__ = [
     "BioSeqChatService",
     "BioSeqRetrieverPipeline",
+    "ChatLLMRequest",
+    "ChatLLMResponse",
+    "ChatLLMService",
     "MockBioSeqChatService",
     "create_bioseq_chat_service",
 ]
@@ -19,4 +22,12 @@ def __getattr__(name: str):
         from .retriever_pipeline import BioSeqRetrieverPipeline
 
         return BioSeqRetrieverPipeline
+    if name in {"ChatLLMRequest", "ChatLLMResponse", "ChatLLMService"}:
+        from .chat_llm import ChatLLMRequest, ChatLLMResponse, ChatLLMService
+
+        return {
+            "ChatLLMRequest": ChatLLMRequest,
+            "ChatLLMResponse": ChatLLMResponse,
+            "ChatLLMService": ChatLLMService,
+        }[name]
     raise AttributeError(name)

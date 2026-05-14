@@ -98,6 +98,11 @@ def render(on_first_search, on_submit: SubmitHandler | None = None) -> None:
                 _reset_conversation()
                 st.rerun()
 
+    # We always render the message history into a keyed container; CSS
+    # then flexes it to fill all remaining vertical space in the left
+    # column so the chat input docks at the bottom (ChatGPT-style).
+    # The height value below is a sensible fallback for environments
+    # where the calc-based CSS rule doesn't apply.
     # While the chat is fresh (only the welcome message), let the container
     # size to its content so the suggestion chip and input field stay visible
     # without scrolling. Once the user has sent something, switch to a fixed

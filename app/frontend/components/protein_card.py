@@ -460,73 +460,12 @@ def _render_switcher(candidates: list[Candidate], query_sequence: str | None) ->
             "Ranked & re-ranked by the retrieval pipeline. "
             "Pick a candidate to view its full record."
         )
+        # Only the tile background colours live inline — all layout
+        # rules (sizes, grid structure, font sizing) live in style.css
+        # so there's a single source of truth.
         st.markdown(
             """
             <style>
-              .candidate-scores {
-                display: grid;
-                gap: 0;
-                grid-template-columns: 1fr 1fr;
-              }
-              div[data-testid="stHorizontalBlock"] div[data-testid="column"] {
-                min-width: 0;
-                gap: 0;
-              }
-              div[data-testid="stButton"] > button {
-                min-height: 46px;
-                width: 100%;
-                border-bottom-left-radius: 0;
-                border-bottom-right-radius: 0;
-                border-radius: 8px 8px 0 0;
-                font-weight: 800;
-              }
-              button[data-testid="stBaseButton-primary"] {
-                background: #eef2ff !important;
-                border-color: #4f46e5 !important;
-                box-shadow: inset 0 0 0 1px #4f46e5 !important;
-                color: #1e293b !important;
-              }
-              .candidate-metrics {
-                border: 1px solid #d1d5db;
-                border-radius: 0 0 8px 8px;
-                border-top: 0;
-                margin-top: -14px;
-                margin-bottom: 14px;
-                overflow: hidden;
-              }
-              .candidate-metrics-active {
-                border-color: #4f46e5;
-                box-shadow: inset 0 0 0 1px #4f46e5;
-              }
-              .candidate-score {
-                align-items: center;
-                border-radius: 0;
-                color: #111827;
-                display: flex;
-                flex-direction: column;
-                gap: 3px;
-                font-weight: 700;
-                justify-content: center;
-                min-height: 48px;
-                overflow: hidden;
-                padding: 7px 4px;
-                text-align: center;
-                flex: 1;
-              }
-              .candidate-score + .candidate-score {
-                border-left: 1px solid rgba(17, 24, 39, 0.1);
-              }
-              .candidate-score-label {
-                font-size: 0.8rem;
-                font-weight: 800;
-                letter-spacing: 0;
-                line-height: 1;
-              }
-              .candidate-score-value {
-                font-size: 0.86rem;
-                font-weight: 800;
-                line-height: 1.05;
-              }
               .candidate-score-green { background: #bbf7d0; }
               .candidate-score-yellow { background: #fef08a; }
               .candidate-score-orange { background: #fed7aa; }

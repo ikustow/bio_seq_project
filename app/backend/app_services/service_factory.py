@@ -6,6 +6,7 @@ from contextlib import ExitStack
 from backend.agents_core.shared.config import DEFAULT_ENV_PATH, load_env_file
 
 from .bioseq_chat import BioSeqChatService, MockBioSeqChatService
+from .chat_llm import ChatLLMService
 from .retriever_pipeline import BioSeqRetrieverPipeline
 
 
@@ -26,6 +27,11 @@ def create_bioseq_chat_service() -> BioSeqChatService | MockBioSeqChatService:
 
     agent = BioSeqRuntimeSessionAgent(persistence=persistence)
     retriever_pipeline = BioSeqRetrieverPipeline(enable_runtime_retriever=True)
-    service = BioSeqChatService(agent=agent, retriever_pipeline=retriever_pipeline)
+    chat_llm_service = ChatLLMService()
+    service = BioSeqChatService(
+        agent=agent,
+        retriever_pipeline=retriever_pipeline,
+        chat_llm_service=chat_llm_service,
+    )
     service._exit_stack = exit_stack  # Keep persistence contexts alive while Streamlit caches the service.
     return service

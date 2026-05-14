@@ -165,10 +165,19 @@ def main() -> int:
     #    verifies routing/persistence without depending on external network.
     _session_state["candidates"] = fake_candidates  # what UI is rendering
     _session_state["card_sections_revealed"] = {"header", "keyfacts", "function"}
-    chat_llm_pipeline._call_gemini_proxy = lambda prompt: (
-        "Gemini proxy test response.",
-        {"mode": "chat_llm", "test_prompt": prompt},
-    )
+    # Provider lives in backend now; patch the singleton service the adapter uses.
+    from backend.app_services.chat_llm import ChatLLMResponse
+
+    class _StubService:
+        def generate(self, request):
+            return ChatLLMResponse(
+                reply="Gemini proxy test response.",
+                provider="gemini_proxy",
+                model=None,
+                raw={"mode": "chat_llm", "test_prompt": request.prompt},
+            )
+
+    chat_llm_pipeline._CHAT_LLM_SERVICE = _StubService()
 
     outcome = chat_llm_pipeline.run_turn_chat_llm("Tell me more about diseases?")
     print(f"[3] chat outcome.update_card: {outcome.get('update_card')}")
