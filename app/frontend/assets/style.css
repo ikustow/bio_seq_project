@@ -5,7 +5,7 @@
     --right-panel-width: 440px;
     --right-panel-min-width: 320px;
     --right-panel-max-width: 1400px;
-    --right-panel-bg: #eef2f7;
+    --right-panel-bg: #e4eaf2;
     --right-panel-border: #cbd5e1;
 }
 
@@ -23,7 +23,7 @@
 [data-testid="stMainBlockContainer"],
 [data-testid="block-container"],
 .main .block-container {
-    padding-top: 3rem !important;
+    padding-top: 1.5rem !important;
     padding-bottom: 1.5rem !important;
     /* padding-left matches the column gap below so the visual gap to
        the sidebar equals the gap from chat to the right panel. */
@@ -32,12 +32,28 @@
     max-width: 100% !important;
 }
 
-/* Tighten the gap above the page title (st.title renders an h1 with a
-   large default margin). */
+/* Remove the gap above the caption+divider band (top of the stripe);
+   keep the original gap below it so the main content doesn't crash
+   into the divider line. */
 [data-testid="stMainBlockContainer"] h1:first-of-type,
 .main .block-container h1:first-of-type {
     margin-top: 0 !important;
     padding-top: 0 !important;
+    margin-bottom: 0 !important;
+}
+[data-testid="stMainBlockContainer"] [data-testid="stCaptionContainer"],
+[data-testid="stMainBlockContainer"] [data-testid="stCaption"] {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+}
+[data-testid="stMainBlockContainer"] hr,
+[data-testid="stMainBlockContainer"] [data-testid="stHeadingDivider"],
+[data-testid="stMainBlockContainer"] [data-testid="stHorizontalDivider"],
+[data-testid="stMainBlockContainer"] [data-testid="stDivider"] {
+    margin-top: 0 !important;
+    margin-bottom: 1rem !important;
 }
 
 /* ---------- Selectbox: force a pointer cursor ----------
@@ -85,6 +101,23 @@
     background: var(--right-panel-bg);
     border-radius: 12px;
     padding: 10px 12px 14px !important;
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* Section blocks (Identification, Alignment, Function, etc) inside
+   the right panel are `st.container(border=True)`. In current
+   Streamlit the border lives on the inner stVerticalBlock itself
+   (via a generated emotion class), not on a separate
+   stVerticalBlockBorderWrapper. Strip the border on every nested
+   block, then tint them with a slightly lighter background than the
+   panel so the sections read by contrast instead of by an outline.
+   Candidate cells are excluded — they have their own visual
+   treatment (white bg, border, active ring). */
+.st-key-main_right [data-testid="stVerticalBlock"]:not(.st-key-main_right):not([class*="st-key-candidate_cell_"]) {
+    border: 0 !important;
+    border-color: transparent !important;
+    background: #fbfdff !important;
+    border-radius: 10px !important;
 }
 
 /* Only the outer horizontal block (the one whose direct child columns
@@ -155,6 +188,7 @@ html.is-resizing-right * {
     font-size: 0.80rem;
     line-height: 1.35;
     word-break: break-all;
+    overflow-wrap: anywhere;
     white-space: pre-wrap;
     background: #f8fafc;
     border: 1px solid #e2e8f0;
@@ -163,6 +197,35 @@ html.is-resizing-right * {
     margin-top: 6px;
     max-height: 200px;
     overflow-y: auto;
+    /* Stop the FASTA preview from widening its parent past the chat
+       bubble — flex children default to min-width: auto, so the block's
+       min-content size pushes the parent open. Capping width and
+       resetting min-width keeps it inside. */
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+/* Allow every flex descendant of the chat message bubble to shrink
+   below its intrinsic content size, otherwise long FASTA lines push
+   the bubble wider than the chat column. */
+[data-testid="stChatMessage"],
+[data-testid="stChatMessage"] > div,
+[data-testid="stChatMessage"] [data-testid="stMarkdown"],
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {
+    min-width: 0 !important;
+    max-width: 100% !important;
+}
+
+/* Streamlit's stMarkdownContainer defaults to `margin-bottom: -1rem` —
+   a hack that compensates for the trailing margin of <p> in plain
+   markdown flows. Inside a chat bubble there's no next sibling to
+   compensate for, so that negative margin makes the bubble's bottom
+   edge sit ~16px *above* the actual end of the last block — and the
+   FASTA `.seq-block` appears to spill below the bubble. Zero it out. */
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {
+    margin-bottom: 0 !important;
 }
 
 /* ---------- Locked card sections ---------- */
@@ -342,6 +405,7 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     overflow: hidden;
     cursor: pointer;
     background: #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
     transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
 }
 [class*="st-key-candidate_cell_"]:hover {
@@ -438,6 +502,16 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
    ~64px just on whitespace between the buttons. */
 .st-key-candidate_switcher [data-testid="stHorizontalBlock"] {
     gap: 0.25rem !important;
+}
+
+/* Tighten the bordered "Top 5 matches" container: Streamlit's
+   border=True adds ~15px of padding all around, plus 1rem of vertical
+   gap between the title, caption and the button row. The user wants
+   the visible padding around the candidate buttons collapsed. */
+.st-key-candidate_switcher {
+    padding-top: 0.5rem !important;
+    padding-bottom: 0.5rem !important;
+    gap: 0.4rem !important;
 }
 
 /* ---------- EMB / SEQ score tiles ----------
@@ -590,10 +664,47 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    resize: both;
+    /* Native resize is disabled because its handle sits on top of the
+       body's scrollbar — grabbing the corner was hijacking scrolls. We
+       paint our own grip in the bottom-right corner instead. */
+    resize: none;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 12px;
     line-height: 1.45;
+}
+
+.lldp-resize {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 18px;
+    height: 18px;
+    cursor: nwse-resize;
+    /* Sit above the body's scrollbar so we win pointer events even when
+       the scrollbar thumb is parked in the same corner. */
+    z-index: 5;
+    background:
+        linear-gradient(135deg,
+            transparent 0,
+            transparent 55%,
+            #64748b 55%, #64748b 65%,
+            transparent 65%, transparent 75%,
+            #64748b 75%, #64748b 85%,
+            transparent 85%);
+    border-bottom-right-radius: 10px;
+}
+.lldp-resize:hover {
+    background:
+        linear-gradient(135deg,
+            transparent 0,
+            transparent 55%,
+            #cbd5e1 55%, #cbd5e1 65%,
+            transparent 65%, transparent 75%,
+            #cbd5e1 75%, #cbd5e1 85%,
+            transparent 85%);
+}
+.bioseq-llm-debug-panel.is-resizing {
+    user-select: none;
 }
 
 .bioseq-llm-debug-panel.is-dragging {
@@ -643,7 +754,8 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     max-width: 180px;
 }
 
-.lldp-copy {
+.lldp-copy,
+.lldp-reset {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -657,7 +769,8 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     cursor: pointer;
     user-select: none;
 }
-.lldp-copy:hover {
+.lldp-copy:hover,
+.lldp-reset:hover {
     background: #334155;
 }
 
@@ -668,7 +781,9 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     flex: 1 1 0;
     min-height: 0;
     margin: 0;
-    padding: 10px 12px;
+    /* Extra right/bottom padding leaves a visual gutter so the resize
+       grip in the corner doesn't sit on top of the text. */
+    padding: 10px 18px 18px 12px;
     overflow: auto;
     background: #0f172a;
     color: #e2e8f0;
@@ -678,6 +793,30 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     font-size: 12px;
     line-height: 1.5;
     tab-size: 2;
+    /* Firefox scrollbar styling. */
+    scrollbar-color: #64748b #1e293b;
+    scrollbar-width: thin;
+}
+/* WebKit / Blink scrollbar styling — lighter thumb on a slightly raised
+   track so it pops out of the dark panel without being garish. */
+.lldp-body::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+.lldp-body::-webkit-scrollbar-track {
+    background: #1e293b;
+    border-radius: 0;
+}
+.lldp-body::-webkit-scrollbar-thumb {
+    background: #64748b;
+    border-radius: 6px;
+    border: 2px solid #1e293b;
+}
+.lldp-body::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+.lldp-body::-webkit-scrollbar-corner {
+    background: #1e293b;
 }
 
 /* Streamlit's markdown renderer sometimes wraps emitted HTML in its own

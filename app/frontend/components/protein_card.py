@@ -501,7 +501,6 @@ def _render_switcher(candidates: list[Candidate], query_sequence: str | None) ->
                         "</div>",
                         unsafe_allow_html=True,
                     )
-        st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
     return chosen
 
 
