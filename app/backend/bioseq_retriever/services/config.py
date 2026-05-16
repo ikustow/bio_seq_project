@@ -37,3 +37,7 @@ DNA_MAX_LENGTH = 160_000
 
 # --- Default FAISS Threads ---
 DEFAULT_FAISS_THREADS = int(os.getenv("FAISS_DEFAULT_THREADS", max(1, os.cpu_count())))
+
+# --- HDF5 Loading Settings ---
+# Batch size for reading embeddings from H5 files during index construction
+H5_BATCH_SIZE = int(os.getenv("BIOSEQ_H5_BATCH_SIZE", "1000"))
