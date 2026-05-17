@@ -198,7 +198,7 @@ def _format_record_for_embedding(record: Dict[str, Any]) -> str:
     functions = []
     for comment in record.get('comments', []):
         if comment.get('commentType') == 'FUNCTION':
-            functions.extend([t.get('value', '') for t in comment.get('note', {}).get('texts', [])])
+            functions.extend([t.get('value', '') for t in comment.get('texts', [])])
     func_text = " ".join(functions)
     
     # Extract keywords
