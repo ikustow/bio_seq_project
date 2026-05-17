@@ -22,7 +22,8 @@ from services.config import (
     HNSW_M, HNSW_EF_CONSTRUCTION, HNSW_EF_SEARCH, RANDOM_SEED,
     SEARCH_SERVICE_HOST, SEARCH_SERVICE_PORT,
     PROTEIN_MODEL_NAME, DNA_MODEL_NAME, RERANK_MODEL_NAME,
-    DNA_MAX_LENGTH, DEFAULT_FAISS_THREADS, H5_BATCH_SIZE
+    DNA_MAX_LENGTH, DEFAULT_FAISS_THREADS, H5_BATCH_SIZE,
+    RERANK_LAMBDA
 )
 
 app = FastAPI(title="Unified BioSeq Gateway Service")
@@ -278,7 +279,7 @@ async def rerank(request: RerankRequest):
         adaptive_weights = np.clip(adaptive_weights, 0, 1)
 
         # Internal sensitivity constant for the rerank signal
-        LAMBDA = 0.15
+        LAMBDA = RERANK_LAMBDA
 
         reranked_list = []
         for i, record in enumerate(request.records):
