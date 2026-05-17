@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Optional, TypedDict, Literal
+from typing import List, Dict, Any, Optional, TypedDict, Literal, Union
 from pydantic import BaseModel, Field
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -25,15 +25,51 @@ def _rerank_service_alive(url: str = SEARCH_SERVICE_URL, timeout: float = 0.5) -
     except OSError:
         return False
 
-# --- State Definitions ---
+# --- Schema-Guided Reasoning Router Definition ---
 
-class InputExtraction(BaseModel):
-    sequence_or_path: str = Field(description="The extracted raw biological sequence or the file path.")
-    input_type: Literal["SEQUENCE", "FILEPATH"] = Field(description="Whether the input is a raw sequence or a file path.")
-    context: str = Field(description="Any contextual information, questions, or hints provided by the user.")
-    sequence_type: Literal["DNA", "PROTEIN"] = Field(description="The classified type of the biological sequence.")
-    is_confident: bool = Field(description="True if the LLM is highly confident in the sequence type classification.")
-    reasoning: str = Field(description="Brief chain-of-thought reasoning for the extraction and classification.")
+class SequenceAnalysis(BaseModel):
+    """Guided reasoning for raw biological sequences."""
+    kind: Literal["sequence"] = Field(description="Discriminator for sequence-based routing.")
+    
+    step_1_alphabet_and_molecular_signature: str = Field(description="Examine the unique characters. Search for 'M', 'W', 'Y', 'K' which strongly indicate Protein, vs high 'A,T,G,C' density which suggests DNA.")
+    step_2_functional_clues_from_context: str = Field(description="Analyze the prompt for mentions of genes, enzymes, translation, or specific biological processes that clarify the sequence's nature.")
+    step_3_certainty_validation: str = Field(description="Synthesize steps 1 & 2. Are you 100% certain? If any ambiguity exists (e.g. short AAAAAA without context), this classification must be considered failed.")
+    
+    sequence_type: Literal["DNA", "PROTEIN"] = Field(description="The finalized molecular classification based on the preceding reasoning.")
+    
+    step_4_query_expansion_and_enrichment: str = Field(description="Expand the user's biological intent into rich metadata (synonyms, GO terms, metabolic pathways) to improve search precision.")
+    
+    raw_sequence: str = Field(description="The extracted raw sequence string.")
+    extracted_context: str = Field(description="The original user constraints and questions.")
+
+class FilePathAnalysis(BaseModel):
+    """Guided reasoning for filesystem paths."""
+    kind: Literal["filepath"] = Field(description="Discriminator for path-based routing.")
+    
+    step_1_extension_integrity_check: str = Field(description="Evaluate the file extension. .faa/.pep implies Protein; .fna/.nuc implies DNA; .fasta/.fa is ambiguous.")
+    step_2_contextual_verification: str = Field(description="Does the user refer to this path as a 'protein file', 'gene sequence', or 'FASTA'? Match extension to context.")
+    step_3_certainty_validation: str = Field(description="Are the extension and context consistent and sufficient for a 100% certain classification? If extension is missing or ambiguous and context is thin, this is a failure.")
+    
+    sequence_type: Literal["DNA", "PROTEIN"] = Field(description="The finalized molecular classification based on the preceding reasoning.")
+    
+    step_4_query_expansion_and_enrichment: str = Field(description="Expand the user's biological intent into rich metadata (synonyms, GO terms, metabolic pathways) to improve search precision.")
+    
+    path: str = Field(description="The extracted filesystem path.")
+    extracted_context: str = Field(description="The original user constraints and questions.")
+
+class ExtractionError(BaseModel):
+    """Guided reasoning for invalid or ambiguous inputs."""
+    kind: Literal["error"] = Field(description="Discriminator for error routing.")
+    
+    step_1_failure_analysis: str = Field(description="Provide a detailed technical breakdown of why the input is invalid. Is data missing? Is the classification ambiguous? Is the file type unsupported?")
+    error_message: str = Field(description="A clear, professional error message to be returned to the user.")
+
+class PipelineRouter(BaseModel):
+    """Main Schema-Guided Reasoning entry point."""
+    step_1_data_extraction_and_intent_mapping: str = Field(description="First, identify any strings resembling sequences or paths and isolate the user's natural language instructions.")
+    step_2_routing_logic: str = Field(description="Based on Step 1, decide which specialized analysis branch to follow (sequence, filepath, or error).")
+    
+    analysis: Union[SequenceAnalysis, FilePathAnalysis, ExtractionError] = Field(description="The detailed, branch-specific reasoning and final data extraction.")
 
 class GraphState(TypedDict):
     prompt: str
@@ -42,7 +78,6 @@ class GraphState(TypedDict):
     context: Optional[str]
     sequence: Optional[str]
     sequence_type: Optional[str]
-    is_confident: Optional[bool]
     ranked_results: Optional[List[Dict[str, Any]]]
     final_results: Optional[List[Dict[str, Any]]]
     error: Optional[str]
@@ -53,26 +88,33 @@ class GraphState(TypedDict):
 
 def extract_and_classify_node(state: GraphState) -> Dict[str, Any]:
     """
-    Uses LLM with structured output to extract data and classify sequence type.
+    Uses an advanced Schema-Guided Router Pattern to analyze user input. 
+    The schema forces the LLM to reason through extraction, character analysis, 
+    and extension checking before committing to a routing decision.
     """
     if state.get("error"): return {}
     llm = get_llm(temperature=0)
-    structured_llm = llm.with_structured_output(InputExtraction)
+    structured_llm = llm.with_structured_output(PipelineRouter)
     
     system_message = (
-        "You are an expert bioinformatics analyst specializing in sequence identification and data extraction. "
-        "Your mission is to parse user input to extract biological data and determine its molecular nature with high precision. "
-        "You must follow this multi-step Chain-of-Thought process:\n\n"
-        "### 1. EXTRACTION STRATEGY\n"
-        "Your first priority is to separate the core data from the surrounding metadata.\n"
-        "- Biological Sequence: Look for strings composed of single-letter codes. They may appear as raw text or within a FASTA format (starting with a '>' header line).\n"
-        "- File Path: Identify strings that resemble filesystem paths (e.g., 'data/sample.fasta').\n"
-        "- Contextual Information: Everything else is context.\n"
-        "*Rule*: If both a sequence and a path are present, prioritize the sequence.\n\n"
-        "### 2. CLASSIFICATION REASONING\n"
-        "Classify as DNA or PROTEIN based on character set and metadata.\n"
-        "### 3. CONFIDENCE ASSESSMENT\n"
-        "Deliver findings in structured format."
+        "You are an elite bioinformatics data architect and routing engine. Your mission is to process raw user prompts "
+        "and route them into a high-precision biological analysis pipeline. You must operate with absolute "
+        "biological accuracy and strictly follow the schema-guided reasoning process. Each field in your response "
+        "represents a mandatory step in your analytical chain of thought.\n\n"
+        
+        "### ANALYSIS PROTOCOL:\n"
+        "1. **EXTRACT**: Isolate biological sequences (IUPAC codes) or filesystem paths (e.g. data/seq.fasta).\n"
+        "2. **ROUTE**: Select the branch based on the strongest evidence. \n"
+        "   - Use `SequenceAnalysis` if a raw string is found.\n"
+        "   - Use `FilePathAnalysis` if a valid path is found.\n"
+        "   - Use `ExtractionError` if data is missing or classification is uncertain.\n"
+        "3. **REASON**: Within your chosen branch, perform the specific checks (character set for sequences, extensions for paths) "
+        "to determine the molecular nature (DNA or PROTEIN).\n"
+        "4. **VALIDATE**: If you are not 100% certain of the sequence type or if the input is contradictory, you MUST route to ERROR.\n"
+        "5. **EXPAND**: For successful routes, enrich the user's intent by expanding natural language terms into "
+        "precise biological processes, synonyms, and GO categories to aid downstream reranking.\n\n"
+        
+        "Your responses must be elaborate, generous in detail, and demonstrate a profound understanding of molecular biology."
     )
     
     try:
@@ -81,15 +123,24 @@ def extract_and_classify_node(state: GraphState) -> Dict[str, Any]:
             HumanMessage(content=state['prompt'])
         ])
         
+        analysis = result.analysis
+        
+        # Branch Handling
+        if analysis.kind == "error":
+            return {"error": f"Router Error: {analysis.error_message} (Analysis: {analysis.step_1_failure_analysis})"}
+        
+        # Success Handling (Sequence or Path)
+        is_path = analysis.kind == "filepath"
         return {
-            "sequence_or_path": result.sequence_or_path,
-            "input_type": result.input_type,
-            "context": result.context,
-            "sequence_type": result.sequence_type,
-            "is_confident": result.is_confident
+            "sequence_or_path": analysis.path if is_path else analysis.raw_sequence,
+            "input_type": "FILEPATH" if is_path else "SEQUENCE",
+            "context": f"{analysis.extracted_context}\nEnrichment: {analysis.step_4_query_expansion_and_enrichment}",
+            "sequence_type": analysis.sequence_type,
+            "error": None
         }
+        
     except Exception as e:
-        return {"error": f"Extraction failed: {str(e)}"}
+        return {"error": f"Extraction/Routing Pipeline Failure: {str(e)}"}
 
 def resolve_filepath_node(state: GraphState) -> Dict[str, Any]:
     """Node to resolve sequence from a file path with security check."""
@@ -145,14 +196,7 @@ def rank_node(state: GraphState) -> Dict[str, Any]:
         return {"error": f"Ranking failed: {str(e)}"}
 
 def rerank_node(state: GraphState) -> Dict[str, Any]:
-    """Performs contextual reranking (Top 5).
-
-    Rerank service is best-effort: if the gateway is unreachable (or any other
-    error happens), fall back to the first 5 entries of ``ranked_results``
-    instead of failing the whole pipeline. The BLAST path already returns hits
-    ranked by percent identity, and the frontend re-sorts the top-N by local
-    alignment score anyway — so a missing rerank is degraded but not broken.
-    """
+    """Performs contextual reranking (Top 5)."""
     if state.get('error'): return {}
     ranked = state.get('ranked_results') or []
     if not _rerank_service_alive():
@@ -217,7 +261,6 @@ async def run_bioseq_pipeline(prompt: str, search_algorithm: str = "embeddings")
         "context": None,
         "sequence": None,
         "sequence_type": None,
-        "is_confident": None,
         "ranked_results": None,
         "final_results": None,
         "error": None,
