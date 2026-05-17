@@ -1,4 +1,10 @@
-from .chat import ChatTurnRequest, ChatTurnResult
+from .chat import (
+    ChatTurnRequest,
+    ChatTurnResult,
+    ObjectMention,
+    ObjectsPatch,
+    UploadedFile,
+)
 from .pipeline import BioSeqInputExtraction, BioSeqPipelineSnapshot
 from .protein_view import (
     CandidateView,
@@ -26,8 +32,11 @@ __all__ = [
     "FeatureInfo",
     "InteractionInfo",
     "IsoformInfo",
+    "ObjectMention",
+    "ObjectsPatch",
     "PathwayRef",
     "ProteinView",
     "SessionSnapshot",
+    "UploadedFile",
     "VariantInfo",
 ]

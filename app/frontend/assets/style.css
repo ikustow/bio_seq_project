@@ -7,6 +7,88 @@
     --right-panel-max-width: 1400px;
     --right-panel-bg: #e4eaf2;
     --right-panel-border: #cbd5e1;
+    --topbar-height: 90px;
+    /* Dynamic top gap on the (fixed) sidebar — JS in app.py keeps this in
+       sync with the topbar's translateY so the sidebar's content rides up
+       together with the bar. At scroll 0 it equals --topbar-height; once
+       the bar has fully scrolled out (scrollY >= --topbar-height) it
+       drops to 0, snapping the sidebar's top item to the viewport edge. */
+    --topbar-offset: 90px;
+}
+
+/* ---------- Fixed full-width topbar ----------
+   Pinned to the viewport top, spans the whole width. The sidebar and
+   main block-container both get a top offset equal to
+   var(--topbar-height) so their content starts *below* it. */
+.bioseq-topbar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--topbar-height);
+    display: flex;
+    align-items: center;
+    gap: 1.75rem;
+    padding: 0 1.5rem;
+    background: #ffffff;
+    border-bottom: 1px solid #e2e8f0;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+    /* Sit above Streamlit's sidebar (z-index 999991 on the inner
+       emotion-cache wrapper) so the sidebar's background, which paints
+       all the way to y=0, doesn't peek through. */
+    z-index: 1000000;
+    box-sizing: border-box;
+}
+.bioseq-topbar-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    flex-shrink: 0;
+}
+.bioseq-topbar-logo {
+    height: 62px;
+    width: auto;
+    display: block;
+}
+.bioseq-topbar-title {
+    font-size: 1.55rem;
+    font-weight: 700;
+    color: #0f172a;
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+    white-space: nowrap;
+}
+.bioseq-topbar-tagline {
+    font-size: 0.88rem;
+    color: #475569;
+    line-height: 1.45;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+/* Push the sidebar content down so the topbar sits cleanly above it.
+   Padding on the sidebar root (not the inner content wrapper) keeps the
+   sidebar's own background extending up to the topbar's bottom edge.
+   The offset uses --topbar-offset (not --topbar-height) so the JS
+   scroll handler can shrink it as the topbar slides away. */
+[data-testid="stSidebar"] {
+    padding-top: var(--topbar-offset) !important;
+}
+
+/* The native Streamlit header (deploy / menu) lives in the top-right.
+   Bump it one notch above our topbar so the deploy / kebab buttons
+   stay clickable on top of our painted strip. */
+[data-testid="stHeader"] {
+    z-index: 1000001 !important;
+}
+
+/* When the sidebar is collapsed, Streamlit shows the expand-arrow
+   button in the top-left (inside stHeader). Without this it would
+   land at y=0 and visually punch through the topbar. Push it down so
+   it lives in the sidebar's gutter just below the topbar. */
+[data-testid="stExpandSidebarButton"],
+button[data-testid="stExpandSidebarButton"] {
+    margin-top: var(--topbar-height) !important;
 }
 
 /* Make the Streamlit default header transparent so the title sits below
@@ -23,7 +105,9 @@
 [data-testid="stMainBlockContainer"],
 [data-testid="block-container"],
 .main .block-container {
-    padding-top: 1.5rem !important;
+    /* Leave room for the fixed topbar plus a small breathing gap so the
+       first row of content doesn't crash into the topbar's bottom edge. */
+    padding-top: calc(var(--topbar-height) + 0.75rem) !important;
     padding-bottom: 1.5rem !important;
     /* padding-left matches the column gap below so the visual gap to
        the sidebar equals the gap from chat to the right panel. */
@@ -77,6 +161,7 @@
     min-height: 0 !important;
     padding-top: 0.25rem !important;
     padding-bottom: 0.25rem !important;
+    margin: 0 !important;
 }
 
 /* ---------- Main two-column layout: resizable right panel ----------
@@ -137,12 +222,15 @@
    Matches Streamlit's native sidebar resizer: a thin vertical stripe
    that's invisible by default and lights up red/indigo on hover or
    drag. No background fill on the hit area itself — that produced an
-   unwanted semi-transparent block when dragging. */
+   unwanted semi-transparent block when dragging.
+
+   The handle lives at ``document.body`` level (outside React's tree)
+   and is positioned with ``position: fixed`` by JS using the right
+   column's bounding rect. Used to be ``position: absolute`` as a child
+   of the column itself, but that made React crash on session switch
+   with ``removeChild`` errors during reconciliation. */
 .right-resizer {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: -4px;
+    position: fixed;
     width: 8px;
     cursor: col-resize;
     z-index: 50;
@@ -836,4 +924,716 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     background: transparent !important;
     display: flex !important;
     flex-direction: column !important;
+}
+
+/* ---------- Session Objects bar + Inspector ---------- */
+
+/* ``.st-key-object_bar`` is itself the stVerticalBlock that wraps the
+   heading + caption + chip grid — collapse its default 1rem child gap
+   directly on the element (not via a descendant selector). */
+.st-key-object_bar {
+    margin-bottom: 0.5rem;
+    padding: 0.55rem 0.9rem 0.9rem !important;
+    gap: 0.2rem !important;
+}
+
+/* Kill the trailing ``margin-bottom: 1rem`` that Streamlit applies to
+   every <p> — this is the orange band shown in DevTools under the
+   "2 object(s)…" caption. */
+.st-key-object_bar [data-testid="stMarkdownContainer"] p,
+.st-key-object_bar [data-testid="stCaptionContainer"] p {
+    margin: 0 !important;
+}
+
+.st-key-object_bar [data-testid="stCaptionContainer"],
+.st-key-object_bar [data-testid="stMarkdownContainer"] {
+    margin: 0 !important;
+}
+
+.st-key-object_bar [data-testid="stHeading"],
+.st-key-object_bar h4 {
+    margin: 0 !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    line-height: 1.15 !important;
+}
+/* Zero the trailing margin Streamlit puts on the element wrapper that
+   holds the "Session objects" heading — that was the source of the
+   visible gap between the heading and the caption underneath. */
+.st-key-object_bar [data-testid="stElementContainer"]:has(h4),
+.st-key-object_bar [data-testid="stElementContainer"]:has([data-testid="stHeading"]) {
+    margin-bottom: 0 !important;
+    padding-bottom: 0 !important;
+}
+
+/* Chip grid: fixed-width cards (160–180px). Window-narrowing shrinks
+   the cards down to 160 minimum; beyond that, fewer columns are shown
+   (cards never grow past 180 even if there's room). */
+.bioseq-chip-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 180px));
+    gap: 0.5rem;
+    margin: 0.15rem 0 0 0;
+    justify-content: start;
+}
+
+.bioseq-chip {
+    display: flex !important;
+    flex-direction: column;
+    gap: 0.22rem;
+    padding: 0.5rem 0.7rem 0.55rem;
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 10px;
+    text-decoration: none !important;
+    color: #1f2937 !important;
+    transition: border-color 0.12s ease, background-color 0.12s ease,
+                box-shadow 0.12s ease, transform 0.05s ease;
+    cursor: pointer;
+    min-height: 78px;
+}
+
+.bioseq-chip:hover {
+    border-color: #6366f1;
+    background: #f8faff;
+    box-shadow: 0 2px 6px rgba(79, 70, 229, 0.12);
+    text-decoration: none !important;
+}
+
+.bioseq-chip:active {
+    transform: translateY(1px);
+}
+
+.bioseq-chip.is-selected {
+    border-color: #4338ca;
+    background: #eef2ff;
+    box-shadow: inset 0 0 0 1px #4338ca;
+}
+
+.bioseq-chip-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.35rem;
+}
+
+.bioseq-chip-label {
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: #1e293b;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
+    flex: 1 1 auto;
+}
+
+/* Round "+" button on each chip: inserts ``@<label>`` into the chat
+   input. Sits in the chip header row, opposite the label. */
+.bioseq-chip-insert {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    margin: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: #4338ca;
+    border: 1px solid #c7d2fe;
+    font-size: 0.95rem;
+    font-weight: 600;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background-color 0.12s ease, color 0.12s ease,
+                border-color 0.12s ease;
+}
+
+.bioseq-chip-insert:hover {
+    background: #c7d2fe;
+    color: #1e1b4b;
+}
+
+.bioseq-chip-insert:active {
+    background: #a5b4fc;
+}
+
+/* Drag preview: dim the chip while it's being dragged. */
+.bioseq-chip.is-dragging {
+    opacity: 0.55;
+    cursor: grabbing;
+}
+
+/* Drop highlight on the chat input. */
+.bioseq-drop-target,
+[data-testid="stChatInput"]:has(textarea.bioseq-drop-target),
+[data-testid="stChatInput"]:has([contenteditable].bioseq-drop-target) {
+    outline: 2px dashed #6366f1 !important;
+    outline-offset: 2px;
+    border-radius: 14px;
+}
+
+.bioseq-chip.is-selected .bioseq-chip-label {
+    color: #312e81;
+}
+
+/* Status pill sits on its own row beneath the caption — keeps the chip
+   narrow even when the best-match line is long. */
+.bioseq-chip-status-row {
+    display: inline-flex;
+    margin-top: 0.1rem;
+}
+
+.bioseq-chip-status {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.7rem;
+    font-weight: 500;
+    padding: 0.08rem 0.5rem;
+    border-radius: 999px;
+    line-height: 1.4;
+}
+
+.bioseq-chip-status-draft,
+.bioseq-chip-status-queued,
+.bioseq-chip-status-not_searched {
+    background: #e5e7eb;
+    color: #4b5563;
+}
+.bioseq-chip-status-classifying,
+.bioseq-chip-status-searching {
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+.bioseq-chip-status-ready {
+    background: #dcfce7;
+    color: #166534;
+}
+.bioseq-chip-status-error {
+    background: #fee2e2;
+    color: #991b1b;
+}
+.bioseq-chip-status-protein {
+    background: #ede9fe;
+    color: #5b21b6;
+}
+
+.bioseq-chip-caption {
+    font-size: 0.78rem;
+    color: #6b7280;
+    line-height: 1.3;
+    /* Wrap to at most two lines so a long "→ P69905 · HBA1" doesn't
+       force the chip to grow horizontally past its 180px cap. */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+}
+
+.bioseq-chip.is-selected .bioseq-chip-caption {
+    color: #4338ca;
+}
+
+/* ---------- Compact Sequence Inspector header ---------- */
+
+.bioseq-seq-header {
+    padding: 0.75rem 0.9rem;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    margin-bottom: 0.6rem;
+}
+
+.bioseq-seq-header__title {
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: #0f172a;
+    line-height: 1.15;
+    margin: 0 0 0.35rem 0;
+}
+
+.bioseq-seq-header__badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-bottom: 0.5rem;
+}
+
+.bioseq-seq-header__badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.05rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 500;
+    line-height: 1.4;
+}
+
+.bioseq-seq-header__badge--type {
+    background: #dbeafe;
+    color: #1e40af;
+}
+.bioseq-seq-header__badge--len {
+    background: #e5e7eb;
+    color: #4b5563;
+}
+.bioseq-seq-header__badge--status.bioseq-seq-header__status-ready {
+    background: #dcfce7;
+    color: #166534;
+}
+.bioseq-seq-header__badge--status.bioseq-seq-header__status-searching,
+.bioseq-seq-header__badge--status.bioseq-seq-header__status-classifying {
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+.bioseq-seq-header__badge--status.bioseq-seq-header__status-draft,
+.bioseq-seq-header__badge--status.bioseq-seq-header__status-queued,
+.bioseq-seq-header__badge--status.bioseq-seq-header__status-not_searched {
+    background: #e5e7eb;
+    color: #4b5563;
+}
+.bioseq-seq-header__badge--status.bioseq-seq-header__status-error {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.bioseq-seq-header__facts {
+    font-size: 0.82rem;
+    color: #475569;
+    line-height: 1.55;
+}
+
+.bioseq-seq-header__fact-label {
+    font-weight: 600;
+    color: #334155;
+}
+
+.bioseq-seq-header__facts code {
+    font-size: 0.78rem;
+    background: #f1f5f9;
+    padding: 0.05rem 0.35rem;
+    border-radius: 4px;
+    color: #1e293b;
+}
+
+.bioseq-seq-header__reason {
+    color: #64748b;
+    font-style: italic;
+}
+
+/* Match-tile inside Sequence Inspector */
+[class*="st-key-match_tile_"] button[data-testid^="stBaseButton-"] {
+    font-weight: 600;
+}
+
+/* Sequence body code block — keep monospace compact */
+[data-testid="stCodeBlock"] code {
+    font-size: 0.78rem;
+    line-height: 1.1;
+}
+
+/* ---------- Autocomplete suggestions above the input ---------- */
+.bioseq-autocomplete-slot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0.25rem 0 0.1rem 0;
+    min-height: 0;
+}
+
+.bioseq-autocomplete-slot:empty {
+    display: none;
+}
+
+.bioseq-autocomplete-hint {
+    font-size: 0.75rem;
+    color: #64748b;
+    font-style: italic;
+    margin-right: 0.2rem;
+}
+
+.bioseq-autocomplete-item {
+    background: #eef2ff;
+    color: #312e81;
+    border: 1px solid #c7d2fe;
+    border-radius: 999px;
+    padding: 0.18rem 0.7rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    cursor: pointer;
+    transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.bioseq-autocomplete-item:hover {
+    background: #c7d2fe;
+    border-color: #818cf8;
+}
+
+.bioseq-autocomplete-item:active {
+    background: #a5b4fc;
+}
+
+/* ---------- Live composer preview ---------- */
+
+/* Reserved-height slot just above the chat input. Keeps the layout
+   stable when the preview swaps between "no detection" and a
+   detected-sequence badge. */
+.bioseq-preview-slot {
+    min-height: 28px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.15rem 0.25rem;
+    margin: 0.25rem 0 0.35rem 0;
+    font-size: 0.82rem;
+    line-height: 1.2;
+}
+
+.bioseq-preview-hint {
+    color: #6b7280;
+    font-style: italic;
+}
+
+.bioseq-preview-badge {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 0.55rem;
+    border-radius: 999px;
+    font-weight: 500;
+    font-size: 0.78rem;
+    line-height: 1;
+}
+
+.bioseq-preview-badge-seq {
+    background: #dbeafe;
+    color: #1e3a8a;
+    border: 1px solid #bfdbfe;
+}
+
+.bioseq-preview-badge-uniprot {
+    background: #dcfce7;
+    color: #166534;
+    border: 1px solid #bbf7d0;
+}
+
+/* Let the chat input grow with content but cap it at ~1/3 of the
+   viewport so it never eats the chat history when the user pastes a
+   huge sequence. */
+[data-testid="stChatInput"] textarea,
+[data-testid="stChatInput"] [contenteditable="true"] {
+    min-height: 38px !important;
+    max-height: 33vh !important;
+}
+
+/* ---------- + (attach) button — match the Send button visually ----------
+   Important: target the BUTTON elements only. Don't use generic
+   [aria-label*="attach"] selectors because Streamlit copies the chat
+   placeholder ("…attach a FASTA file…") into the textarea's aria-label,
+   which would shrink the textarea itself to 32×32. */
+
+[data-testid="stChatInput"] button[data-testid*="ChatInputUpload"] {
+    width: 32px !important;
+    height: 32px !important;
+    border-radius: 999px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: #e5e7eb !important;
+    color: #4b5563 !important;
+    border: 1px solid transparent !important;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+[data-testid="stChatInput"] button[data-testid*="ChatInputUpload"]:hover {
+    background: #c7d2fe !important;
+    color: #312e81 !important;
+}
+
+[data-testid="stChatInput"] button[data-testid*="ChatInputUpload"]:active {
+    background: #a5b4fc !important;
+}
+
+/* ---------- Live @mention highlighting inside the chat input ----------
+   The textarea's own text is rendered transparent so a sibling "mirror"
+   div (.bioseq-input-mirror, positioned by JS) can show the same text
+   with @<label> runs wrapped in styled spans. Caret + selection stay
+   visible. The mention span uses color + background + inset border
+   only (no font-weight change) so character widths still match the
+   textarea — caret position never drifts. */
+
+[data-testid="stChatInput"] textarea {
+    color: transparent !important;
+    caret-color: #1e3a8a !important;
+}
+[data-testid="stChatInput"] textarea::placeholder {
+    color: #9ca3af !important;
+    -webkit-text-fill-color: #9ca3af !important;
+}
+[data-testid="stChatInput"] textarea::selection {
+    background: #dbeafe !important;
+    color: #1e3a8a !important;
+}
+
+.bioseq-input-mirror {
+    /* Lives at document.body level (outside React's tree) and is
+       positioned with viewport coordinates from the textarea's
+       bounding rect. Previously ``position: absolute`` as a child of
+       the textarea's parent — that injection crashed React on session
+       switch with ``removeChild`` errors. */
+    position: fixed;
+    pointer-events: none;
+    user-select: none;
+    overflow: hidden;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    color: #111827;
+    background: transparent;
+    box-sizing: border-box;
+    border-style: solid;
+    border-color: transparent;
+    z-index: 2;
+}
+
+.bioseq-input-mirror .bioseq-mention-tok {
+    color: #1d4ed8;
+    background: rgba(29, 78, 216, 0.10);
+    box-shadow: inset 0 0 0 1px rgba(29, 78, 216, 0.45);
+    border-radius: 3px;
+}
+
+/* ---------- Clickable @mentions inside chat history ---------- */
+
+.bioseq-mention {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 0.4rem;
+    border-radius: 6px;
+    background: #eef2ff;
+    color: #3730a3 !important;
+    text-decoration: none !important;
+    font-weight: 600;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.9em;
+    line-height: 1.4;
+    cursor: pointer;
+    border: 1px solid #c7d2fe;
+    transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.bioseq-mention:hover {
+    background: #c7d2fe;
+    border-color: #818cf8;
+    text-decoration: none !important;
+}
+
+/* Claude-Code-style user bubble.
+   The blue background lives on the WHOLE chat-message row — that way the
+   user avatar sits INSIDE the bubble and lines up horizontally with the
+   bot avatar (both are at the same X offset). The inner content wrapper
+   is forced transparent so there's only one visible rectangle. */
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageContent"][aria-label*="user" i]) {
+    background: #e6efff !important;
+    color: #1d4ed8;
+    border-radius: 14px;
+    border: none !important;
+    padding: 0.55rem 0.9rem !important;
+    box-shadow: none !important;
+}
+
+[data-testid="stChatMessageContent"][aria-label*="user" i] {
+    background: transparent !important;
+    color: inherit;
+    padding: 0 !important;
+    border: none !important;
+}
+
+/* Inner Streamlit wrappers (stMarkdown / stMarkdownContainer / stElementContainer)
+   must be transparent, otherwise their own default backgrounds peek through
+   and create a "rectangle in a rectangle" effect. */
+[data-testid="stChatMessageContent"][aria-label*="user" i] [data-testid="stMarkdown"],
+[data-testid="stChatMessageContent"][aria-label*="user" i] [data-testid="stMarkdownContainer"],
+[data-testid="stChatMessageContent"][aria-label*="user" i] [data-testid="stElementContainer"] {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+/* The msg-body wrapper is now just a flow container — preserve newlines
+   and inherit colour/background from the outer bubble. */
+.bioseq-msg-body {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    background: transparent;
+    color: inherit;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font-size: 0.95rem;
+    line-height: 1.55;
+}
+
+/* Inline @mentions on the light-blue bubble — deeper blue chip. */
+[data-testid="stChatMessageContent"][aria-label*="user" i] .bioseq-mention {
+    background: #c7d8f5;
+    color: #1e3a8a !important;
+    border-color: #93b4ea;
+}
+[data-testid="stChatMessageContent"][aria-label*="user" i] .bioseq-mention:hover {
+    background: #93b4ea;
+    border-color: #4f7fd1;
+}
+
+/* ---------- Attachment card inside the user bubble ----------
+   Replaces the previous backticked "[Seq_A | protein | 138 aa | …]"
+   line. White-on-blue pill that visually reads as an attachment without
+   adding a second nested rectangle. */
+.bioseq-attach-card {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 0.55rem;
+    background: #ffffff;
+    border: 1px solid #c7d8f5;
+    border-radius: 10px;
+    padding: 0.35rem 0.65rem;
+    margin-top: 0.4rem;
+    font-size: 0.82rem;
+    line-height: 1.35;
+    color: #334155;
+}
+
+/* Consecutive attach-cards: shrink the gap so two/three of them stack
+   tightly instead of swimming in whitespace. */
+.bioseq-attach-card + .bioseq-attach-card,
+[data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .bioseq-attach-card) +
+[data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .bioseq-attach-card) {
+    margin-top: 0.2rem !important;
+}
+
+/* Streamlit wraps each st.markdown in its own stElementContainer with a
+   default ~1rem bottom margin. Inside a user bubble we want those
+   wrappers to stack tightly. */
+[data-testid="stChatMessage"]:has([aria-label*="user" i])
+[data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .bioseq-attach-card) {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+}
+
+.bioseq-attach-label {
+    font-weight: 700;
+    color: #312e81;
+    letter-spacing: 0.01em;
+}
+
+.bioseq-attach-meta {
+    color: #64748b;
+}
+
+.bioseq-attach-divider {
+    width: 1px;
+    height: 14px;
+    background: #c7d8f5;
+}
+
+.bioseq-attach-best-label {
+    color: #64748b;
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.bioseq-attach-best {
+    color: #1d4ed8;
+    font-weight: 600;
+}
+
+.bioseq-attach-status {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.05rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 500;
+    line-height: 1.4;
+}
+
+.bioseq-attach-status-ready {
+    background: #dcfce7;
+    color: #166534;
+}
+.bioseq-attach-status-searching,
+.bioseq-attach-status-classifying {
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+.bioseq-attach-status-draft,
+.bioseq-attach-status-queued,
+.bioseq-attach-status-not_searched {
+    background: #e5e7eb;
+    color: #4b5563;
+}
+.bioseq-attach-status-error {
+    background: #fee2e2;
+    color: #991b1b;
+}
+.bioseq-attach-status-protein {
+    background: #ede9fe;
+    color: #5b21b6;
+}
+
+/* ---------- Hidden mention-bridge buttons ----------
+   These exist purely to let JS dispatch clicks for inline @mentions into
+   the Streamlit event loop. They must stay in the DOM (so JS can find
+   them) but never take any visible space. */
+.st-key-mention_bridge {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    overflow: hidden !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    clip: rect(0 0 0 0) !important;
+    pointer-events: none !important;
+}
+.st-key-mention_bridge button {
+    pointer-events: auto !important;
+}
+
+/* ---------- Assistant "thinking" indicator (optimistic placeholder) ---- */
+
+.bioseq-thinking {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.3rem 0.6rem;
+    background: #f3f4f6;
+    border-radius: 999px;
+    color: #4b5563;
+    font-size: 0.88rem;
+}
+
+.bioseq-thinking-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #6366f1;
+    animation: bioseq-thinking-pulse 1.1s ease-in-out infinite;
+}
+
+.bioseq-thinking-label {
+    font-weight: 500;
+}
+
+@keyframes bioseq-thinking-pulse {
+    0%, 100% { opacity: 0.35; transform: scale(0.85); }
+    50%      { opacity: 1;    transform: scale(1.05); }
 }

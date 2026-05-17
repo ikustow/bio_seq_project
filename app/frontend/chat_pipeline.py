@@ -23,6 +23,7 @@ for _path in (_FRONTEND_ROOT, _APP_ROOT, _PROJECT_ROOT):
 
 import backend_choice  # noqa: E402
 import session_db_adapter  # noqa: E402
+import session_objects  # noqa: E402
 from backend.app_contracts import ChatTurnRequest  # noqa: E402
 from backend.app_services.service_factory import create_bioseq_chat_service  # noqa: E402
 from mock.protein_loader import Candidate, DiseaseInfo, DomainFeature, ProteinView  # noqa: E402
@@ -79,6 +80,9 @@ def _run_turn_backend(prompt: str) -> dict[str, Any]:
 
     ui_context = _build_ui_context(session_id)
 
+    objects_payload = session_objects.serialize_for_request()
+    selected_object_id = session_objects.get_selected_id()
+
     try:
         response = _chat_service().submit_turn(
             ChatTurnRequest(
@@ -89,6 +93,8 @@ def _run_turn_backend(prompt: str) -> dict[str, Any]:
                 user_role=st.session_state.get("user_role"),
                 search_algorithm=st.session_state.get("search_algorithm"),
                 ui_context=ui_context,
+                objects=objects_payload,
+                selected_object_id=selected_object_id,
             )
         )
     except Exception as exc:
@@ -110,6 +116,18 @@ def _run_turn_backend(prompt: str) -> dict[str, Any]:
     warnings.extend(response.warnings)
     update_card = response.update_card
     reply = response.assistant_message
+
+    # Apply objects_patch to the local registry. This is independent of the
+    # legacy ``update_card`` flag: both retriever turns and direct UniProt
+    # lookups push patches now.
+    try:
+        patch = response.objects_patch.model_dump() if response.objects_patch else None
+    except AttributeError:
+        patch = response.objects_patch if isinstance(response.objects_patch, dict) else None
+    if patch:
+        session_objects.apply_objects_patch(patch)
+    if response.selected_object_id:
+        session_objects.set_selected(response.selected_object_id)
 
     if update_card:
         raw_candidates = [candidate.model_dump() for candidate in response.candidates]
@@ -213,14 +231,20 @@ def restore_session_state(session_id: str) -> dict[str, Any]:
     messages = session_db_adapter.extract_messages(row)
     working_memory = row.get("working_memory") or {}
     query_protein_sequence = ""
+    workspace_snapshot: dict[str, Any] | None = None
     if isinstance(working_memory, dict):
         query_protein_sequence = str(working_memory.get("last_query_protein_sequence") or "")
+        workspace_snapshot = working_memory.get("bioseq_workspace")
+        if not isinstance(workspace_snapshot, dict):
+            workspace_snapshot = None
     reveals = _revealed_sections(ui_candidates, query_protein_sequence)
 
     st.session_state.candidates = ui_candidates
     st.session_state.selected_candidate_idx = 0
     st.session_state.card_sections_revealed = set(reveals)
     st.session_state.query_protein_sequence = query_protein_sequence or None
+    if workspace_snapshot:
+        session_objects.apply_persisted(workspace_snapshot)
     if messages:
         st.session_state.messages = [
             {"role": m["role"], "content": m["content"]} for m in messages
@@ -285,6 +309,7 @@ def _safe_save_turn(
             current_mode=current_mode,
             update_candidates=update_candidates,
             query_protein_sequence=query_protein_sequence,
+            workspace_snapshot=session_objects.serialize_for_persistence(),
         )
     except Exception as exc:
         warnings.append(f"Could not save session turn: {exc}")

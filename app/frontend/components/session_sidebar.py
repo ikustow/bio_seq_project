@@ -174,6 +174,13 @@ def _clear_conversation_state() -> None:
         "vector_db_result",
         "query_protein_sequence",
         "on_first_search",
+        # Session-scoped object registry — must reset together with the
+        # conversation so a brand-new session starts with an empty
+        # Session Objects bar.
+        "objects",
+        "object_order",
+        "selected_object_id",
+        "_seq_label_counter",
     )
     for key in keys_to_clear:
         st.session_state.pop(key, None)

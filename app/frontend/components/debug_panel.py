@@ -69,7 +69,16 @@ def capture(prompt: str, outcome: dict[str, Any]) -> None:
 
 
 def render() -> None:
-    """Emit the panel markup and wire its behavior."""
+    """Emit the panel markup and wire its behavior.
+
+    The panel HTML is NOT emitted via ``st.markdown`` — doing so used to
+    crash React with ``Failed to execute 'removeChild' on 'Node'`` because
+    the JS below re-parents the panel to ``document.body``, and on the
+    next rerun Streamlit emits a fresh copy while React still thinks the
+    original lives inside its container. Instead the panel data is
+    serialized into the JS payload and the JS creates/updates the panel
+    DOM entirely inside ``<body>``, completely outside React's tree.
+    """
     log: list[dict[str, Any]] = list(st.session_state.get(_LOG_KEY) or [])
     indexed = list(enumerate(log))
     indexed.reverse()  # newest first
@@ -79,42 +88,27 @@ def render() -> None:
             {"label": _entry_label(idx, entry), "text": _format_entry(entry)}
             for idx, entry in indexed
         ]
-        initial_text = js_entries[0]["text"]
-        options_html = "".join(
-            f'<option value="{i}">{_html_escape(item["label"])}</option>'
-            for i, item in enumerate(js_entries)
-        )
-        selector_html = (
-            f'<select data-role="selector" class="lldp-selector" '
-            f'title="Pick a turn">{options_html}</select>'
-        )
     else:
         js_entries = []
-        initial_text = (
+
+    payload = {
+        "panelId": _PANEL_ID,
+        "entries": js_entries,
+        "emptyText": (
             "No chat-LLM requests captured yet. Send a follow-up message "
             "once a protein card is loaded and the full Gemini payload "
             "will show up here."
-        )
-        selector_html = ""
-
-    entries_json = _html_escape(json.dumps(js_entries, ensure_ascii=False))
-    panel_html = (
-        f'<div id="{_PANEL_ID}" class="bioseq-llm-debug-panel" '
-        f'data-entries="{entries_json}">'
-        f'<div class="lldp-header" title="Drag to move">'
-        f'<span class="lldp-dot"></span>'
-        f'<strong>Debug</strong>'
-        f'<span class="lldp-spacer"></span>'
-        f'{selector_html}'
-        f'<span data-role="copy" class="lldp-copy" title="Copy debug text">⧉</span>'
-        f'<span data-role="reset" class="lldp-reset" title="Reset to default size and position">⤓</span>'
-        f'</div>'
-        f'<div data-role="body" class="lldp-body">{_html_escape(initial_text)}</div>'
-        f'<span data-role="resize" class="lldp-resize" title="Drag to resize"></span>'
-        f'</div>'
+        ),
+    }
+    # Escape any ``</`` so a captured prompt or reply that contains
+    # ``</script>`` can't break out of the <script> block when the JS
+    # payload is interpolated below.
+    payload_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
+    components.html(
+        _PANEL_JS.replace("__BIOSEQ_DEBUG_PAYLOAD__", payload_json),
+        height=0,
+        width=0,
     )
-    st.markdown(panel_html, unsafe_allow_html=True)
-    components.html(_PANEL_JS, height=0, width=0)
 
 
 def _entry_label(idx: int, entry: dict[str, Any]) -> str:
@@ -172,32 +166,97 @@ _PANEL_JS = """
 <script>
 (function () {
     const doc = window.parent.document;
-    const PANEL_ID = "bioseq-llm-debug-panel";
+    const win = window.parent;
+    const PAYLOAD = __BIOSEQ_DEBUG_PAYLOAD__;
+    const PANEL_ID = PAYLOAD.panelId;
 
     // Drop any state saved by older builds — this version always starts
     // at the default corner + minimum size on each page load.
     try {
-        window.parent.localStorage.removeItem("bioseq_llm_debug_panel_state");
-        window.parent.localStorage.removeItem("bioseq_llm_debug_panel_state_v2");
+        win.localStorage.removeItem("bioseq_llm_debug_panel_state");
+        win.localStorage.removeItem("bioseq_llm_debug_panel_state_v2");
     } catch (e) { /* no-op */ }
 
-    // Streamlit reruns its markdown container on every user turn, which
-    // emits a brand-new copy of our panel HTML with the latest entries.
-    // Find both: the previously-wired panel (sitting in <body> because we
-    // re-parented it the first time round) and the freshly-injected one
-    // still inside Streamlit's container. Merge fresh state into the
-    // wired one so the visible panel keeps its drag-position/size while
-    // showing the most recent log.
-    const panels = Array.from(doc.querySelectorAll('#' + PANEL_ID));
-    if (panels.length === 0) return;
-    let wired = null, fresh = null;
-    for (const p of panels) {
-        if (p.__bioseqWired) wired = p;
-        else fresh = p;
+    function escapeHtml(value) {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    // Sweep up any leftover panels that older builds emitted via
+    // ``st.markdown`` into Streamlit's container. Leaving them there
+    // would let React try to reconcile around our body-level panel and
+    // crash with ``removeChild`` on the next rerun.
+    doc.querySelectorAll('#' + PANEL_ID).forEach(function (node) {
+        if (node.parentElement !== doc.body) node.remove();
+    });
+
+    function buildPanelMarkup(hasEntries) {
+        const selectorHtml = hasEntries
+            ? '<select data-role="selector" class="lldp-selector" title="Pick a turn"></select>'
+            : '';
+        return (
+            '<div class="lldp-header" title="Drag to move">'
+            + '<span class="lldp-dot"></span>'
+            + '<strong>Debug</strong>'
+            + '<span class="lldp-spacer"></span>'
+            + selectorHtml
+            + '<span data-role="copy" class="lldp-copy" title="Copy debug text">⧉</span>'
+            + '<span data-role="reset" class="lldp-reset" title="Reset to default size and position">⤓</span>'
+            + '</div>'
+            + '<div data-role="body" class="lldp-body"></div>'
+            + '<span data-role="resize" class="lldp-resize" title="Drag to resize"></span>'
+        );
+    }
+
+    function applyEntries(panel, entries, emptyText) {
+        panel.dataset.entries = JSON.stringify(entries);
+        const header = panel.querySelector('.lldp-header');
+        let sel = panel.querySelector('[data-role="selector"]');
+        const body = panel.querySelector('[data-role="body"]');
+        const copyBtn = panel.querySelector('[data-role="copy"]');
+
+        if (entries.length) {
+            if (!sel) {
+                sel = doc.createElement('select');
+                sel.setAttribute('data-role', 'selector');
+                sel.className = 'lldp-selector';
+                sel.setAttribute('title', 'Pick a turn');
+                header.insertBefore(sel, copyBtn);
+                wireSelector(panel, sel);
+            }
+            const prev = sel.value;
+            sel.innerHTML = entries.map(function (item, i) {
+                return '<option value="' + i + '">' + escapeHtml(item.label) + '</option>';
+            }).join('');
+            const keep = !!sel.querySelector('option[value="' + prev + '"]');
+            sel.value = keep ? prev : '0';
+            const idx = parseInt(sel.value, 10) || 0;
+            if (body && entries[idx]) body.textContent = entries[idx].text;
+        } else {
+            if (sel) sel.remove();
+            if (body) body.textContent = emptyText;
+        }
+    }
+
+    function wireSelector(panel, sel) {
+        if (sel.__bioseqWired) return;
+        sel.__bioseqWired = true;
+        const body = panel.querySelector('[data-role="body"]');
+        sel.addEventListener('change', function () {
+            const entries = JSON.parse(panel.dataset.entries || '[]');
+            const idx = parseInt(sel.value, 10);
+            if (!Number.isFinite(idx) || idx < 0 || idx >= entries.length) return;
+            if (body) body.textContent = entries[idx].text;
+        });
+        sel.addEventListener('pointerdown', function (event) { event.stopPropagation(); });
+        sel.addEventListener('click',       function (event) { event.stopPropagation(); });
     }
 
     function clampToViewport(panel) {
-        const win = window.parent;
         const rect = panel.getBoundingClientRect();
         const maxLeft = Math.max(0, win.innerWidth  - rect.width);
         const maxTop  = Math.max(0, win.innerHeight - rect.height);
@@ -220,66 +279,30 @@ _PANEL_JS = """
         panel.style.height = "";
     }
 
-    function attachSelectorHandler(panel) {
-        const sel = panel.querySelector("[data-role='selector']");
-        if (!sel || sel.__bioseqWired) return;
-        sel.__bioseqWired = true;
-        const body = panel.querySelector("[data-role='body']");
-        sel.addEventListener("change", function () {
-            const entries = JSON.parse(panel.dataset.entries || "[]");
-            const idx = parseInt(sel.value, 10);
-            if (!Number.isFinite(idx) || idx < 0 || idx >= entries.length) return;
-            if (body) body.textContent = entries[idx].text;
-        });
-        sel.addEventListener("pointerdown", function (event) { event.stopPropagation(); });
-        sel.addEventListener("click",       function (event) { event.stopPropagation(); });
-    }
-
-    if (wired && fresh) {
-        wired.dataset.entries = fresh.dataset.entries;
-        const newSel  = fresh.querySelector("[data-role='selector']");
-        const oldSel  = wired.querySelector("[data-role='selector']");
-        const newBody = fresh.querySelector("[data-role='body']");
-        const oldBody = wired.querySelector("[data-role='body']");
-        if (newSel && oldSel) {
-            const prev = oldSel.value;
-            oldSel.innerHTML = newSel.innerHTML;
-            const keep = !!oldSel.querySelector('option[value="' + prev + '"]');
-            oldSel.value = keep ? prev : "0";
-        } else if (newSel && !oldSel) {
-            const header  = wired.querySelector(".lldp-header");
-            const copyBtn = header.querySelector("[data-role='copy']");
-            header.insertBefore(newSel.cloneNode(true), copyBtn);
-            attachSelectorHandler(wired);
-        } else if (!newSel && oldSel) {
-            oldSel.remove();
-        }
-        if (oldBody) {
-            const entries = JSON.parse(wired.dataset.entries || "[]");
-            const idxStr = (wired.querySelector("[data-role='selector']") || {}).value || "0";
-            const idx = parseInt(idxStr, 10) || 0;
-            if (entries[idx]) oldBody.textContent = entries[idx].text;
-            else if (newBody) oldBody.textContent = newBody.textContent;
-        }
-        fresh.remove();
-        return;
-    }
-
-    if (!fresh) return;
-    const panel = fresh;
-    panel.__bioseqWired = true;
-
-    // Re-parent under <body> so no Streamlit container's stacking context
-    // can pin the panel under the sidebar.
-    if (panel.parentNode !== doc.body) {
+    // The panel lives in document.body — created here on first call,
+    // reused on subsequent calls. Streamlit never sees it.
+    let panel = doc.body.querySelector(':scope > #' + PANEL_ID);
+    const isNew = !panel;
+    if (!panel) {
+        panel = doc.createElement('div');
+        panel.id = PANEL_ID;
+        panel.className = 'bioseq-llm-debug-panel';
+        panel.innerHTML = buildPanelMarkup(PAYLOAD.entries.length > 0);
         doc.body.appendChild(panel);
     }
+
+    applyEntries(panel, PAYLOAD.entries, PAYLOAD.emptyText);
+
+    if (!isNew) return;  // handlers already wired on the existing panel.
+    panel.__bioseqWired = true;
 
     const bodyEl   = panel.querySelector("[data-role='body']");
     const copyBtn  = panel.querySelector("[data-role='copy']");
     const resetBtn = panel.querySelector("[data-role='reset']");
     const header   = panel.querySelector(".lldp-header");
     const grip     = panel.querySelector("[data-role='resize']");
+    const initialSel = panel.querySelector("[data-role='selector']");
+    if (initialSel) wireSelector(panel, initialSel);
 
     if (copyBtn && bodyEl) {
         const doCopy = function (event) {
@@ -408,9 +431,7 @@ _PANEL_JS = """
         grip.addEventListener("pointercancel", endResize);
     }
 
-    window.parent.addEventListener("resize", function () { clampToViewport(panel); });
-
-    attachSelectorHandler(panel);
+    win.addEventListener("resize", function () { clampToViewport(panel); });
 })();
 </script>
 """

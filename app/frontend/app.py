@@ -13,6 +13,7 @@ import os
 # point.
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
+import base64
 import sys
 from pathlib import Path
 
@@ -27,7 +28,8 @@ if str(_HERE) not in sys.path:
 
 import config  # noqa: E402
 import session_identity  # noqa: E402
-from components import chat, debug_panel, protein_card, session_sidebar  # noqa: E402
+import session_objects  # noqa: E402
+from components import chat, debug_panel, object_bar, object_inspector, protein_card, session_sidebar  # noqa: E402
 from mock import conversation, protein_loader  # noqa: E402
 
 BACKEND_MODE = os.getenv(
@@ -48,6 +50,23 @@ CANDIDATE_SPECS: list[tuple[str, float]] = [
 ]
 
 STYLE_PATH = _HERE / "assets" / "style.css"
+LOGO_PATH = _HERE / "assets" / "Logo.png"
+FAVICON_PATH = _HERE / "assets" / "Icon_Small_processed.png"
+
+
+def _load_favicon():
+    """Open the favicon as a PIL.Image so Streamlit's set_page_config gets
+    an unambiguous image object — passing a raw Windows path string had
+    been flaky. Falls back to the DNA emoji if the file or PIL is
+    unavailable so a missing asset can never block the app from starting."""
+    if not FAVICON_PATH.exists():
+        return ":dna:"
+    try:
+        from PIL import Image
+
+        return Image.open(FAVICON_PATH)
+    except Exception:
+        return ":dna:"
 
 
 def _inject_styles() -> None:
@@ -55,14 +74,51 @@ def _inject_styles() -> None:
         st.markdown(f"<style>{STYLE_PATH.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
 
 
+def _render_topbar() -> None:
+    """Fixed full-width app header. Sits above the sidebar; the sidebar and
+    main block-container are pushed down by 90px in style.css to clear it."""
+    if LOGO_PATH.exists():
+        logo_b64 = base64.b64encode(LOGO_PATH.read_bytes()).decode("ascii")
+        logo_src = f"data:image/png;base64,{logo_b64}"
+        logo_html = f'<img src="{logo_src}" class="bioseq-topbar-logo" alt="BioSeq logo">'
+    else:
+        logo_html = ""
+    st.markdown(
+        f"""
+        <div class="bioseq-topbar">
+          <div class="bioseq-topbar-brand">
+            {logo_html}
+            <span class="bioseq-topbar-title">BioSeq Investigator</span>
+          </div>
+          <div class="bioseq-topbar-tagline">
+            Paste a biological sequence, ask a question, and get an<br>
+            evidence-grounded answer backed by public bioinformatics databases.
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 # JS that adds a drag handle to the left edge of the right column and
 # persists its width to localStorage. Runs inside a 0-height components
 # iframe and reaches into ``window.parent.document`` to attach the
-# handle; a MutationObserver re-attaches after each Streamlit rerun.
+# handle.
+#
+# The handle is appended to ``document.body`` (NOT to the React-managed
+# column) and positioned with ``position: fixed`` from the column's
+# bounding rect. Previously we appended it as a child of the
+# ``[data-testid="stColumn"]`` div, which caused React to crash with
+# ``Failed to execute 'removeChild' on 'Node'`` whenever Streamlit
+# reconciled that column (most reliably on session switch, when the
+# whole right pane rebuilds). Living at body level keeps the handle
+# completely outside React's tracked DOM, so reconciliation can't trip
+# over it.
 _RIGHT_PANEL_RESIZER_JS = """
 <script>
 (function () {
     const doc = window.parent.document;
+    const win = window.parent;
     const root = doc.documentElement;
     const STORAGE_KEY = "bioseq_right_panel_width";
     const MIN_WIDTH = 320;
@@ -70,7 +126,7 @@ _RIGHT_PANEL_RESIZER_JS = """
     const DEFAULT_WIDTH = 440;
 
     function readSaved() {
-        const raw = parseInt(window.parent.localStorage.getItem(STORAGE_KEY) || "", 10);
+        const raw = parseInt(win.localStorage.getItem(STORAGE_KEY) || "", 10);
         if (Number.isFinite(raw)) {
             return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, raw));
         }
@@ -85,35 +141,52 @@ _RIGHT_PANEL_RESIZER_JS = """
 
     applyWidth(readSaved());
 
-    // Find the *current* right column and make sure exactly one handle
-    // lives on it. Streamlit's reruns can replace the column DOM, so we
-    // re-create the handle on every mutation — but the pointer event
-    // handlers are installed once via delegation below, so a freshly
-    // re-attached handle works without rebinding listeners.
-    function syncHandle() {
+    function findRightColumn() {
         const markers = doc.querySelectorAll(".st-key-main_layout .st-key-main_right");
-        if (!markers.length) return;
+        if (!markers.length) return null;
         const marker = markers[markers.length - 1];
-        const rightCol = marker.closest('[data-testid="stColumn"]');
-        if (!rightCol) return;
-        // Remove any stale handles that ended up in detached / sibling
-        // columns after a rerender.
-        doc.querySelectorAll(".right-resizer").forEach(function (h) {
-            if (h.parentElement !== rightCol) h.remove();
-        });
-        if (rightCol.querySelector(".right-resizer")) return;
-        const handle = doc.createElement("div");
-        handle.className = "right-resizer";
-        handle.title = "Drag to resize the protein-card panel";
-        rightCol.appendChild(handle);
+        return marker.closest('[data-testid="stColumn"]');
     }
 
-    // Install the pointer handlers exactly once. We use document-level
-    // delegation so the same listeners keep working even after Streamlit
-    // tears down and recreates the handle DOM. Before this rewrite the
-    // listeners were bound directly to the handle element, so a rerender
-    // mid-session left a "live looking" handle that no longer reacted
-    // to drags.
+    // Singleton handle that lives in ``document.body`` — outside the
+    // React tree, so reconciliation never tries to walk over or remove
+    // it. Idempotent: if the handle already exists we reuse it.
+    function ensureHandle() {
+        // Drop any leftover handles from older builds that injected the
+        // node into the column itself. After the first run only the
+        // body-level handle survives.
+        doc.querySelectorAll(".right-resizer").forEach(function (h) {
+            if (h.parentElement !== doc.body) h.remove();
+        });
+        let handle = doc.body.querySelector(":scope > .right-resizer");
+        if (handle) return handle;
+        handle = doc.createElement("div");
+        handle.className = "right-resizer";
+        handle.title = "Drag to resize the protein-card panel";
+        doc.body.appendChild(handle);
+        return handle;
+    }
+
+    function positionHandle() {
+        const handle = ensureHandle();
+        const rightCol = findRightColumn();
+        if (!rightCol) {
+            handle.style.display = "none";
+            return;
+        }
+        const rect = rightCol.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) {
+            handle.style.display = "none";
+            return;
+        }
+        handle.style.display = "";
+        handle.style.top = rect.top + "px";
+        handle.style.left = (rect.left - 4) + "px";
+        handle.style.height = rect.height + "px";
+    }
+
+    // Install pointer handlers exactly once via document-level
+    // delegation, so the listeners survive any handle re-creation.
     if (!doc.__bioseqResizerHandlersInstalled) {
         doc.__bioseqResizerHandlersInstalled = true;
         let dragging = false;
@@ -125,7 +198,7 @@ _RIGHT_PANEL_RESIZER_JS = """
         doc.addEventListener("pointerdown", function (event) {
             const handle = event.target.closest(".right-resizer");
             if (!handle) return;
-            const rightCol = handle.parentElement;
+            const rightCol = findRightColumn();
             if (!rightCol) return;
             event.preventDefault();
             dragging = true;
@@ -161,16 +234,32 @@ _RIGHT_PANEL_RESIZER_JS = """
             activePointerId = null;
             const cur = parseInt(root.style.getPropertyValue("--right-panel-width"), 10);
             if (Number.isFinite(cur)) {
-                window.parent.localStorage.setItem(STORAGE_KEY, String(cur));
+                win.localStorage.setItem(STORAGE_KEY, String(cur));
             }
         }
         doc.addEventListener("pointerup", endDrag, true);
         doc.addEventListener("pointercancel", endDrag, true);
     }
 
-    syncHandle();
-    const observer = new MutationObserver(function () { syncHandle(); });
-    observer.observe(doc.body, { childList: true, subtree: true });
+    // Position once now, then keep the handle aligned with the column.
+    // Replace any prior rAF loop / MutationObserver from an earlier
+    // iframe load so we don't pile up handlers across reruns.
+    positionHandle();
+
+    if (win.__bioseqResizerRafId) {
+        try { win.cancelAnimationFrame(win.__bioseqResizerRafId); } catch (e) {}
+    }
+    function tick() {
+        positionHandle();
+        win.__bioseqResizerRafId = win.requestAnimationFrame(tick);
+    }
+    win.__bioseqResizerRafId = win.requestAnimationFrame(tick);
+
+    if (win.__bioseqResizerResizeHandler) {
+        win.removeEventListener("resize", win.__bioseqResizerResizeHandler);
+    }
+    win.__bioseqResizerResizeHandler = positionHandle;
+    win.addEventListener("resize", win.__bioseqResizerResizeHandler);
 })();
 </script>
 """
@@ -207,6 +296,86 @@ _CANDIDATE_CLICK_FORWARDER_JS = """
 
 def _inject_candidate_click_forwarder() -> None:
     components.html(_CANDIDATE_CLICK_FORWARDER_JS, height=0, width=0)
+
+
+# Makes the (CSS-fixed) topbar visually scroll up and out of view as the
+# user scrolls down — without actually changing its position from `fixed`
+# (which we tried earlier with `absolute` and it broke Streamlit's
+# layout). Pure compositor transform on each scroll event: when scrollY
+# is in [0, TOPBAR_HEIGHT] the bar is translated up by that amount;
+# beyond TOPBAR_HEIGHT it stays fully off-screen. As a bonus, once the
+# bar has scrolled off, the page scrollbar (which the fixed bar would
+# otherwise cover at the top) is fully visible again.
+_TOPBAR_SCROLL_JS = """
+<script>
+(function () {
+    const doc = window.parent.document;
+    const win = window.parent;
+    if (doc.__bioseqTopbarScrollInstalled) return;
+    doc.__bioseqTopbarScrollInstalled = true;
+
+    const HEIGHT = 90;
+
+    function topbar() { return doc.querySelector('.bioseq-topbar'); }
+
+    function currentScrollY() {
+        // Streamlit historically scrolled the window itself, but newer
+        // versions sometimes attach the scroll to [data-testid="stMain"]
+        // (or stAppViewContainer). Probe both and take the larger value;
+        // whichever container is actually scrolling will report a
+        // nonzero scrollTop while the other stays at 0.
+        let y = win.scrollY || win.pageYOffset || 0;
+        const candidates = [
+            doc.querySelector('[data-testid="stMain"]'),
+            doc.querySelector('[data-testid="stAppViewContainer"]'),
+            doc.scrollingElement,
+        ];
+        for (const el of candidates) {
+            if (el && el.scrollTop > y) y = el.scrollTop;
+        }
+        return y;
+    }
+
+    let pending = false;
+    function update() {
+        pending = false;
+        const bar = topbar();
+        if (!bar) return;
+        const offset = Math.min(Math.max(currentScrollY(), 0), HEIGHT);
+        // translate3d to force the compositor and avoid a layout pass.
+        bar.style.transform = `translate3d(0, ${-offset}px, 0)`;
+        // The sidebar is position: fixed in Streamlit's layout — it
+        // doesn't scroll with the page. Without this its padding-top
+        // would stay at 90px even after the topbar has slid out of view,
+        // leaving an obvious empty rectangle at the top-left. Shrinking
+        // --topbar-offset in lockstep with the bar's translation pulls
+        // the sidebar's first item up to the viewport edge.
+        doc.documentElement.style.setProperty(
+            '--topbar-offset', `${HEIGHT - offset}px`
+        );
+    }
+    function schedule() {
+        if (pending) return;
+        pending = true;
+        win.requestAnimationFrame(update);
+    }
+
+    // Listen at capture-phase on the window so we pick up scrolls
+    // regardless of which descendant container actually receives the
+    // event. Wheel events too — some Streamlit scroll containers consume
+    // the scroll event before it bubbles.
+    ['scroll', 'wheel'].forEach(function (evt) {
+        win.addEventListener(evt, schedule, { passive: true, capture: true });
+    });
+
+    update();
+})();
+</script>
+"""
+
+
+def _inject_topbar_scroll() -> None:
+    components.html(_TOPBAR_SCROLL_JS, height=0, width=0)
 
 
 def _configured_password() -> str | None:
@@ -271,6 +440,7 @@ def _bootstrap_session() -> None:
         st.session_state.backend_warnings = []
     if "query_protein_sequence" not in st.session_state:
         st.session_state.query_protein_sequence = None
+    session_objects.init_state()
     debug_panel.init_state()
 
     # If the session_id came from a cookie (i.e. browser reload of an existing
@@ -352,21 +522,14 @@ def _handle_vector_db_submission(text: str) -> tuple[str, set[str]]:
 def main() -> None:
     st.set_page_config(
         page_title="BioSeq Investigator",
-        page_icon=":dna:",
+        page_icon=_load_favicon(),
         layout="wide",
     )
     _inject_styles()
+    _render_topbar()
     _require_password()
     _bootstrap_session()
     session_sidebar.render()
-
-    st.title("🧬 BioSeq Investigator")
-    st.caption(
-        "Paste a biological sequence, ask a question, and get an "
-        "evidence-grounded answer backed by public bioinformatics databases."
-    )
-
-    st.divider()
 
     with st.container(key="main_layout"):
         left, right = st.columns([5, 7], gap="large")
@@ -378,14 +541,24 @@ def main() -> None:
                 )
         with right:
             with st.container(key="main_right"):
-                protein_card.render(
-                    st.session_state.candidates,
-                    st.session_state.card_sections_revealed,
-                    query_sequence=st.session_state.query_protein_sequence,
-                )
+                object_bar.render()
+                object_inspector.render()
+                # Legacy protein card stays available as a fallback when the
+                # new registry has no selection but the old flow produced
+                # candidates (e.g. mock backend, demo chip).
+                if (
+                    not session_objects.list_objects()
+                    and st.session_state.candidates is not None
+                ):
+                    protein_card.render(
+                        st.session_state.candidates,
+                        st.session_state.card_sections_revealed,
+                        query_sequence=st.session_state.query_protein_sequence,
+                    )
 
     _inject_right_panel_resizer()
     _inject_candidate_click_forwarder()
+    _inject_topbar_scroll()
     debug_panel.render()
 
 

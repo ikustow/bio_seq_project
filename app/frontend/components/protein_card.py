@@ -433,6 +433,10 @@ def _select_candidate(index: int) -> None:
     st.session_state.selected_candidate_idx = index
 
 
+def _select_candidate_via_callback(index: int, callback) -> None:
+    callback(index)
+
+
 def _alignment_score_for_candidate(candidate: Candidate, query_sequence: str | None) -> float | None:
     if not query_sequence:
         return None
@@ -443,18 +447,42 @@ def _alignment_score_for_candidate(candidate: Candidate, query_sequence: str | N
     return alignment_viewer.alignment_match_percent(query_sequence, candidate_sequence)
 
 
-def _render_switcher(candidates: list[Candidate], query_sequence: str | None) -> int:
+def _render_switcher(
+    candidates: list[Candidate],
+    query_sequence: str | None,
+    *,
+    selected_index: int | None = None,
+    on_select_index=None,
+    key_suffix: str = "",
+) -> int:
     """Render the candidate switcher and return the chosen index.
 
-    Uses `selected_candidate_idx` in session_state as both the initial value
-    and the persisted selection across reruns.
+    Two modes:
+
+    - Legacy global mode (``selected_index`` / ``on_select_index`` are
+      ``None``): the switcher uses ``st.session_state.selected_candidate_idx``
+      as both the initial value and the persisted selection across reruns.
+      This keeps the demo-chip flow and any callers that still rely on the
+      pre-registry behaviour working.
+
+    - Registry mode: the caller (Sequence Inspector) owns the selection state
+      inside ``sequence.selected_match_index``. It passes the current index
+      in and a callback that updates the Sequence in ``session_objects``.
+      Button keys are suffixed with ``key_suffix`` so multiple switchers
+      can coexist on the same page (one per Sequence).
     """
-    chosen = int(st.session_state.get("selected_candidate_idx", 0) or 0)
+    use_registry = on_select_index is not None
+    if use_registry:
+        chosen = int(selected_index or 0)
+    else:
+        chosen = int(st.session_state.get("selected_candidate_idx", 0) or 0)
     if chosen < 0 or chosen >= len(candidates):
         chosen = 0
-    st.session_state.selected_candidate_idx = chosen
+    if not use_registry:
+        st.session_state.selected_candidate_idx = chosen
 
-    with st.container(border=True, key="candidate_switcher"):
+    container_key = f"candidate_switcher_{key_suffix}" if key_suffix else "candidate_switcher"
+    with st.container(border=True, key=container_key):
         st.markdown("#### Top 5 matches")
         st.caption(
             "Ranked & re-ranked by the retrieval pipeline. "
@@ -480,17 +508,36 @@ def _render_switcher(candidates: list[Candidate], query_sequence: str | None) ->
             protein = candidate["protein"]
             accession = protein.get("accession") or ""
             alignment_score = _alignment_score_for_candidate(candidate, query_sequence)
+            cell_key = f"candidate_cell_{key_suffix}_{index}" if key_suffix else f"candidate_cell_{index}"
+            btn_key = (
+                f"candidate_button_{key_suffix}_{index}_{accession}"
+                if key_suffix
+                else f"candidate_button_{index}_{accession}"
+            )
+            click_handler = (
+                (lambda i=index: on_select_index(i)) if use_registry else None
+            )
             with columns[index]:
-                with st.container(key=f"candidate_cell_{index}"):
-                    st.button(
-                        accession,
-                        key=f"candidate_button_{index}_{accession}",
-                        help=protein.get("name") or accession,
-                        use_container_width=True,
-                        type="primary" if index == chosen else "secondary",
-                        on_click=_select_candidate,
-                        args=(index,),
-                    )
+                with st.container(key=cell_key):
+                    if use_registry:
+                        st.button(
+                            accession,
+                            key=btn_key,
+                            help=protein.get("name") or accession,
+                            use_container_width=True,
+                            type="primary" if index == chosen else "secondary",
+                            on_click=click_handler,
+                        )
+                    else:
+                        st.button(
+                            accession,
+                            key=btn_key,
+                            help=protein.get("name") or accession,
+                            use_container_width=True,
+                            type="primary" if index == chosen else "secondary",
+                            on_click=_select_candidate,
+                            args=(index,),
+                        )
                     active_metrics_class = " candidate-metrics-active" if index == chosen else ""
                     st.markdown(
                         f"<div class='candidate-metrics{active_metrics_class}'>"
@@ -508,6 +555,10 @@ def render(
     candidates: list[Candidate] | None,
     revealed: set[str],
     query_sequence: str | None = None,
+    *,
+    selected_index: int | None = None,
+    on_select_index=None,
+    key_suffix: str = "",
 ) -> None:
     if candidates is None:
         with st.container(border=True):
@@ -528,7 +579,13 @@ def render(
             )
         return
 
-    chosen = _render_switcher(candidates, query_sequence)
+    chosen = _render_switcher(
+        candidates,
+        query_sequence,
+        selected_index=selected_index,
+        on_select_index=on_select_index,
+        key_suffix=key_suffix,
+    )
     selected = candidates[chosen]
     protein = selected["protein"]
     score = selected["match_score"]

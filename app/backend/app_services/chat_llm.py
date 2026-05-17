@@ -36,6 +36,9 @@ class ChatLLMRequest:
     history: list[dict[str, Any]] = field(default_factory=list)
     selected_candidate: dict[str, Any] | None = None
     provider_override: str | None = None
+    # Workspace object registry sent by the frontend on follow-up turns.
+    objects: dict[str, Any] = field(default_factory=dict)
+    selected_object_id: str | None = None
 
 
 @dataclass
@@ -193,12 +196,22 @@ def system_prompt() -> str:
         "You are an expert assistant for protein sequence analysis. "
         "Your primary goal is to answer the user's question accurately and helpfully. "
         "\n\n"
+        "The user works in a chat with a workspace of objects: each `Sequence` "
+        "(labelled `Seq_A`, `Seq_B`, ...) is a biological sequence they pasted "
+        "or uploaded, and each `Protein` (labelled by UniProt accession like "
+        "`O95185`) is a card from UniProt. Tokens like `@Seq_A` or `@O95185` "
+        "in user messages are references to these objects. "
+        "\n\n"
         "You have been provided with database information about the protein the user is asking about. "
         "Use this data to ground your answers: explain what the protein does, where it's found, how it interacts, "
         "and why it matters clinically or biologically. "
         "\n\n"
         "Guidelines: "
         "- Answer the user's question directly and concisely "
+        "- When the user references an object, echo it in your reply (e.g. "
+        "'For `@Seq_A`: ...') so they can see how you resolved the reference "
+        "- If a contextual reference like 'the second one' or 'the previous "
+        "protein' is ambiguous, ask a short clarifying question instead of guessing "
         "- Connect relevant data points (function, location, interactions, disease links) to build a coherent explanation "
         "- If information is missing from the database, acknowledge it: 'The database doesn't have data on X, but based on Y we can infer...' "
         "- Maintain scientific accuracy while keeping explanations clear and accessible "
@@ -288,8 +301,94 @@ def build_protein_context(candidate: dict[str, Any] | None) -> str | None:
     return "\n".join(lines)
 
 
+def build_objects_context(
+    objects: dict[str, Any],
+    selected_object_id: str | None,
+) -> str | None:
+    """Render the workspace object registry as compact text for the LLM.
+
+    For each ``Sequence`` we include only the currently-selected protein
+    match (top-1 by default; whatever the user picked otherwise). This
+    keeps the context cost low while still respecting the user's choice.
+    """
+    if not objects:
+        return None
+    lines = ["**Workspace objects:**"]
+    sequences: list[dict[str, Any]] = []
+    proteins: list[dict[str, Any]] = []
+    for obj in objects.values():
+        if not isinstance(obj, dict):
+            continue
+        if obj.get("kind") == "sequence":
+            sequences.append(obj)
+        elif obj.get("kind") == "protein":
+            proteins.append(obj)
+
+    if sequences:
+        lines.append("\n**Sequences:**")
+        for seq in sequences:
+            label = seq.get("label") or seq.get("id")
+            seq_type = seq.get("sequence_type") or "UNKNOWN"
+            length = seq.get("length") or 0
+            status = seq.get("status") or "draft"
+            line = f"- `@{label}` ({seq_type}, {length} aa, {status})"
+            matches = seq.get("matches") or []
+            chosen_idx = int(seq.get("selected_match_index") or 0)
+            if matches and 0 <= chosen_idx < len(matches):
+                match = matches[chosen_idx]
+                protein = match.get("protein") or {}
+                acc = protein.get("accession") or match.get("accession") or ""
+                name = protein.get("name") or ""
+                gene = protein.get("gene") or ""
+                score = match.get("match_score")
+                score_str = (
+                    f"{score:.0%}" if isinstance(score, float) and score <= 1 else
+                    f"{score:.0f}%" if isinstance(score, (int, float)) else "n/a"
+                )
+                line += (
+                    f"; user-selected match: `{acc}` ({gene} — {name}, score {score_str})"
+                )
+            lines.append(line)
+
+    if proteins:
+        lines.append("\n**Proteins:**")
+        for protein in proteins:
+            acc = protein.get("accession") or protein.get("label")
+            gene = protein.get("gene") or ""
+            organism = protein.get("organism") or ""
+            line = f"- `@{acc}` (gene {gene or '—'}, {organism or '—'})"
+            linked = protein.get("linked_sequence_ids") or []
+            if linked:
+                line += f" — linked to {', '.join('@' + lid for lid in linked)}"
+            lines.append(line)
+
+    if selected_object_id:
+        obj = objects.get(selected_object_id)
+        if isinstance(obj, dict):
+            label = obj.get("label") or selected_object_id
+            lines.append(f"\n**Currently selected:** `@{label}`")
+
+    return "\n".join(lines)
+
+
 def _build_gemini_contents(request: ChatLLMRequest) -> list[dict[str, Any]]:
     contents: list[dict[str, Any]] = []
+    workspace_context = build_objects_context(request.objects, request.selected_object_id)
+    if workspace_context:
+        contents.append({"role": "user", "parts": [{"text": workspace_context}]})
+        contents.append(
+            {
+                "role": "model",
+                "parts": [
+                    {
+                        "text": (
+                            "Thanks — I have the workspace context. I'll reference "
+                            "objects by their `@<label>` ids in my answers."
+                        )
+                    }
+                ],
+            }
+        )
     protein_context = build_protein_context(request.selected_candidate)
     if protein_context:
         contents.append({"role": "user", "parts": [{"text": protein_context}]})
@@ -330,6 +429,17 @@ def _build_openai_messages(request: ChatLLMRequest, system_prompt_text: str) -> 
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
     messages: list[Any] = [SystemMessage(content=system_prompt_text)]
+    workspace_context = build_objects_context(request.objects, request.selected_object_id)
+    if workspace_context:
+        messages.append(HumanMessage(content=workspace_context))
+        messages.append(
+            AIMessage(
+                content=(
+                    "Thanks — I have the workspace context. I'll reference objects "
+                    "by their `@<label>` ids in my answers."
+                )
+            )
+        )
     protein_context = build_protein_context(request.selected_candidate)
     if protein_context:
         messages.append(HumanMessage(content=protein_context))

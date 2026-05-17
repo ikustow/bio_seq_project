@@ -127,6 +127,7 @@ def save_turn(
     current_mode: str | None = None,
     update_candidates: bool = True,
     query_protein_sequence: str | None = None,
+    workspace_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Append the current turn to ``public.chat_sessions``.
 
@@ -203,6 +204,8 @@ def save_turn(
         "turn_count": turn_count,
         "ui_writer": "streamlit_frontend",
     }
+    if workspace_snapshot is not None:
+        working_memory["bioseq_workspace"] = workspace_snapshot
 
     if update_candidates:
         top_protein = candidates[0].get("protein") if candidates and isinstance(candidates[0], dict) else None

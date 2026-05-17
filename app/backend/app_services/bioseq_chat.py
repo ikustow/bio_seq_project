@@ -1,14 +1,24 @@
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Any, Protocol
 
 from backend.agents_core.shared.models import AppContext
 from backend.agents_core.shared.services.session_state import get_message_text, serialize_message
-from backend.app_contracts import BioSeqPipelineSnapshot, CandidateView, ChatTurnRequest, ChatTurnResult, ProteinView, SessionSnapshot
+from backend.app_contracts import (
+    BioSeqPipelineSnapshot,
+    CandidateView,
+    ChatTurnRequest,
+    ChatTurnResult,
+    ObjectsPatch,
+    ProteinView,
+    SessionSnapshot,
+)
 
 from .chat_llm import ChatLLMRequest, ChatLLMService
 from .retriever_pipeline import BioSeqRetrieverPipeline
+from .uniprot_lookup import lookup_protein_view
 
 class SessionAgent(Protocol):
     @property
@@ -55,8 +65,19 @@ class BioSeqChatService:
                 warnings=warnings,
             )
 
+        # ---- Direct UniProt accession / mnemonic lookup ----
+        direct_identifier = _direct_uniprot_identifier(request)
+        if direct_identifier:
+            return self._handle_direct_uniprot(request, context, direct_identifier, warnings)
+
+        # If the frontend already detected sequences and redacted them to
+        # ``@Seq_A`` mentions, the retriever needs the actual sequence
+        # body rather than the chat text. Look for the first pending
+        # Sequence in the registry and feed its raw body to the pipeline.
+        retriever_input, pending_sequence_id = _retriever_input_from_request(request)
+
         pipeline, pipeline_candidates = self._retriever_pipeline.run(
-            request.message, limit=5, search_algorithm=request.search_algorithm
+            retriever_input, limit=5, search_algorithm=request.search_algorithm
         )
         warnings.extend(pipeline.warnings)
         if pipeline.input_type in {"SEQUENCE", "FILEPATH"}:
@@ -94,6 +115,7 @@ class BioSeqChatService:
                 )
 
             if pipeline_candidates:
+                patch = _build_retriever_patch(request, pipeline, pipeline_candidates)
                 return ChatTurnResult(
                     session_id=request.session_id,
                     assistant_message=_pipeline_hit_message(pipeline),
@@ -103,6 +125,8 @@ class BioSeqChatService:
                     session=self._snapshot(context, state),
                     pipeline=pipeline,
                     warnings=warnings,
+                    objects_patch=patch,
+                    selected_object_id=patch.set_selected,
                 )
 
         # Follow-up turn: TEXT input within an existing session. Frontend
@@ -156,6 +180,8 @@ class BioSeqChatService:
                     prompt=request.message,
                     history=history,
                     selected_candidate=selected_candidate,
+                    objects=request.objects or {},
+                    selected_object_id=request.selected_object_id,
                 )
             )
             assistant_message = response.reply
@@ -194,6 +220,82 @@ class BioSeqChatService:
     def get_session(self, session_id: str, user_id: str = "anonymous") -> SessionSnapshot:
         context = AppContext(user_id=user_id, session_id=session_id)
         return self._snapshot(context, self._agent.get_current_state(context))
+
+    def _handle_direct_uniprot(
+        self,
+        request: ChatTurnRequest,
+        context: AppContext,
+        identifier: str,
+        warnings: list[str],
+    ) -> ChatTurnResult:
+        """Resolve a UniProt accession / mnemonic ID without running retriever."""
+        protein = lookup_protein_view(identifier)
+        if protein is None:
+            warnings.append(
+                f"Could not load UniProt record for `{identifier}` from local cache or API."
+            )
+            state = self._agent.get_current_state(context)
+            return ChatTurnResult(
+                session_id=request.session_id,
+                assistant_message=(
+                    f"I couldn't find a UniProt record for `{identifier}`. "
+                    "Double-check the identifier or try a different one."
+                ),
+                candidates=[],
+                selected_candidate_index=0,
+                revealed_sections=set(),
+                session=self._snapshot(context, state),
+                warnings=warnings,
+                update_card=False,
+                current_mode="uniprot_direct_lookup",
+            )
+
+        object_id = f"protein_{protein.accession.upper()}"
+        protein_payload = {
+            "id": object_id,
+            "kind": "protein",
+            "label": protein.accession,
+            "display_name": protein.name or protein.accession,
+            "accession": protein.accession,
+            "uniprot_id": "",
+            "gene": protein.gene or "",
+            "organism": protein.organism_scientific or "",
+            "linked_sequence_ids": [],
+            "card": protein.model_dump(),
+            "match_score": 1.0,
+            "last_origin_sequence_id": None,
+        }
+        patch = ObjectsPatch(
+            upsert={object_id: protein_payload},
+            set_selected=object_id,
+        )
+
+        state = self._agent.update_current_state(
+            context,
+            {
+                "active_accession": protein.accession,
+                "current_mode": "uniprot_direct_lookup",
+            },
+        )
+        assistant_message = (
+            f"I loaded **{protein.accession}** ({protein.name or 'UniProt entry'}) "
+            "directly without running a similarity search."
+        )
+        return ChatTurnResult(
+            session_id=request.session_id,
+            assistant_message=assistant_message,
+            candidates=[CandidateView(protein=protein, match_score=1.0, rank=0)],
+            selected_candidate_index=0,
+            revealed_sections=_revealed_sections(
+                [CandidateView(protein=protein, match_score=1.0, rank=0)]
+            ),
+            session=self._snapshot(context, state),
+            warnings=warnings,
+            update_card=False,
+            current_mode="uniprot_direct_lookup",
+            objects_patch=patch,
+            selected_object_id=object_id,
+        )
 
     def _snapshot(self, context: AppContext, state: dict[str, Any]) -> SessionSnapshot:
         return SessionSnapshot(
@@ -408,6 +510,177 @@ def _selected_candidate_from_ui_context(
         return None
     picked = candidates[selected_index]
     return picked if isinstance(picked, dict) else None
+
+
+_UNIPROT_ACCESSION_RE = re.compile(
+    r"^(?:[OPQ][0-9][A-Z0-9]{3}[0-9]"
+    r"|[A-NR-Z][0-9](?:[A-Z][A-Z0-9]{2}[0-9]){1,2})$"
+)
+_UNIPROT_MNEMONIC_RE = re.compile(r"^[A-Z0-9]{1,10}_[A-Z0-9]{1,5}$")
+
+
+def _direct_uniprot_identifier(request: ChatTurnRequest) -> str | None:
+    """Detect a bare UniProt accession or mnemonic in the user's message.
+
+    Used to skip the embedding/rerank pipeline when the user has already
+    named a specific UniProt entry. Internal Sequence labels (``Seq_A``,
+    ``Seq_B``, ...) and any label that already exists in the workspace
+    registry must NOT be treated as UniProt identifiers.
+    """
+    candidate = (request.message or "").strip().upper()
+    if not candidate:
+        return None
+    if candidate.startswith("@"):
+        candidate = candidate[1:]
+
+    if _is_internal_sequence_label(candidate, request):
+        return None
+    if _UNIPROT_ACCESSION_RE.match(candidate) or _UNIPROT_MNEMONIC_RE.match(candidate):
+        return candidate
+
+    for mention in request.object_mentions or []:
+        if getattr(mention, "kind", None) == "protein" and getattr(mention, "label", None):
+            label = str(mention.label).upper()
+            if _is_internal_sequence_label(label, request):
+                continue
+            if _UNIPROT_ACCESSION_RE.match(label) or _UNIPROT_MNEMONIC_RE.match(label):
+                return label
+    return None
+
+
+def _is_internal_sequence_label(token: str, request: ChatTurnRequest) -> bool:
+    """Return True if ``token`` is one of our own Sequence labels.
+
+    Excludes both the literal ``SEQ_<letters>`` pattern we use for fresh
+    labels and any label already registered in ``request.objects``.
+    """
+    if not token:
+        return False
+    upper = token.upper()
+    if upper.startswith("SEQ_") and upper[4:].isalpha():
+        return True
+    for obj in (request.objects or {}).values():
+        if not isinstance(obj, dict):
+            continue
+        if obj.get("kind") != "sequence":
+            continue
+        label = str(obj.get("label") or "").upper()
+        if label and label == upper:
+            return True
+    return False
+
+
+def _retriever_input_from_request(request: ChatTurnRequest) -> tuple[str, str | None]:
+    """Pick the right text for the retriever pipeline.
+
+    Preference order:
+
+    1. A pending Sequence in ``request.objects`` (status queued/searching/
+       classifying/draft) — feed its FASTA header + body or raw sequence.
+    2. The user's chat message as-is.
+
+    Returns ``(text, sequence_id)`` where ``sequence_id`` is the id of the
+    Sequence that owned the body, or ``None`` if we fell back to the raw
+    chat text.
+    """
+    interesting = {"queued", "searching", "classifying", "draft"}
+    for object_id, obj in (request.objects or {}).items():
+        if not isinstance(obj, dict):
+            continue
+        if obj.get("kind") != "sequence":
+            continue
+        if obj.get("status") not in interesting:
+            continue
+        body = (
+            obj.get("protein_sequence")
+            or obj.get("normalized_sequence")
+            or obj.get("raw_sequence")
+            or ""
+        )
+        if not body:
+            continue
+        header = obj.get("fasta_header") or ""
+        text = f"{header}\n{body}" if header else body
+        return text, object_id
+    return request.message or "", None
+
+
+def _build_retriever_patch(
+    request: ChatTurnRequest,
+    pipeline: BioSeqPipelineSnapshot,
+    candidates: list[CandidateView],
+) -> ObjectsPatch:
+    """Construct an ``ObjectsPatch`` that updates a Sequence with its top-5.
+
+    Strategy: figure out which Sequence id the matches belong to. The
+    frontend sends the freshly-created Sequence (status ``queued`` /
+    ``searching``) inside ``request.objects``; we update that exact id so
+    the registry stays consistent. If no such Sequence is found, fall back
+    to a synthetic id derived from the protein sequence so the patch is
+    still valid.
+    """
+    target_id = _resolve_target_sequence_id(request, pipeline)
+    matches_payload = [
+        {
+            "accession": cand.protein.accession,
+            "rank": cand.rank,
+            "match_score": cand.match_score,
+            "protein": cand.protein.model_dump(),
+        }
+        for cand in candidates
+    ]
+
+    # Only the Sequence is upserted as a Session-object. The top-5 protein
+    # candidates live INSIDE ``sequence.matches`` and are not surfaced as
+    # standalone chips — those should appear only for proteins the user
+    # explicitly opens (direct UniProt ID lookup).
+    sequence_status: dict[str, Any] = {
+        "status": "ready",
+        "matches": matches_payload,
+    }
+    if pipeline.protein_sequence:
+        sequence_status["protein_sequence"] = pipeline.protein_sequence
+    upsert: dict[str, Any] = {target_id: sequence_status}
+
+    return ObjectsPatch(upsert=upsert, set_selected=target_id)
+
+
+def _resolve_target_sequence_id(
+    request: ChatTurnRequest,
+    pipeline: BioSeqPipelineSnapshot,
+) -> str:
+    """Find the Sequence id the retriever ran for.
+
+    Preference order:
+
+    1. The first sequence object in ``request.objects`` whose status is in
+       ``{queued, searching, classifying, draft}``.
+    2. The frontend's ``selected_object_id`` if it points at a sequence.
+    3. A synthesised id based on the normalised protein sequence.
+    """
+    candidates: list[tuple[int, str]] = []
+    objects = request.objects or {}
+    interesting = {"queued", "searching", "classifying", "draft"}
+    for index, (object_id, obj) in enumerate(objects.items()):
+        if not isinstance(obj, dict):
+            continue
+        if obj.get("kind") != "sequence":
+            continue
+        if obj.get("status") in interesting:
+            candidates.append((index, object_id))
+    if candidates:
+        return candidates[0][1]
+    if request.selected_object_id:
+        target = objects.get(request.selected_object_id)
+        if isinstance(target, dict) and target.get("kind") == "sequence":
+            return request.selected_object_id
+    seq_body = pipeline.protein_sequence or pipeline.sequence or ""
+    if seq_body:
+        import hashlib
+
+        digest = hashlib.sha1(seq_body.encode("utf-8")).hexdigest()[:12]
+        return f"seq_{digest}"
+    return "seq_pending"
 
 
 def _pipeline_miss_message(pipeline: BioSeqPipelineSnapshot) -> str:
