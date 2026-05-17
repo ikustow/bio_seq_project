@@ -152,11 +152,16 @@ print("Indices ready.")
 # --- Embedding ---
 
 def _embed_protein(sequence: str) -> np.ndarray:
-    processed_seq = " ".join(list(sequence.upper()))
+    # ProtT5 reference recipe: substitute rare/ambiguous residues with X
+    seq = re.sub(r"[UZOB]", "X", sequence.upper())
+    processed_seq = " ".join(list(seq))
+    
     inputs = protein_tokenizer(processed_seq, return_tensors="pt").to(device)
     with torch.no_grad():
         outputs = protein_model(**inputs)
-        residue_embeddings = outputs.last_hidden_state.squeeze(0)
+        # Exclude the trailing </s> (EOS) token from the mean pool to match bio_embeddings distribution
+        residue_embeddings = outputs.last_hidden_state[0, :len(seq), :]
+        
     return residue_embeddings.mean(dim=0).cpu().numpy().astype(np.float32)
 
 def _embed_dna(sequence: str) -> np.ndarray:
