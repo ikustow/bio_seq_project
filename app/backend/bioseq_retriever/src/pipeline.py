@@ -94,8 +94,7 @@ class GraphState(TypedDict):
     context: Optional[str]
     sequence: Optional[str]
     sequence_type: Optional[str]
-    ranked_results: Optional[List[Dict[str, Any]]]
-    final_results: Optional[List[Dict[str, Any]]]
+    results: Optional[List[Dict[str, Any]]]
     error: Optional[str]
     # "embeddings" (default, ProtT5+FAISS via search-service) or "blast" (EBI REST).
     search_algorithm: Optional[str]
@@ -203,8 +202,15 @@ def rank_dna_node(state: GraphState) -> Dict[str, Any]:
     try:
         # Uses raw DNA sequence for search
         matches = search_dna_top_k(state['sequence'], k=50)
+        # matches is List[Tuple[accession, score]]
         records = get_uniprot_records([m[0] for m in matches])
-        return {"ranked_results": records}
+        
+        # Inject search scores into records for future reranking logic
+        score_map = {m[0]: m[1] for m in matches}
+        for rec in records:
+            rec["_search_score"] = score_map.get(rec.get("primaryAccession"))
+            
+        return {"results": records}
     except Exception as e:
         return {"error": f"DNA Ranking failed: {str(e)}"}
 
@@ -220,26 +226,33 @@ def rank_node(state: GraphState) -> Dict[str, Any]:
             matches = blast_search(state['sequence'], k=10)
         else:
             matches = search_top_k(state['sequence'], k=50)
+            
         records = get_uniprot_records([m[0] for m in matches])
-        return {"ranked_results": records}
+        
+        # Inject search scores into records
+        score_map = {m[0]: m[1] for m in matches}
+        for rec in records:
+            rec["_search_score"] = score_map.get(rec.get("primaryAccession"))
+            
+        return {"results": records}
     except Exception as e:
         return {"error": f"Ranking failed: {str(e)}"}
 
 def rerank_node(state: GraphState) -> Dict[str, Any]:
     """Performs contextual reranking (Top 5)."""
     if state.get('error'): return {}
-    ranked = state.get('ranked_results') or []
+    ranked = state.get('results') or []
     if not _rerank_service_alive():
-        print(f"Rerank service unreachable at {SEARCH_SERVICE_URL}; using top-5 of ranked_results.")
-        return {"final_results": ranked[:5]}
+        print(f"Rerank service unreachable at {SEARCH_SERVICE_URL}; using top-5 of initial results.")
+        return {"results": ranked[:5]}
     try:
         reranker = LocalReranker()
         # Takes top 50 matches (DNA or Protein) and reranks them
         final_records = reranker.rerank_by_context(ranked, state['context'], top_n=5)
-        return {"final_results": final_records}
+        return {"results": final_records}
     except Exception as e:
-        print(f"Rerank skipped ({e}); falling back to top-5 of ranked_results.")
-        return {"final_results": ranked[:5]}
+        print(f"Rerank skipped ({e}); falling back to top-5 of initial results.")
+        return {"results": ranked[:5]}
 
 # --- Conditional Routing Logic ---
 
@@ -291,8 +304,7 @@ async def run_bioseq_pipeline(prompt: str, search_algorithm: str = "embeddings")
         "context": None,
         "sequence": None,
         "sequence_type": None,
-        "ranked_results": None,
-        "final_results": None,
+        "results": None,
         "error": None,
         "search_algorithm": search_algorithm,
     }
