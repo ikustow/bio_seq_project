@@ -6,7 +6,7 @@ from langgraph.graph import StateGraph, END
 
 from src.utils import get_llm, get_first_fasta_entry, is_secure_path, clean_sequence
 from src.data_fetcher import get_uniprot_records
-from src.search import search_top_k, search_dna_top_k, blast_search
+from src.search import search_protein_top_k, search_dna_top_k, blast_search
 from src.reranking import LocalReranker
 
 from src.config import ALLOWED_DATA_DIR, SEARCH_SERVICE_URL
@@ -201,8 +201,8 @@ def rank_dna_node(state: GraphState) -> Dict[str, Any]:
     except Exception as e:
         return {"error": f"DNA Ranking failed: {str(e)}"}
 
-def rank_node(state: GraphState) -> Dict[str, Any]:
-    """Performs sequence similarity search via the selected backend."""
+def rank_protein_node(state: GraphState) -> Dict[str, Any]:
+    """Performs protein sequence similarity search via the selected backend."""
     if state.get('error'): return {}
     try:
         algorithm = (state.get("search_algorithm") or "embeddings").lower()
@@ -212,7 +212,7 @@ def rank_node(state: GraphState) -> Dict[str, Any]:
             # query was supplied. Hardcoded to SwissProt for speed/quality.
             matches = blast_search(state['sequence'], k=10)
         else:
-            matches = search_top_k(state['sequence'], k=50)
+            matches = search_protein_top_k(state['sequence'], k=50)
             
         records = get_uniprot_records([m[0] for m in matches])
         
@@ -223,7 +223,7 @@ def rank_node(state: GraphState) -> Dict[str, Any]:
             
         return {"results": records}
     except Exception as e:
-        return {"error": f"Ranking failed: {str(e)}"}
+        return {"error": f"Protein Ranking failed: {str(e)}"}
 
 def rerank_node(state: GraphState) -> Dict[str, Any]:
     """Performs contextual reranking (Top 5)."""
@@ -248,9 +248,9 @@ def should_resolve_filepath(state: GraphState) -> Literal["resolve", "raw", "err
     if state.get('error'): return "error"
     return "resolve" if state['input_type'] == "FILEPATH" else "raw"
 
-def should_rank(state: GraphState) -> Literal["rank_dna", "protein_path", "error"]:
+def should_rank(state: GraphState) -> Literal["rank_dna", "rank_protein", "error"]:
     if state.get('error'): return "error"
-    return "rank_dna" if state['sequence_type'] == "DNA" else "protein_path"
+    return "rank_dna" if state['sequence_type'] == "DNA" else "rank_protein"
 
 # --- Graph Construction ---
 
@@ -261,7 +261,7 @@ def create_pipeline():
     workflow.add_node("resolve_file", resolve_filepath_node)
     workflow.add_node("use_raw", use_raw_sequence_node)
     workflow.add_node("rank_dna", rank_dna_node)
-    workflow.add_node("rank", rank_node)
+    workflow.add_node("rank_protein", rank_protein_node)
     workflow.add_node("rerank", rerank_node)
     
     workflow.set_entry_point("extract")
@@ -269,12 +269,12 @@ def create_pipeline():
     workflow.add_conditional_edges("extract", should_resolve_filepath, {"resolve": "resolve_file", "raw": "use_raw", "error": END})
     
     # After resolution/raw input, branch to DNA search or Protein search path
-    workflow.add_conditional_edges("resolve_file", should_rank, {"rank_dna": "rank_dna", "protein_path": "rank", "error": END})
-    workflow.add_conditional_edges("use_raw", should_rank, {"rank_dna": "rank_dna", "protein_path": "rank", "error": END})
+    workflow.add_conditional_edges("resolve_file", should_rank, {"rank_dna": "rank_dna", "rank_protein": "rank_protein", "error": END})
+    workflow.add_conditional_edges("use_raw", should_rank, {"rank_dna": "rank_dna", "rank_protein": "rank_protein", "error": END})
     
     # Convergence points
     workflow.add_conditional_edges("rank_dna", check_error, {"error": END, "continue": "rerank"})
-    workflow.add_conditional_edges("rank", check_error, {"error": END, "continue": "rerank"})
+    workflow.add_conditional_edges("rank_protein", check_error, {"error": END, "continue": "rerank"})
     
     workflow.add_edge("rerank", END)
     

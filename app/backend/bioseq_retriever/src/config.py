@@ -18,8 +18,8 @@ MAX_RETRIES = int(os.getenv("BIOSEQ_MAX_RETRIES", "5"))
 BACKOFF_FACTOR = float(os.getenv("BIOSEQ_BACKOFF_FACTOR", "2.0"))
 
 # --- Services (Microservices) ---
+# All retrieval and reranking are now handled by a single unified gateway on port 8002
 SEARCH_SERVICE_URL = os.getenv("BIOSEQ_SEARCH_SERVICE_URL", "http://localhost:8002")
-DNA_SEARCH_SERVICE_URL = os.getenv("BIOSEQ_DNA_SEARCH_SERVICE_URL", "http://localhost:8003")
 
 # Toggle to use services instead of local loading
 USE_SERVICES = os.getenv("BIOSEQ_USE_SERVICES", "true").lower() == "true"
