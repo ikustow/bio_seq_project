@@ -12,6 +12,7 @@ import streamlit as st
 
 from components import alignment_viewer
 from components.domain_diagram import build_figure
+from components.protein_markdown_export import build_protein_markdown, markdown_filename
 from mock.protein_loader import Candidate, ProteinView
 
 _ALL_SECTIONS: tuple[str, ...] = (
@@ -443,7 +444,11 @@ def _alignment_score_for_candidate(candidate: Candidate, query_sequence: str | N
     return alignment_viewer.alignment_match_percent(query_sequence, candidate_sequence)
 
 
-def _render_switcher(candidates: list[Candidate], query_sequence: str | None) -> int:
+def _render_switcher(
+    candidates: list[Candidate],
+    revealed: set[str],
+    query_sequence: str | None,
+) -> int:
     """Render the candidate switcher and return the chosen index.
 
     Uses `selected_candidate_idx` in session_state as both the initial value
@@ -455,11 +460,35 @@ def _render_switcher(candidates: list[Candidate], query_sequence: str | None) ->
     st.session_state.selected_candidate_idx = chosen
 
     with st.container(border=True, key="candidate_switcher"):
-        st.markdown("#### Top 5 matches")
-        st.caption(
-            "Ranked & re-ranked by the retrieval pipeline. "
-            "Pick a candidate to view its full record."
-        )
+        selected = candidates[chosen]
+        selected_protein = selected["protein"]
+        header_left, header_right = st.columns([3, 1])
+        with header_left:
+            st.markdown("#### Top 5 matches")
+            st.caption(
+                "Ranked & re-ranked by the retrieval pipeline. "
+                "Pick a candidate to view its full record."
+            )
+        with header_right:
+            markdown_report = build_protein_markdown(
+                selected=selected,
+                candidates=candidates,
+                selected_index=chosen,
+                revealed=revealed,
+                query_sequence=query_sequence,
+            )
+            st.download_button(
+                "Save to .md",
+                data=markdown_report,
+                file_name=markdown_filename(selected_protein),
+                mime="text/markdown",
+                key=f"protein_card_download_{chosen}_{selected_protein.get('accession') or 'protein'}",
+                help=(
+                    "Save this protein card as a formatted Markdown file. "
+                    "You can share it with another LLM as research context."
+                ),
+                use_container_width=True,
+            )
         # Only the tile background colours live inline — all layout
         # rules (sizes, grid structure, font sizing) live in style.css
         # so there's a single source of truth.
@@ -528,7 +557,7 @@ def render(
             )
         return
 
-    chosen = _render_switcher(candidates, query_sequence)
+    chosen = _render_switcher(candidates, revealed, query_sequence)
     selected = candidates[chosen]
     protein = selected["protein"]
     score = selected["match_score"]
