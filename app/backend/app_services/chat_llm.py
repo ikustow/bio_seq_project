@@ -280,6 +280,10 @@ def build_protein_context(candidate: dict[str, Any] | None) -> str | None:
     if keywords:
         lines.append(f"\n**Keywords:** {', '.join(keywords[:8])}")
 
+    go_terms = protein.get("go_terms") or []
+    if go_terms:
+        lines.append(f"\n**GO terms:** {', '.join(go_terms[:8])}")
+
     pathways = protein.get("pathways") or []
     if pathways:
         pathway_names = [p.get("name", "Pathway") for p in pathways[:3]]

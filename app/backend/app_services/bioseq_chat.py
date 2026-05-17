@@ -336,9 +336,8 @@ def _sequence_records(pipeline: BioSeqPipelineSnapshot, active_sequence_id: str 
 def _revealed_sections(candidates: list[CandidateView]) -> set[str]:
     """Return the set of protein-card sections the UI should unlock.
 
-    Section keys must match the frontend's ``protein_card._ALL_SECTIONS``:
-    ``header / keyfacts / function / domains / structure / keywords /
-    disease / references``. Header / keyfacts / structure are revealed
+    Section keys must match the frontend's ``protein_card._ALL_SECTIONS``.
+    Header / keyfacts / structure are revealed
     whenever there is *any* candidate to show; the rest gate on actual
     data being present so the card doesn't pretend a section is filled.
     """
@@ -350,8 +349,8 @@ def _revealed_sections(candidates: list[CandidateView]) -> set[str]:
         sections.add("function")
     if protein.domains:
         sections.add("domains")
-    if protein.keywords or protein.go_terms:
-        sections.add("keywords")
+    if protein.keywords or protein.go_terms or protein.go_terms_by_category or protein.pathways:
+        sections.add("pathways")
     if protein.disease:
         sections.add("disease")
     if protein.pubmed_ids or protein.xrefs:
