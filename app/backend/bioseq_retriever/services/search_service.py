@@ -9,7 +9,6 @@ import torch
 import traceback
 import re
 from typing import List, Tuple, Generator, Dict, Any, Optional
-from dataclasses import dataclass, field
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from transformers import T5EncoderModel, T5Tokenizer, AutoModel, AutoTokenizer
@@ -45,23 +44,6 @@ class RerankRequest(BaseModel):
     records: List[Dict[str, Any]]
     context_query: str
     top_n: int = 5
-
-@dataclass
-class BiologicalQuery:
-    raw_query: str
-    taxonomic_hints: List[str] = field(default_factory=list)
-    localization_hints: List[str] = field(default_factory=list)
-    enzyme_ids: List[str] = field(default_factory=list)
-
-@dataclass
-class ScoringComponents:
-    sequence: float = 0.0
-    semantic: float = 0.0
-    taxonomy: float = 0.0
-    localization: float = 0.0
-    domain_architecture: float = 0.0
-    total: float = 0.0
-    explanation: List[str] = field(default_factory=list)
 
 # =============================================================================
 # MODEL INITIALIZATION
@@ -159,14 +141,8 @@ def load_or_create_index(h5_path: str, index_path: str, cache_path: str, name: s
 
 print("Initializing FAISS indices...")
 protein_index, protein_accessions = load_or_create_index(DEFAULT_H5_PATH, DEFAULT_INDEX_PATH, DEFAULT_CACHE_PATH, "Protein")
-# DNA index is optional: many deployments only ship the protein corpus.
-# We log a warning and disable the /search/dna endpoint instead of crashing
-# the whole service when the .h5 isn't present.
-if os.path.exists(DNA_H5_PATH) or (os.path.exists(DNA_INDEX_PATH) and os.path.exists(DNA_CACHE_PATH)):
-    dna_index, dna_accessions = load_or_create_index(DNA_H5_PATH, DNA_INDEX_PATH, DNA_CACHE_PATH, "DNA")
-else:
-    print(f"DNA index disabled: {DNA_H5_PATH} not found. /search/dna will return 503.")
-    dna_index, dna_accessions = None, []
+dna_index, dna_accessions = load_or_create_index(DNA_H5_PATH, DNA_INDEX_PATH, DNA_CACHE_PATH, "DNA")
+
 print("Indices ready.")
 
 # =============================================================================
@@ -176,11 +152,16 @@ print("Indices ready.")
 # --- Embedding ---
 
 def _embed_protein(sequence: str) -> np.ndarray:
-    processed_seq = " ".join(list(sequence.upper()))
+    # ProtT5 reference recipe: substitute rare/ambiguous residues with X
+    seq = re.sub(r"[UZOB]", "X", sequence.upper())
+    processed_seq = " ".join(list(seq))
+    
     inputs = protein_tokenizer(processed_seq, return_tensors="pt").to(device)
     with torch.no_grad():
         outputs = protein_model(**inputs)
-        residue_embeddings = outputs.last_hidden_state.squeeze(0)
+        # Exclude the trailing </s> (EOS) token from the mean pool to match bio_embeddings distribution
+        residue_embeddings = outputs.last_hidden_state[0, :len(seq), :]
+        
     return residue_embeddings.mean(dim=0).cpu().numpy().astype(np.float32)
 
 def _embed_dna(sequence: str) -> np.ndarray:
@@ -213,60 +194,22 @@ def _perform_vector_search(index, query_emb: np.ndarray, k: int):
 
 # --- Reranking Helpers ---
 
-def _parse_biological_intent(prompt: str) -> BiologicalQuery:
-    query = BiologicalQuery(raw_query=prompt)
-    prompt_lower = prompt.lower()
-    taxa_map = {"bacterial": "bacteria", "human": "homo sapiens", "mammal": "mammalia", "viral": "viruses"}
-    query.taxonomic_hints = [v for k, v in taxa_map.items() if k in prompt_lower]
-    query.localization_hints = [l for l in ["membrane", "secreted", "cytoplasm", "nucleus", "mitochondrion"] if l in prompt_lower]
-    query.enzyme_ids = re.findall(r"\b\d+\.\d+\.\d+\.\d+\b", prompt)
-    return query
-
-def _extract_rich_profile(record: Dict[str, Any]) -> Dict[str, Any]:
-    lineage = []
-    for taxon in record.get('organism', {}).get('lineage', []):
-        if isinstance(taxon, dict):
-            lineage.append(taxon.get('scientificName', '').lower())
-        elif isinstance(taxon, str):
-            lineage.append(taxon.lower())
-
-    profile = {
-        "name": record.get('proteinDescription', {}).get('recommendedName', {}).get('fullName', {}).get('value', ''),
-        "organism": record.get('organism', {}).get('scientificName', ''),
-        "lineage": [],
-        "locations": [], "functions": [], "go_terms": [], "domains": [], "ec_numbers": []
-    }
-
-    # Handle lineage (can be list of dicts or list of strings)
-    raw_lineage = record.get('organism', {}).get('lineage', [])
-    for t in raw_lineage:
-        if isinstance(t, dict):
-            profile["lineage"].append(t.get('scientificName', '').lower())
-        else:
-            profile["lineage"].append(str(t).lower())
-
+def _format_record_for_embedding(record: Dict[str, Any]) -> str:
+    """Creates a clean text summary of a UniProt record for semantic embedding."""
+    name = record.get('proteinDescription', {}).get('recommendedName', {}).get('fullName', {}).get('value', 'N/A')
+    organism = record.get('organism', {}).get('scientificName', 'N/A')
+    
+    # Extract function comments
+    functions = []
     for comment in record.get('comments', []):
-        if comment.get('commentType') == 'SUBCELLULAR_LOCATION':
-            for l in comment.get('locations', []):
-                loc_val = l.get('location', {}).get('value', '').lower()
-                if loc_val: profile["locations"].append(loc_val)
         if comment.get('commentType') == 'FUNCTION':
-            profile["functions"].extend([t.get('value', '') for t in comment.get('note', {}).get('texts', [])])
-
-    for xref in record.get('uniProtKBCrossReferences', []):
-        db = xref.get('database')
-        if db == 'EC':
-            profile["ec_numbers"].append(xref.get('id'))
-        elif db == 'GO':
-            props = xref.get('properties', [])
-            if props:
-                # Usually the first property is 'GoTerm'
-                profile["go_terms"].append(props[0].get('value', ''))
-        elif db in ['Pfam', 'InterPro']: 
-            props = xref.get('properties', [])
-            if props:
-                profile["domains"].append(props[0].get('value', ''))
-    return profile
+            functions.extend([t.get('value', '') for t in comment.get('texts', [])])
+    func_text = " ".join(functions)
+    
+    # Extract keywords
+    keywords = ", ".join([k.get('value', '') for k in record.get('keywords', [])])
+    
+    return f"Protein: {name}. Organism: {organism}. Function: {func_text}. Keywords: {keywords}."
 
 # =============================================================================
 # ENDPOINTS
@@ -286,11 +229,6 @@ async def search_protein(request: SearchRequest):
 
 @app.post("/search/dna")
 async def search_dna(request: SearchRequest):
-    if dna_index is None:
-        raise HTTPException(
-            status_code=503,
-            detail=f"DNA index not loaded ({DNA_H5_PATH} missing). Provide BIOSEQ_DNA_H5_PATH to enable.",
-        )
     try:
         loop = asyncio.get_event_loop()
         emb = await loop.run_in_executor(executor, _embed_dna, request.sequence)
@@ -305,47 +243,54 @@ async def search_dna(request: SearchRequest):
 async def rerank(request: RerankRequest):
     try:
         loop = asyncio.get_event_loop()
-        bio_query = _parse_biological_intent(request.context_query)
-        profiles = [_extract_rich_profile(rec) for rec in request.records]
         
-        passages = [f"Protein: {p['name']}. Function: {' '.join(p['functions'])}. GO: {', '.join(p['go_terms'][:10])}." for p in profiles]
+        # 1. Prepare text passages for candidates
+        passages = [_format_record_for_embedding(rec) for rec in request.records]
+        
+        # 2. Embed query and passages
         query_vec = await loop.run_in_executor(executor, _embed_rerank_texts, [request.context_query], True)
         doc_vecs = await loop.run_in_executor(executor, _embed_rerank_texts, passages, False)
         
-        query_vec = query_vec / np.linalg.norm(query_vec, axis=1, keepdims=True)
-        doc_vecs = doc_vecs / np.linalg.norm(doc_vecs, axis=1, keepdims=True)
+        # 3. Calculate semantic scores (Cosine Similarity)
+        query_vec = query_vec / (np.linalg.norm(query_vec, axis=1, keepdims=True) + 1e-9)
+        doc_vecs = doc_vecs / (np.linalg.norm(doc_vecs, axis=1, keepdims=True) + 1e-9)
         semantic_scores = np.dot(doc_vecs, query_vec.T).flatten()
 
-        weights = {"sequence": 0.20, "semantic": 0.35, "taxonomy": 0.15, "localization": 0.20, "domain": 0.10}
-        reranked_list = []
-        for i, (record, profile) in enumerate(zip(request.records, profiles)):
-            comp = ScoringComponents()
-            comp.sequence = 1.0 - (i / len(request.records))
-            comp.semantic = float(semantic_scores[i])
-            
-            if bio_query.taxonomic_hints:
-                comp.taxonomy = sum(1 for h in bio_query.taxonomic_hints if h in profile["organism"].lower() or any(h in t for t in profile["lineage"])) / len(bio_query.taxonomic_hints)
-            else: comp.taxonomy = 1.0
-            
-            if bio_query.localization_hints:
-                comp.localization = sum(1 for h in bio_query.localization_hints if any(h in loc for l in profile["locations"] for loc in l.split())) / len(bio_query.localization_hints)
-            else: comp.localization = 1.0
-                
-            if bio_query.enzyme_ids and any(ec in profile["ec_numbers"] for ec in bio_query.enzyme_ids):
-                comp.domain_architecture = 1.0
-                
-            comp.total = sum(weights[k] * getattr(comp, k == "domain" and "domain_architecture" or k) for k in weights)
-            
-            if comp.localization > 0.8: comp.explanation.append("Subcellular alignment")
-            if comp.taxonomy > 0.8: comp.explanation.append("Taxonomic match")
-            if comp.domain_architecture > 0.5: comp.explanation.append("Specific Enzyme Class match")
-            if comp.semantic > 0.85: comp.explanation.append("Exceptional functional relevance")
+        # 4. Margin-Aware Adaptive Fusion
+        # Retrieval scores are stored in '_search_score'. We assume records are sorted by this.
+        retrieval_scores = np.array([r.get("_search_score", 0.0) for r in request.records])
+        
+        # Calculate local margins: gap between current and next candidate
+        # For the last element, we repeat the previous margin or use 0
+        margins = np.abs(np.diff(retrieval_scores))
+        if len(margins) > 0:
+            margins = np.append(margins, margins[-1])
+        else:
+            margins = np.array([0.0])
+        
+        # Adaptive weight logic: 
+        # tau is derived from the mean of positive margins to calibrate to the current data distribution
+        tau = np.mean(margins[margins > 0]) + 1e-6 if np.any(margins > 0) else 0.1
+        
+        # Exponential decay: large gaps -> small weights (preserves original ranking)
+        # Small gaps (near-ties) -> large weights (allows reranker to break ties)
+        adaptive_weights = np.exp(-margins / tau)
+        adaptive_weights = np.clip(adaptive_weights, 0, 1)
 
-            record["_rerank_score"] = comp.total
-            record["_rerank_explanation"] = " | ".join(comp.explanation)
+        # Internal sensitivity constant for the rerank signal
+        LAMBDA = 0.15
+
+        reranked_list = []
+        for i, record in enumerate(request.records):
+            # Combined score formula: Retrieval + gated Rerank signal
+            # This approximates lexicographic ranking while allowing smooth tie-breaking
+            final_score = retrieval_scores[i] + (LAMBDA * adaptive_weights[i] * semantic_scores[i])
+            
+            record["_search_score"] = float(final_score)
             reranked_list.append(record)
 
-        reranked_list.sort(key=lambda x: x["_rerank_score"], reverse=True)
+        # 5. Final Sort by the new margin-aware score
+        reranked_list.sort(key=lambda x: x["_search_score"], reverse=True)
         return {"results": reranked_list[:request.top_n]}
     except Exception as e:
         traceback.print_exc()
