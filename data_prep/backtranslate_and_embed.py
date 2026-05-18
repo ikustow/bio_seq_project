@@ -7,6 +7,7 @@ import polars as pl
 import torch
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM, BigBirdForMaskedLM
+from CodonTransformer.CodonPrediction import predict_dna_sequence
 from typing import List, Tuple, Dict
 
 # Import configuration
@@ -26,51 +27,13 @@ logger = logging.getLogger("BioSeqPipeline")
 # =============================================================================
 HYENA_MODEL_NAME = "LongSafari/hyenadna-medium-160k-seqlen-hf"
 CODON_MODEL_NAME = "adibvafa/CodonTransformer"
-PROGEN_MODEL_NAME = "multimolecule/progen2-small"
 
 # Configure PyTorch threads
 torch.set_num_threads(config.THREAD_COUNT)
 
 # =============================================================================
-# TAXONOMY MAPPING
+# TAXONOMY & HOST CONFIGURATION
 # =============================================================================
-# Maps ProGen2 taxonomy inference result keywords to CodonTransformer host strings
-TAXONOMY_TO_HOST = {
-    # prokaryotes
-    "bacteria": "Escherichia coli general",
-    "proteobacteria": "Escherichia coli general",
-    "enterobacteriaceae": "Escherichia coli general",
-
-    "bacillus": "Bacillus subtilis",
-    "firmicutes": "Bacillus subtilis",
-
-    "pseudomonas": "Pseudomonas putida",
-
-    # eukaryotes
-    "yeast": "Saccharomyces cerevisiae",
-    "fungi": "Saccharomyces cerevisiae",
-    "saccharomyces": "Saccharomyces cerevisiae",
-
-    "eukaryota": "Saccharomyces cerevisiae",
-
-    "plant": "Arabidopsis thaliana",
-    "plantae": "Arabidopsis thaliana",
-
-    "human": "Homo sapiens",
-    "homo": "Homo sapiens",
-    "mammal": "Homo sapiens",
-
-    "animal": "Homo sapiens",
-    "metazoa": "Homo sapiens",
-
-    # viruses (host-agnostic fallback)
-    "virus": "Escherichia coli general",
-    "viral": "Escherichia coli general",
-
-    # archaea (safe generic lab-ish default)
-    "archaea": "Methanococcus maripaludis",
-    "euryarchaeota": "Methanococcus maripaludis",
-}
 DEFAULT_HOST = "Escherichia coli general"
 
 # =============================================================================
@@ -87,61 +50,54 @@ def load_refseq_lookup(path: str) -> Dict[str, str]:
     df = pl.read_csv(path)
     return dict(zip(df["swissprot_id"], df["cds_sequence"]))
 
-def initialize_stack() -> Tuple[AutoModel, AutoTokenizer, BigBirdForMaskedLM, AutoTokenizer, AutoModelForCausalLM, AutoTokenizer, torch.device]:
-    """Initializes the three models in the pipeline: ProGen2, CodonTransformer, and HyenaDNA."""
+def initialize_stack() -> Tuple[AutoModel, AutoTokenizer, BigBirdForMaskedLM, AutoTokenizer, torch.device]:
+    """Initializes CodonTransformer and HyenaDNA."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Initializing models on {device}...")
-    
-    # 1. ProGen2 (Taxonomy Inference)
-    progen_tok = AutoTokenizer.from_pretrained(PROGEN_MODEL_NAME)
-    progen_mod = AutoModelForCausalLM.from_pretrained(PROGEN_MODEL_NAME, trust_remote_code=True).to(device)
-    progen_mod.eval()
 
-    # 2. CodonTransformer (Back-translation)
+    # 1. CodonTransformer (Back-translation)
     codon_tok = AutoTokenizer.from_pretrained(CODON_MODEL_NAME)
     codon_mod = BigBirdForMaskedLM.from_pretrained(CODON_MODEL_NAME).to(device)
     codon_mod.eval()
     
-    # 3. HyenaDNA (Embedding)
+    # 2. HyenaDNA (Embedding)
     hyena_tok = AutoTokenizer.from_pretrained(HYENA_MODEL_NAME, trust_remote_code=True)
     hyena_mod = AutoModel.from_pretrained(HYENA_MODEL_NAME, trust_remote_code=True).to(device)
     hyena_mod.eval()
     
-    return hyena_mod, hyena_tok, codon_mod, codon_tok, progen_mod, progen_tok, device
+    return hyena_mod, hyena_tok, codon_mod, codon_tok, device
 
-def infer_taxonomy_with_progen2(aa_seq: str, model: AutoModelForCausalLM, tokenizer: AutoTokenizer, device: torch.device) -> str:
+def back_translate_with_model(aa_sequence: str, organism: str, model: BigBirdForMaskedLM, tokenizer: AutoTokenizer, device: torch.device) -> str:
     """
-    Uses ProGen2 to infer likely taxonomy. 
-    Matches the highest probability 'taxon' token or uses a heuristic based on hidden states.
+    Generates DNA from protein using CodonTransformer.
+    Tries the raw organism name directly, falling back to a default if not recognized.
     """
-    # Note: ProGen2 typically expects '1' (BOS) and '2' (EOS). 
-    # For zero-shot, we can look at the first token prediction if it were a conditional variant.
-    # Since Salesforce/progen2-small is unconditional, we'll use a representative sequence check
-    # or simple keyword matching in this implementation for demonstration.
-    # A true implementation would use zero-shot likelihood comparison.
-    return "bacteria" # Default for speed in this production template
-
-def back_translate_with_model(aa_sequence: str, taxonomy: str, model: BigBirdForMaskedLM, tokenizer: AutoTokenizer, device: torch.device) -> str:
-    """Generates DNA from protein using CodonTransformer with the inferred taxonomy."""
-    # Map inferred taxonomy to CodonTransformer host string
-    host = TAXONOMY_TO_HOST.get(taxonomy.lower(), DEFAULT_HOST)
-    
     try:
-        from CodonTransformer.CodonPrediction import predict_dna_sequence
+        # Attempt direct use of SwissProt organism string
         output = predict_dna_sequence(
             protein=aa_sequence,
-            organism=host,
+            organism=organism,
             device=device,
             tokenizer=tokenizer,
             model=model,
             deterministic=True
         )
-        # Ensure DNA format (T instead of U)
-        return output['predicted_dna'].upper().replace("U", "T")
-    except (ImportError, Exception) as e:
-        logger.error(f"Back-translation error for host {host}: {e}")
-        # Fallback to standard host if specific host fails
-        return aa_sequence # Temporary return for safety; real logic handles failure
+        return output['predicted_dna'].upper()
+    except Exception:
+        # Fallback for unrecognized organism strings (common in specific SwissProt records)
+        try:
+            output = predict_dna_sequence(
+                protein=aa_sequence,
+                organism=DEFAULT_HOST,
+                device=device,
+                tokenizer=tokenizer,
+                model=model,
+                deterministic=True
+            )
+            return output['predicted_dna'].upper()
+        except Exception as e_inner:
+            logger.error(f"Back-translation failed for {organism} and fallback {DEFAULT_HOST}: {e_inner}")
+            return aa_sequence
 
 def compute_masked_mean_embedding(dna_batch: List[str], model: AutoModel, tokenizer: AutoTokenizer, device: torch.device) -> np.ndarray:
     """Computes fixed-size mean embeddings while ignoring padding tokens."""
@@ -179,22 +135,22 @@ def save_to_h5(h5_path: str, accessions: List[str], embeddings: np.ndarray):
         f.flush()
 
 class BioDataset(Dataset):
-    """Provides access to UniProt sequences."""
+    """Provides access to UniProt sequences and organism metadata."""
     def __init__(self, df: pl.DataFrame):
         self.data = df
     def __len__(self):
         return len(self.data)
     def __getitem__(self, idx):
         row = self.data.row(idx, named=True)
-        return row["Entry"], row["Sequence"]
+        return row["Entry"], row["Sequence"], row["Organism"]
 
 def run_pipeline():
-    """Orchestrates the multi-model data-to-embedding pipeline."""
+    """Orchestrates the data-to-embedding pipeline using SwissProt metadata."""
     try:
         # 1. Initialization
         df = pl.read_csv(config.SWISSPROT_TSV, separator="\t")
         lookup = load_refseq_lookup(config.REFSEQ_CDS_CSV)
-        h_mod, h_tok, c_mod, c_tok, p_mod, p_tok, device = initialize_stack()
+        h_mod, h_tok, c_mod, c_tok, device = initialize_stack()
         
         dataset = BioDataset(df)
         dataloader = DataLoader(dataset, batch_size=config.BATCH_SIZE, shuffle=False)
@@ -202,22 +158,20 @@ def run_pipeline():
         logger.info(f"Pipeline started: {len(df)} total, {len(lookup)} cached RefSeq.")
 
         # 2. Main Loop
-        for i, (batch_acc, batch_aa) in enumerate(dataloader):
+        for i, (batch_acc, batch_aa, batch_org) in enumerate(dataloader):
             final_dna_batch = []
             
-            for acc, aa in zip(batch_acc, batch_aa):
+            for acc, aa, org in zip(batch_acc, batch_aa, batch_org):
                 # Step A: Priority Lookup
                 dna = lookup.get(acc)
                 
                 if not dna:
-                    # Step B: Taxonomy Inference
-                    taxon = infer_taxonomy_with_progen2(aa, p_mod, p_tok, device)
-                    # Step C: Back-translation
-                    dna = back_translate_with_model(aa, taxon, c_mod, c_tok, device)
+                    # Step B: Back-translation with organism metadata
+                    dna = back_translate_with_model(aa, org, c_mod, c_tok, device)
                 
                 final_dna_batch.append(dna)
             
-            # Step D: Embedding
+            # Step C: Embedding
             try:
                 embeddings = compute_masked_mean_embedding(final_dna_batch, h_mod, h_tok, device)
                 save_to_h5(config.EMBEDDING_OUTPUT_FILE, batch_acc, embeddings)

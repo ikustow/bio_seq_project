@@ -104,3 +104,4 @@ tests/eval/runs/*
 !tests/eval/runs/baseline/
 !tests/eval/runs/2026-05-13T13-43-41-llm/
 !tests/eval/runs/.gitkeep
+data_prep/refseq_swissprot_cds.csv
