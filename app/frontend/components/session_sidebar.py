@@ -40,6 +40,12 @@ def render() -> None:
         )
         st.session_state["search_algorithm"] = picked
 
+        st.toggle(
+            "Assistant Mode 🧠",
+            key="think_mode_enabled",
+            help="Suggest three follow-up questions after each answer",
+        )
+
         if st.button("➕ New chat", width="stretch", key="sidebar_new_chat"):
             _start_fresh_session()
             st.rerun()

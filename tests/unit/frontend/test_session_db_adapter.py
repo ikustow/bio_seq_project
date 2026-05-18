@@ -67,6 +67,9 @@ def test_save_follow_up_preserves_existing_card_state(monkeypatch, candidate_dic
         revealed_sections=None,
         current_mode="chat_llm",
         update_candidates=False,
+        suggested_questions=["What domains matter?", "How strong is evidence?", "Which pathway?"],
+        think_mode=True,
+        suggested_questions_metadata={"suggested_questions_provider": "fake"},
     )
 
     wm = row["working_memory"]
@@ -77,4 +80,35 @@ def test_save_follow_up_preserves_existing_card_state(monkeypatch, candidate_dic
     assert wm["last_candidates"] == [candidate_dict]
     assert wm["last_revealed_sections"] == ["header", "pathways"]
     assert wm["last_query_protein_sequence"] == "MALW"
+    assert wm["last_suggested_questions"] == [
+        "What domains matter?",
+        "How strong is evidence?",
+        "Which pathway?",
+    ]
+    assert wm["think_mode_last_enabled"] is True
     assert [m["role"] for m in wm["messages"]] == ["user", "assistant"]
+    assert wm["messages"][1]["metadata"]["suggested_questions_provider"] == "fake"
+    assert wm["messages"][1]["metadata"]["suggested_questions"][0] == "What domains matter?"
+
+
+def test_extract_messages_preserves_suggested_question_metadata() -> None:
+    row = {
+        "working_memory": {
+            "messages": [
+                {"role": "user", "content": "q"},
+                {
+                    "role": "assistant",
+                    "content": "a",
+                    "metadata": {
+                        "suggested_questions": ["Follow up 1?", "Follow up 2?", "Follow up 3?"],
+                        "think_mode": True,
+                    },
+                },
+            ]
+        }
+    }
+
+    messages = session_db_adapter.extract_messages(row)
+
+    assert messages[1]["suggested_questions"] == ["Follow up 1?", "Follow up 2?", "Follow up 3?"]
+    assert messages[1]["metadata"]["think_mode"] is True

@@ -52,10 +52,11 @@ def test_build_ui_context_uses_selected_candidate(monkeypatch, candidate_dict) -
     assert context["selected_candidate"]["protein"]["accession"] == "O95185"
 
 
-def test_run_turn_follow_up_keeps_existing_card(monkeypatch, candidate_dict) -> None:
+def test_run_turn_follow_up_keeps_existing_card_and_questions(monkeypatch, candidate_dict) -> None:
     state = State(
         user_id="u1",
         session_id="s1",
+        think_mode_enabled=True,
         candidates=[candidate_dict],
         selected_candidate_idx=0,
         card_sections_revealed={"header", "pathways"},
@@ -71,6 +72,11 @@ def test_run_turn_follow_up_keeps_existing_card(monkeypatch, candidate_dict) -> 
         session=SessionSnapshot(session_id="s1", user_id="u1"),
         update_card=False,
         current_mode="chat_llm",
+        suggested_questions=["What domains matter?", "How strong is evidence?", "Which pathway?"],
+        metadata={
+            "suggested_questions_provider": "fake",
+            "suggested_questions_model": "fake-model",
+        },
     )
     service = FakeService(response)
 
@@ -89,8 +95,17 @@ def test_run_turn_follow_up_keeps_existing_card(monkeypatch, candidate_dict) -> 
     outcome = chat_pipeline._run_turn_backend("tell me more")
 
     assert outcome["update_card"] is False
+    assert outcome["suggested_questions"] == [
+        "What domains matter?",
+        "How strong is evidence?",
+        "Which pathway?",
+    ]
     assert outcome["candidates"] == [candidate_dict]
     assert outcome["reveals"] == {"header", "pathways"}
     assert saved["update_candidates"] is False
     assert saved["candidates"] == []
+    assert saved["suggested_questions"] == outcome["suggested_questions"]
+    assert saved["think_mode"] is True
+    assert saved["suggested_questions_metadata"]["suggested_questions_provider"] == "fake"
     assert service.requests[0].ui_context["selected_candidate"]["protein"]["accession"] == "O95185"
+    assert service.requests[0].think_mode is True
