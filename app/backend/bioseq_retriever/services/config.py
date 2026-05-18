@@ -30,10 +30,10 @@ RANDOM_SEED = 42
 # --- Model Settings ---
 PROTEIN_MODEL_NAME = "Rostlab/prot_t5_xl_uniref50"
 DNA_MODEL_NAME = "LongSafari/hyenadna-medium-160k-seqlen-hf"
-RERANK_MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
+RERANK_MODEL_NAME = "intfloat/e5-large-v2"
 
 # Internal sensitivity constant for the rerank signal (margin-aware fusion)
-RERANK_LAMBDA = 0.10
+RERANK_LAMBDA = 0.15
 
 # Sequence length limits
 DNA_MAX_LENGTH = 160_000
