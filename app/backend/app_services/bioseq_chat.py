@@ -151,16 +151,36 @@ class BioSeqChatService:
             if pipeline_candidates:
                 patch = _build_retriever_patch(request, pipeline, pipeline_candidates)
                 assistant_message = _pipeline_hit_message(pipeline)
+                top_candidate_dump = pipeline_candidates[0].model_dump()
+                history = _history_from_ui_context(request.ui_context or {})
                 suggested_questions, suggested_metadata = self._maybe_generate_suggested_questions(
                     request=request,
                     assistant_message=assistant_message,
-                    selected_candidate=pipeline_candidates[0].model_dump(),
-                    history=_history_from_ui_context(request.ui_context or {}),
+                    selected_candidate=top_candidate_dump,
+                    history=history,
+                    warnings=warnings,
+                )
+                # Chain a Gemini/OpenAI follow-up immediately after the
+                # retriever lands. Same prompt the user typed (it may include
+                # explanatory text wrapped around the pasted sequence), with
+                # the top match injected as protein context. Failures only
+                # warn — the primary retriever reply is already produced.
+                (
+                    secondary_message,
+                    secondary_provider,
+                    secondary_model,
+                ) = self._maybe_generate_followup_llm_reply(
+                    request=request,
+                    top_candidate=top_candidate_dump,
+                    history=history,
                     warnings=warnings,
                 )
                 return ChatTurnResult(
                     session_id=request.session_id,
                     assistant_message=assistant_message,
+                    secondary_assistant_message=secondary_message,
+                    secondary_provider=secondary_provider,
+                    secondary_provider_model=secondary_model,
                     candidates=pipeline_candidates,
                     selected_candidate_index=selected_index,
                     revealed_sections=_revealed_sections(pipeline_candidates),
@@ -229,6 +249,42 @@ class BioSeqChatService:
             "suggested_questions_raw": response.raw,
         }
         return response.questions, metadata
+
+    def _maybe_generate_followup_llm_reply(
+        self,
+        *,
+        request: ChatTurnRequest,
+        top_candidate: dict[str, Any],
+        history: list[dict[str, Any]],
+        warnings: list[str],
+    ) -> tuple[str | None, str | None, str | None]:
+        """Run a Chat-LLM call right after a retriever hit.
+
+        The user's full prompt (text + sequence) is forwarded to
+        Gemini/OpenAI together with the top retriever match injected as
+        protein context. The reply becomes the second assistant bubble
+        rendered after the canonical pipeline message.
+
+        Returns ``(reply, provider, model)``. All three are ``None`` when
+        no Chat-LLM provider is configured or the call failed — the
+        retriever's primary reply is still delivered either way.
+        """
+        if self._chat_llm_service is None:
+            return None, None, None
+        try:
+            response = self._chat_llm_service.generate(
+                ChatLLMRequest(
+                    prompt=request.message,
+                    history=history,
+                    selected_candidate=top_candidate,
+                    objects=request.objects or {},
+                    selected_object_id=request.selected_object_id,
+                )
+            )
+        except Exception as exc:
+            warnings.append(f"Chat LLM follow-up after retriever failed: {exc}")
+            return None, None, None
+        return response.reply, response.provider, response.model
 
     def _handle_follow_up(
         self,

@@ -117,6 +117,7 @@ def _run_turn_backend(prompt: str) -> dict[str, Any]:
     warnings.extend(response.warnings)
     update_card = response.update_card
     reply = response.assistant_message
+    secondary_reply = response.secondary_assistant_message or None
     suggested_questions = list(response.suggested_questions or [])
     suggested_questions_metadata = _suggested_questions_metadata(response.metadata)
 
@@ -152,6 +153,7 @@ def _run_turn_backend(prompt: str) -> dict[str, Any]:
             update_candidates=True,
             suggested_questions=suggested_questions,
             suggested_questions_metadata=suggested_questions_metadata,
+            secondary_assistant_message=secondary_reply,
         )
     else:
         # Follow-up turn: keep the existing card untouched. We still surface
@@ -178,6 +180,7 @@ def _run_turn_backend(prompt: str) -> dict[str, Any]:
 
     return {
         "reply": reply,
+        "secondary_reply": secondary_reply,
         "candidates": ui_candidates,
         "candidates_raw": raw_candidates,
         "reveals": reveals,
@@ -306,6 +309,7 @@ def _safe_save_turn(
     update_candidates: bool = True,
     suggested_questions: list[str] | None = None,
     suggested_questions_metadata: dict[str, Any] | None = None,
+    secondary_assistant_message: str | None = None,
 ) -> None:
     try:
         session_db_adapter.save_turn(
@@ -321,6 +325,7 @@ def _safe_save_turn(
             suggested_questions=suggested_questions,
             think_mode=bool(st.session_state.get("think_mode_enabled")),
             suggested_questions_metadata=suggested_questions_metadata,
+            secondary_assistant_message=secondary_assistant_message,
         )
     except Exception as exc:
         warnings.append(f"Could not save session turn: {exc}")

@@ -68,6 +68,13 @@ class ChatTurnRequest(BaseModel):
 class ChatTurnResult(BaseModel):
     session_id: str
     assistant_message: str
+    # Optional follow-up reply produced by the Chat-LLM (Gemini/OpenAI) right
+    # after a retriever hit, rendered as a second assistant bubble. ``None``
+    # means no follow-up was generated for this turn (e.g. retriever miss,
+    # follow-up turn that already came from Chat-LLM, or LLM call failed).
+    secondary_assistant_message: str | None = None
+    secondary_provider: str | None = None
+    secondary_provider_model: str | None = None
     candidates: list[CandidateView] = Field(default_factory=list)
     selected_candidate_index: int = 0
     revealed_sections: set[str] = Field(default_factory=set)

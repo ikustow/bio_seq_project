@@ -142,6 +142,7 @@ def save_turn(
     suggested_questions: list[str] | None = None,
     think_mode: bool = False,
     suggested_questions_metadata: dict[str, Any] | None = None,
+    secondary_assistant_message: str | None = None,
 ) -> dict[str, Any] | None:
     """Append the current turn to ``public.chat_sessions``.
 
@@ -213,6 +214,18 @@ def save_turn(
                 "think_mode": bool(think_mode),
             }
         messages.append(assistant_entry)
+    if secondary_assistant_message:
+        # Second assistant bubble: the Chat-LLM follow-up rendered right
+        # after the retriever's canned hit message. Stored as a separate
+        # entry so a reloaded session restores both bubbles in order.
+        messages.append(
+            {
+                "role": "assistant",
+                "content": secondary_assistant_message,
+                "ts": now_iso,
+                "metadata": {"source": "chat_llm_followup"},
+            }
+        )
 
     turn_count = int(saved_wm.get("turn_count") or 0) + 1
 

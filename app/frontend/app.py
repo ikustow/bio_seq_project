@@ -602,13 +602,19 @@ def _start_progress_ticker(placeholder, stop_event):
     return thread
 
 
-def _handle_vector_db_submission(text: str) -> tuple[str, set[str], list[str]]:
+def _handle_vector_db_submission(
+    text: str,
+) -> tuple[str, set[str], list[str], str | None]:
     """Run one user turn through the active backend and persist it.
 
     On retriever turns (``update_card=True``) we replace the protein card
     with the new candidates and reset the candidate switcher to position 0.
     On chat-LLM follow-up turns (``update_card=False``) we leave the card
     state alone so the user's selected candidate doesn't jump.
+
+    Returns ``(reply, reveals, suggested_questions, secondary_reply)``.
+    ``secondary_reply`` is the optional Chat-LLM follow-up text emitted
+    right after a retriever hit; ``None`` on every other path.
     """
     import chat_pipeline  # noqa: WPS433  (lazy import; heavy backend deps)
     import threading
@@ -632,7 +638,13 @@ def _handle_vector_db_submission(text: str) -> tuple[str, set[str], list[str]]:
     st.session_state.vector_db_result = outcome["result"]
     st.session_state.backend_warnings = outcome["warnings"]
     debug_panel.capture(text, outcome)
-    return outcome["reply"], outcome["reveals"], list(outcome.get("suggested_questions") or [])
+    secondary_reply = outcome.get("secondary_reply") or None
+    return (
+        outcome["reply"],
+        outcome["reveals"],
+        list(outcome.get("suggested_questions") or []),
+        secondary_reply,
+    )
 
 
 def main() -> None:

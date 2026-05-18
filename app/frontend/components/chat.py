@@ -21,7 +21,9 @@ import sequence_detection
 import session_objects
 from mock import conversation
 
-SubmitHandler = Callable[[str], tuple[str, Iterable[str], list[str]]]
+SubmitHandler = Callable[
+    [str], tuple[str, Iterable[str], list[str], "str | None"]
+]
 
 _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 _USER_AVATAR_PATH = _ASSETS_DIR / "UserAvatar.png"
@@ -728,6 +730,7 @@ def _run_pending(on_submit: SubmitHandler | None) -> None:
         st.session_state.pop("batch_progress_label", None)
 
     suggested_questions: list[str] = []
+    secondary_reply: str | None = None
     try:
         if on_submit is None:
             reply, reveals = conversation.route(
@@ -737,12 +740,15 @@ def _run_pending(on_submit: SubmitHandler | None) -> None:
             prompt = "" if is_continuation else (
                 pending["display_text"] or pending["raw_text"]
             )
-            reply, reveals, suggested_questions = on_submit(prompt)
+            reply, reveals, suggested_questions, secondary_reply = on_submit(prompt)
     except Exception as exc:  # surface the failure inline rather than crashing the app
         reply = f"**Backend error:** {exc}"
         reveals = set()
         suggested_questions = []
+        secondary_reply = None
     reply = _sanitize_mentions_html(reply)
+    if secondary_reply:
+        secondary_reply = _sanitize_mentions_html(secondary_reply)
 
     st.session_state.card_sections_revealed.update(reveals)
     if on_submit is None and (
@@ -801,6 +807,10 @@ def _run_pending(on_submit: SubmitHandler | None) -> None:
         final_text = reply
 
     final_questions = [] if len(results) > 1 else suggested_questions
+    # Secondary Chat-LLM bubble is only emitted on single-sequence turns —
+    # multi-sequence batches already collapse all primary replies into one
+    # summary, so a per-iteration Gemini follow-up would be confusing.
+    final_secondary_reply = secondary_reply if len(results) <= 1 else None
 
     with st.chat_message("assistant", avatar=BOT_AVATAR):
         _render_assistant_text(final_text)
@@ -816,6 +826,17 @@ def _run_pending(on_submit: SubmitHandler | None) -> None:
             "suggested_questions": final_questions,
         }
     )
+
+    if final_secondary_reply:
+        with st.chat_message("assistant", avatar=BOT_AVATAR):
+            _render_assistant_text(final_secondary_reply)
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "content": final_secondary_reply,
+                "suggested_questions": [],
+            }
+        )
     # Request one more rerun so the user message's attachment chip picks up
     # the new sequence status (``searching…`` → ``ready``). Without this
     # the chip rendered in the for-loop above stays stale until the next
