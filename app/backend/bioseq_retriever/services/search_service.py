@@ -173,11 +173,28 @@ def _embed_dna(sequence: str) -> np.ndarray:
     return mean_pooled.cpu().numpy().astype(np.float32)
 
 def _embed_rerank_texts(texts: List[str], is_query: bool = False) -> np.ndarray:
-    prefix = "query: " if is_query else "passage: "
-    prefixed_texts = [f"{prefix}{t}" for t in texts]
-    inputs = rerank_tokenizer(prefixed_texts, padding=True, truncation=True, max_length=512, return_tensors="pt").to(device)
+    """
+    Generates semantic embeddings using Qwen3-Embedding.
+    Leverages instruction-aware capabilities for high-fidelity biological retrieval.
+    """
+    if is_query:
+        # Detailed instruction to exploit the model's full potential for bioinformatics
+        instruction = (
+            "Given a bioinformatics context or sequence retrieval prompt, identify relevant biological "
+            "entities, molecular functions, biological processes, subcellular localizations, "
+            "taxonomic constraints (including species exclusions), and structural relationships "
+            "to retrieve matching entries from the Swiss-Prot database."
+        )
+        # Qwen models typically use instruction + "\n" + text format
+        processed_texts = [f"{instruction}\nQuery: {t}" for t in texts]
+    else:
+        # Passages are prefixed for clear role separation
+        processed_texts = [f"Document: {t}" for t in texts]
+        
+    inputs = rerank_tokenizer(processed_texts, padding=True, truncation=True, return_tensors="pt").to(device)
     with torch.no_grad():
         outputs = rerank_model(**inputs)
+        # Use mean pooling of the last hidden state
         embeddings = outputs.last_hidden_state.mean(dim=1)
     return embeddings.cpu().numpy().astype(np.float32)
 
@@ -196,21 +213,55 @@ def _perform_vector_search(index, query_emb: np.ndarray, k: int):
 # --- Reranking Helpers ---
 
 def _format_record_for_embedding(record: Dict[str, Any]) -> str:
-    """Creates a clean text summary of a UniProt record for semantic embedding."""
+    """
+    Creates a biologically dense text summary of a UniProt record.
+    Matches the entities and constraints mentioned in the Qwen3 instruction.
+    """
     name = record.get('proteinDescription', {}).get('recommendedName', {}).get('fullName', {}).get('value', 'N/A')
     organism = record.get('organism', {}).get('scientificName', 'N/A')
     
-    # Extract function comments
+    # Extract Lineage (Taxonomic constraints)
+    lineage = [t if isinstance(t, str) else t.get('scientificName', '') 
+               for t in record.get('organism', {}).get('lineage', [])]
+    lineage_text = " > ".join(lineage)
+
+    # Extract function and localization comments
     functions = []
+    locations = []
     for comment in record.get('comments', []):
-        if comment.get('commentType') == 'FUNCTION':
+        ctype = comment.get('commentType')
+        if ctype == 'FUNCTION':
             functions.extend([t.get('value', '') for t in comment.get('texts', [])])
-    func_text = " ".join(functions)
+        elif ctype == 'SUBCELLULAR_LOCATION':
+            locations.extend([l.get('location', {}).get('value', '') for l in comment.get('locations', [])])
+    
+    # Extract GO terms and Domains from cross-references (Structural/Functional relationships)
+    go_terms = []
+    domains = []
+    for xref in record.get('uniProtKBCrossReferences', []):
+        db = xref.get('database')
+        if db == 'GO':
+            props = xref.get('properties', [])
+            if props: go_terms.append(props[0].get('value', ''))
+        elif db in ['Pfam', 'InterPro']:
+            props = xref.get('properties', [])
+            if props: domains.append(props[0].get('value', ''))
     
     # Extract keywords
     keywords = ", ".join([k.get('value', '') for k in record.get('keywords', [])])
     
-    return f"Protein: {name}. Organism: {organism}. Function: {func_text}. Keywords: {keywords}."
+    # Construct dense biological profile
+    profile_parts = [
+        f"Protein: {name}",
+        f"Organism: {organism} (Lineage: {lineage_text})",
+        f"Function: {' '.join(functions)}",
+        f"Subcellular Location: {', '.join(locations)}",
+        f"Gene Ontology: {', '.join(go_terms[:15])}",
+        f"Domains/Families: {', '.join(domains[:10])}",
+        f"Keywords: {keywords}"
+    ]
+    
+    return ". ".join(profile_parts)
 
 # =============================================================================
 # ENDPOINTS
