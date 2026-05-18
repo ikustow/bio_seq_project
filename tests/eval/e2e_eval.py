@@ -44,7 +44,7 @@ from tests.eval._common.run_dir import REPO_ROOT, make_run_dir
 
 
 # Same import-path setup as retriever_eval.py.
-_RETRIEVER_ROOT = REPO_ROOT / "bioseq_retriever"
+_RETRIEVER_ROOT = REPO_ROOT / "app" / "backend" / "bioseq_retriever"
 if str(_RETRIEVER_ROOT) not in sys.path:
     sys.path.insert(0, str(_RETRIEVER_ROOT))
 
