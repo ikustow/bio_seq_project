@@ -204,8 +204,9 @@ def _embed_rerank_texts(texts: List[str], is_query: bool = False, max_length: in
         outputs = rerank_model(**inputs)
         # Use last-token pooling of the last hidden state
         embeddings = outputs.last_hidden_state[:, -1]
-        
-    return embeddings.cpu().numpy().astype(np.float32)
+
+    # Qwen3-Embedding-0.6B returns bfloat16, which numpy can't consume — cast in torch first.
+    return embeddings.to(torch.float32).cpu().numpy()
 
 # --- Search ---
 
