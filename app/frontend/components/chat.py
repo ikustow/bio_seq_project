@@ -1007,8 +1007,87 @@ _LIVE_PREVIEW_JS = r"""
     return s;
   })();
   const MIN_LEN = 30;
-  const SEQ_RUN_RE_SRC = '[ACDEFGHIKLMNPQRSTVWYBJUOZX*\\-\\s\\d.]{' + MIN_LEN + ',}';
+  // Case-insensitive — lowercase is a legitimate FASTA convention
+  // (soft-masking). Only whitespace is allowed inside the run; anything
+  // else (punctuation, digits, parens) breaks it.
+  // Mirror: _SEQUENCE_RUN_RE in sequence_detection.py.
+  const SEQ_RUN_RE_SRC = '[ACDEFGHIKLMNPQRSTVWYBJUOZX*\\s]{' + MIN_LEN + ',}';
   const AMINO_LETTER_RE = /[ACDEFGHIKLMNPQRSTVWYBJUOZX*]/i;
+  const MIN_LONGEST_RUN = 10;
+  const MAX_WHITESPACE_RATIO = 0.15;
+  const MAX_RARE_AMINO_RATIO = 0.05;
+  const MAX_VOWEL_RATIO = 0.45;
+  const MAX_ENGLISH_BIGRAM_SHARE = 0.20;
+  const VOWELS = new Set(['A','E','I','O','U']);
+  const RARE_AMINOS = new Set(['O','U']);
+  const ENGLISH_TELL_BIGRAMS = new Set([
+    'TH','HE','WH','CH','SH',
+    'OU','OF','TO','ON','OR','OT','OW','OM','OL',
+    'NO','DO','GO','SO','YO',
+    'UR','UN','US','UP','UT','UM',
+  ]);
+
+  function englishBigramShare(body) {
+    const total = body.length - 1;
+    if (total <= 0) return 0;
+    let hits = 0;
+    for (let i = 0; i < total; i++) {
+      if (ENGLISH_TELL_BIGRAMS.has(body.substr(i, 2))) hits++;
+    }
+    return hits / total;
+  }
+
+  // Mirror of _looks_like_prose — see sequence_detection.py for the
+  // biology behind each threshold.
+  function looksLikeProse(fragment) {
+    if (!fragment) return true;
+    const tokens = fragment.split(/\s+/).filter(Boolean);
+    if (!tokens.length) return true;
+    let shortCount = 0;
+    let longest = 0;
+    for (const t of tokens) {
+      if (t.length <= 3) shortCount++;
+      if (t.length > longest) longest = t.length;
+    }
+    if (shortCount >= 2) return true;
+    if (longest < MIN_LONGEST_RUN) return true;
+    let ws = 0;
+    for (let i = 0; i < fragment.length; i++) if (/\s/.test(fragment[i])) ws++;
+    if (ws / fragment.length > MAX_WHITESPACE_RATIO) return true;
+    let body = '';
+    for (let i = 0; i < fragment.length; i++) {
+      const ch = fragment[i];
+      if (/[A-Za-z]/.test(ch)) body += ch.toUpperCase();
+    }
+    if (!body) return true;
+    let rare = 0, vowel = 0;
+    for (let i = 0; i < body.length; i++) {
+      const ch = body[i];
+      if (RARE_AMINOS.has(ch)) rare++;
+      if (VOWELS.has(ch)) vowel++;
+    }
+    if (rare / body.length > MAX_RARE_AMINO_RATIO) return true;
+    if (vowel / body.length > MAX_VOWEL_RATIO) return true;
+    if (englishBigramShare(body) > MAX_ENGLISH_BIGRAM_SHARE) return true;
+    return false;
+  }
+
+  // Mirror of _extract_sequence_core — only narrows when prose is
+  // clearly mixed in (a long token AND ≥1 short token coexist).
+  function extractSequenceCore(fragment) {
+    if (!fragment) return fragment;
+    const tokens = fragment.split(/\s+/).filter(Boolean);
+    if (!tokens.length) return fragment;
+    let longest = tokens[0];
+    let hasShort = false;
+    let hasLong = false;
+    for (const t of tokens) {
+      if (t.length > longest.length) longest = t;
+      if (t.length <= 3) hasShort = true;
+      if (t.length >= MIN_LEN) hasLong = true;
+    }
+    return hasLong && hasShort ? longest : fragment;
+  }
   const ACC_RE = /^(?:[OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9](?:[A-Z][A-Z0-9]{2}[0-9]){1,2})$/;
   const MNEMONIC_RE = /^[A-Z0-9]{1,10}_[A-Z0-9]{1,5}$/;
 
@@ -1123,7 +1202,7 @@ _LIVE_PREVIEW_JS = r"""
       }
       segments.push([cursor, text.length]);
 
-      const runRe = new RegExp(SEQ_RUN_RE_SRC, 'gi');
+      const runRe = new RegExp(SEQ_RUN_RE_SRC, 'g');
       const raw = [];
       for (const seg of segments) {
         const segText = text.slice(seg[0], seg[1]);
@@ -1136,7 +1215,18 @@ _LIVE_PREVIEW_JS = r"""
           while (lo < hi && !AMINO_LETTER_RE.test(segText[lo])) lo++;
           while (hi > lo && !AMINO_LETTER_RE.test(segText[hi - 1])) hi--;
           if (hi - lo < MIN_LEN / 2) continue;
-          const norm = normalize(segText.slice(lo, hi));
+          let tight = segText.slice(lo, hi);
+          const core = extractSequenceCore(tight);
+          if (core !== tight) {
+            const idx = tight.indexOf(core);
+            if (idx >= 0) {
+              lo = lo + idx;
+              hi = lo + core.length;
+              tight = core;
+            }
+          }
+          if (looksLikeProse(tight)) continue;
+          const norm = normalize(tight);
           if (norm.length < MIN_LEN) continue;
           const c = classify(norm);
           if (!c) continue;

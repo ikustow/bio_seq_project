@@ -413,13 +413,125 @@ def header_uniprot_hint(header: str | None) -> str | None:
 
 
 # Match runs of bio-like letters at least MIN_RAW_SEQUENCE_LENGTH long.
-# Allows interior whitespace/digits/dashes/dots so multi-line pastes are
-# captured as one span; we normalize later.
+# Case-insensitive — lowercase is a legitimate FASTA convention for
+# soft-masked / low-complexity regions. The only permitted interior noise
+# is whitespace; punctuation, digits, parens, lowercase prose words ending
+# in non-amino letters etc. all break the run.
 _SEQUENCE_RUN_RE = re.compile(
     r"(?P<header>(?:^|\n)>[^\n]*\n)?"  # optional FASTA header line
-    r"(?P<body>(?:[ACDEFGHIKLMNPQRSTVWYBJUOZX*\-\s\d.]{%d,}))" % MIN_RAW_SEQUENCE_LENGTH,
+    r"(?P<body>(?:[ACDEFGHIKLMNPQRSTVWYBJUOZX*\s]{%d,}))" % MIN_RAW_SEQUENCE_LENGTH,
     re.IGNORECASE,
 )
+
+# --- Prose-detection thresholds -------------------------------------------
+# Five independent signals catch English text that happens to land in the
+# amino acid alphabet. Tuned so that natural-distribution proteins
+# (averaged over SwissProt) sit far from every threshold and English prose
+# trips multiple at once.
+_MIN_LONGEST_RUN = 10
+_MAX_WHITESPACE_RATIO = 0.15
+# Pyrrolysine (O) and selenocysteine (U) appear in <0.01% of natural protein
+# residues. They are vowels in English ("you", "of", "or", "to", "out",
+# "our", "look") so their density is a near-binary classifier.
+_MAX_RARE_AMINO_RATIO = 0.05
+# Mean vowel fraction across SwissProt is ~22%, but E-rich / A-rich
+# domains (histones, p53 TAD, signal peptides, helical bundles) can hit
+# the high 30s on short windows. 45% leaves room for those while still
+# catching English which averages ~38-42% and routinely spikes higher.
+_MAX_VOWEL_RATIO = 0.45
+_MAX_ENGLISH_BIGRAM_SHARE = 0.20
+_VOWELS = frozenset("AEIOU")
+_RARE_AMINOS = frozenset("OU")
+
+# Bigrams that are frequent in English but exceptionally rare in proteins.
+# The O- and U-bearing ones are essentially impossible in real sequences;
+# TH/HE/WH/CH/SH appear in English function words far more often than
+# random amino composition would predict.
+_ENGLISH_TELL_BIGRAMS = frozenset({
+    "TH", "HE", "WH", "CH", "SH",
+    "OU", "OF", "TO", "ON", "OR", "OT", "OW", "OM", "OL",
+    "NO", "DO", "GO", "SO", "YO",
+    "UR", "UN", "US", "UP", "UT", "UM",
+})
+
+
+def _english_bigram_share(body: str) -> float:
+    total = len(body) - 1
+    if total <= 0:
+        return 0.0
+    hits = sum(1 for i in range(total) if body[i:i + 2] in _ENGLISH_TELL_BIGRAMS)
+    return hits / total
+
+
+def _looks_like_prose(fragment: str) -> bool:
+    """Multi-signal English-prose detector for a sequence-shaped substring.
+
+    Any one of five independent checks rejects the fragment. Tuned for
+    natural protein statistics — see threshold constants above for the
+    biology behind each cut.
+    """
+    if not fragment:
+        return True
+    tokens = [t for t in re.split(r"\s+", fragment) if t]
+    if not tokens:
+        return True
+
+    # 1. Short-token density. Prose has multiple 1-3 char tokens
+    #    (`I`, `am`, `is`, `of`, `to`, ...); real sequence pastes are one
+    #    long token or uniform 10/60/80-char blocks.
+    if sum(1 for t in tokens if len(t) <= 3) >= 2:
+        return True
+
+    # 2. Longest contiguous letter run.
+    if max(len(t) for t in tokens) < _MIN_LONGEST_RUN:
+        return True
+
+    # 3. Whitespace ratio.
+    whitespace = sum(1 for ch in fragment if ch.isspace())
+    if whitespace / len(fragment) > _MAX_WHITESPACE_RATIO:
+        return True
+
+    body = re.sub(r"\s+", "", fragment).upper()
+    body = "".join(ch for ch in body if ch.isalpha())
+    if not body:
+        return True
+
+    # 4. Pyrrolysine / selenocysteine density. Near-zero in real proteins.
+    if sum(1 for ch in body if ch in _RARE_AMINOS) / len(body) > _MAX_RARE_AMINO_RATIO:
+        return True
+
+    # 5. Vowel-letter density. Proteins ~22%, English ~38%+.
+    if sum(1 for ch in body if ch in _VOWELS) / len(body) > _MAX_VOWEL_RATIO:
+        return True
+
+    # 6. English-typical bigram density.
+    if _english_bigram_share(body) > _MAX_ENGLISH_BIGRAM_SHARE:
+        return True
+
+    return False
+
+
+def _extract_sequence_core(fragment: str) -> str:
+    """Narrow a regex match to just the sequence token when prose surrounds it.
+
+    `Tell me about MALWMR...EEK please find similar` matches the regex as
+    one big span because every character is in the amino alphabet. The
+    real sequence is the single long token; everything else is prose
+    giveaway. We only narrow when both shapes are visible (≥1 token at
+    least MIN_RAW_SEQUENCE_LENGTH long AND ≥1 token of ≤3 chars) so that
+    NCBI 10-char wraps and multi-line FASTA bodies (no short tokens) keep
+    their full bodies and reach the merge step downstream.
+    """
+    if not fragment:
+        return fragment
+    tokens = [t for t in re.split(r"\s+", fragment) if t]
+    if not tokens:
+        return fragment
+    long_tokens = [t for t in tokens if len(t) >= MIN_RAW_SEQUENCE_LENGTH]
+    short_tokens = [t for t in tokens if len(t) <= 3]
+    if long_tokens and short_tokens:
+        return max(long_tokens, key=len)
+    return fragment
 
 
 def detect_from_text(text: str) -> DetectionResult:
@@ -498,6 +610,19 @@ def detect_from_text(text: str) -> DetectionResult:
                 if local_end - local_start < MIN_RAW_SEQUENCE_LENGTH // 2:
                     continue
                 tight_body = segment_text[local_start:local_end]
+                # If a single token in the span is long enough on its own,
+                # narrow to just that token so the prose detector judges
+                # the sequence alone and the redaction span doesn't swallow
+                # the user's surrounding question.
+                core = _extract_sequence_core(tight_body)
+                if core is not tight_body and core != tight_body:
+                    token_local_start = tight_body.find(core)
+                    if token_local_start >= 0:
+                        local_start = local_start + token_local_start
+                        local_end = local_start + len(core)
+                        tight_body = core
+                if _looks_like_prose(tight_body):
+                    continue
                 normalized, invalid, norm_warnings = normalize_sequence(tight_body)
                 if len(normalized) < MIN_RAW_SEQUENCE_LENGTH:
                     continue

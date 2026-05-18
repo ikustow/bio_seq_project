@@ -545,14 +545,38 @@ def _revealed_sections(candidates: list[CandidateView]) -> set[str]:
     return sections
 
 
+_FALLBACK_WARNING_MARKER = "Sequence extraction LLM (Mistral) unavailable"
+
+
+def _extraction_status_prefix(pipeline: BioSeqPipelineSnapshot) -> str:
+    """One-line status of the LLM extraction step, prefixed to chat replies.
+
+    Lets the user see, per turn, whether Mistral actually parsed the input
+    or whether the regex fallback took over (e.g. missing API key, 429
+    quota, network error). Only emitted when the LLM extraction step was
+    actually reached — TEXT-only turns skip the retriever and have no
+    Mistral call to report on.
+    """
+    if pipeline.input_type not in {"SEQUENCE", "FILEPATH"}:
+        return ""
+    fallback_msg = next(
+        (w for w in pipeline.warnings if w.startswith(_FALLBACK_WARNING_MARKER)),
+        None,
+    )
+    if fallback_msg:
+        return f"> ⚠️ **Pipeline:** {fallback_msg}\n\n"
+    return "> ✅ **Pipeline:** input parsed by Mistral extraction LLM.\n\n"
+
+
 def _pipeline_hit_message(pipeline: BioSeqPipelineSnapshot) -> str:
     source = "DNA sequence" if pipeline.sequence_type == "DNA" else "protein sequence"
+    prefix = _extraction_status_prefix(pipeline)
     if pipeline.sequence_type == "DNA":
-        return (
+        return prefix + (
             f"I classified the input as DNA, translated it to a protein sequence, "
             f"and found bioseq_retriever accession {pipeline.active_accession}."
         )
-    return f"I classified the input as {source} and found bioseq_retriever accession {pipeline.active_accession}."
+    return prefix + f"I classified the input as {source} and found bioseq_retriever accession {pipeline.active_accession}."
 
 
 def _is_follow_up_turn(request: ChatTurnRequest) -> bool:
@@ -841,11 +865,12 @@ def _resolve_target_sequence_id(
 
 
 def _pipeline_miss_message(pipeline: BioSeqPipelineSnapshot) -> str:
+    prefix = _extraction_status_prefix(pipeline)
     if pipeline.input_type == "FILEPATH":
-        return (
+        return prefix + (
             "I detected a file path, but this runtime did not resolve it. "
             "Put the sequence in the allowed data directory or send the raw FASTA/sequence."
         )
     if pipeline.error:
-        return f"I could not process this sequence via bioseq_retriever: {pipeline.error}"
-    return "I classified the input sequence, but bioseq_retriever did not return final matches."
+        return prefix + f"I could not process this sequence via bioseq_retriever: {pipeline.error}"
+    return prefix + "I classified the input sequence, but bioseq_retriever did not return final matches."

@@ -127,8 +127,13 @@ class BioSeqRetrieverPipeline:
         state.context = extraction.context
         state.sequence_type = extraction.sequence_type
         state.is_confident = extraction.is_confident
-        if extraction.reasoning:
-            state.warnings.append(f"Input classification: {extraction.reasoning}")
+        # NB: the deterministic ``reasoning`` text used to be appended to
+        # warnings here, which produced a noisy `Input classification: ...`
+        # line on every turn that the user could easily mistake for the
+        # Mistral extraction status. The actual Mistral status lives further
+        # downstream (LangGraph ``extract_and_classify_node``) and is
+        # surfaced via ``extraction_used_fallback`` in _merge_runtime_state
+        # and the chat reply prefix in bioseq_chat._extraction_status_prefix.
 
         if state.input_type == "TEXT":
             return state, candidates
@@ -299,6 +304,12 @@ def _merge_runtime_state(state: BioSeqPipelineSnapshot, result: dict[str, Any]) 
         state.is_confident = bool(result.get("is_confident"))
     if result.get("error"):
         state.error = str(result["error"])
+    fallback_reason = result.get("extraction_used_fallback")
+    if fallback_reason:
+        state.warnings.append(
+            "Sequence extraction LLM (Mistral) unavailable this turn — "
+            f"used deterministic regex fallback. Cause: {fallback_reason}"
+        )
 
 
 def _env_flag(name: str, default: bool) -> bool:

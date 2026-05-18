@@ -112,6 +112,11 @@ class GraphState(TypedDict):
     error: Optional[str]
     # "embeddings" (default, ProtT5+FAISS via search-service) or "blast" (EBI REST).
     search_algorithm: Optional[str]
+    # Set to the LLM exception text when ``extract_and_classify_node`` had
+    # to fall back to the regex extractor (e.g. Mistral 429, missing API
+    # key, network error). ``None`` means the LLM call succeeded.
+    # Surfaced to the UI by ``_merge_runtime_state`` as a backend warning.
+    extraction_used_fallback: Optional[str]
 
 # =============================================================================
 # NODE FUNCTIONS
@@ -211,8 +216,6 @@ def extract_and_classify_node(state: GraphState) -> Dict[str, Any]:
     when the prompt has a perfectly parseable sequence in it.
     """
     if state.get("error"): return {}
-    llm = get_llm(temperature=0)
-    structured_llm = llm.with_structured_output(PipelineRouter)
 
     system_message = (
         "You are an elite bioinformatics data architect and routing engine. Your mission is to process raw user prompts "
@@ -237,6 +240,12 @@ def extract_and_classify_node(state: GraphState) -> Dict[str, Any]:
     )
 
     try:
+        # Construct the LLM inside the try so that missing API keys
+        # (``MISTRAL_API_KEY`` / ``OPENAI_API_KEY``) take the fallback
+        # path instead of crashing the pipeline — get_llm raises
+        # ValueError before returning when no key is configured.
+        llm = get_llm(temperature=0)
+        structured_llm = llm.with_structured_output(PipelineRouter)
         result = structured_llm.invoke([
             SystemMessage(content=system_message),
             HumanMessage(content=state['prompt'])
@@ -258,7 +267,8 @@ def extract_and_classify_node(state: GraphState) -> Dict[str, Any]:
                 "input_type": "SEQUENCE",
                 "context": terminal.expanded_context,
                 "sequence_type": terminal.sequence_type,
-                "error": None
+                "error": None,
+                "extraction_used_fallback": None,
             }
         else: # filepath_success
             return {
@@ -266,21 +276,27 @@ def extract_and_classify_node(state: GraphState) -> Dict[str, Any]:
                 "input_type": "FILEPATH",
                 "context": terminal.expanded_context,
                 "sequence_type": terminal.sequence_type,
-                "error": None
+                "error": None,
+                "extraction_used_fallback": None,
             }
 
     except Exception as e:
-        # LLM step failed (e.g. Mistral 429). Try the deterministic
-        # FASTA / bare-sequence extractor before giving up so a transient
-        # provider hiccup doesn't kill the whole turn.
+        # LLM step failed (e.g. Mistral 429, missing MISTRAL_API_KEY,
+        # network error). Try the deterministic FASTA / bare-sequence
+        # extractor before giving up so a transient provider hiccup
+        # doesn't kill the whole turn. The exception text is propagated
+        # in ``extraction_used_fallback`` so the frontend can show the
+        # user that the LLM step was skipped this turn.
+        exc_text = f"{type(e).__name__}: {e}"
         fallback = _deterministic_extract(state.get('prompt') or "")
         if fallback is not None:
             print(
-                f"extract_and_classify_node: LLM failed ({e}); "
+                f"extract_and_classify_node: LLM failed ({exc_text}); "
                 "using deterministic fallback."
             )
+            fallback["extraction_used_fallback"] = exc_text
             return fallback
-        return {"error": f"Guided Extraction Pipeline Failure: {str(e)}"}
+        return {"error": f"Guided Extraction Pipeline Failure: {exc_text}"}
 
 def resolve_filepath_node(state: GraphState) -> Dict[str, Any]:
     """Node to resolve sequence from a file path with security check."""

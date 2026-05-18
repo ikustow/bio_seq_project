@@ -95,6 +95,15 @@ def render() -> None:
                 icon="⚠️",
             )
 
+        # Backend warnings (e.g. Mistral extraction LLM unavailable, falling
+        # back to regex extractor). Rendered up here — not buried inside the
+        # Debug ids expander — so the user immediately sees when the LLM
+        # parsing step did not actually run this turn.
+        backend_warnings = st.session_state.get("backend_warnings") or []
+        if backend_warnings:
+            for warning in backend_warnings:
+                st.warning(warning, icon="⚠️")
+
         st.markdown("#### My sessions")
         if persistent:
             try:
