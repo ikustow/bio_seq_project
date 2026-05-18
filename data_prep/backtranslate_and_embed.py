@@ -8,6 +8,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM, BigBirdForMaskedLM
 from CodonTransformer.CodonPrediction import predict_dna_sequence
+from CodonTransformer.CodonUtils import ORGANISM2ID
 from typing import List, Tuple, Dict
 
 # Import configuration
@@ -67,24 +68,51 @@ def initialize_stack() -> Tuple[AutoModel, AutoTokenizer, BigBirdForMaskedLM, Au
     
     return hyena_mod, hyena_tok, codon_mod, codon_tok, device
 
+def resolve_host_dynamically(organism_name: str) -> str:
+    """
+    Robustly maps raw organism name to supported CodonTransformer host.
+    Uses model's internal ORGANISM2ID mapping for fuzzy keyword matching.
+    """
+    try:
+        org_lower = organism_name.lower()
+        
+        # 1. Look for significant substring matches
+        for host in ORGANISM2ID.keys():
+            host_lower = host.lower()
+            if host_lower in org_lower or org_lower in host_lower:
+                return host
+                
+        # 2. Heuristic word matching
+        org_words = set(org_lower.replace("(", "").replace(")", "").replace("/", " ").replace("-", " ").split())
+        for host in ORGANISM2ID.keys():
+            host_words = set(host.lower().replace("(", "").replace(")", "").replace("/", " ").replace("-", " ").split())
+            if org_words.intersection(host_words):
+                return host
+                
+        return organism_name # Try raw if no obvious match
+    except Exception:
+        return organism_name
+
 def back_translate_with_model(aa_sequence: str, organism: str, model: BigBirdForMaskedLM, tokenizer: AutoTokenizer, device: torch.device) -> str:
     """
     Generates DNA from protein using CodonTransformer.
-    Tries the raw organism name directly, falling back to a default if not recognized.
+    Uses dynamic host resolution and proper attribute access for robustness.
     """
+    target_host = resolve_host_dynamically(organism)
+    
     try:
-        # Attempt direct use of SwissProt organism string
         output = predict_dna_sequence(
             protein=aa_sequence,
-            organism=organism,
+            organism=target_host,
             device=device,
             tokenizer=tokenizer,
             model=model,
             deterministic=True
         )
-        return output['predicted_dna'].upper()
+        # FIX: proper attribute access (.predicted_dna)
+        return output.predicted_dna.upper()
     except Exception:
-        # Fallback for unrecognized organism strings (common in specific SwissProt records)
+        # Fallback to DEFAULT_HOST
         try:
             output = predict_dna_sequence(
                 protein=aa_sequence,
@@ -94,9 +122,9 @@ def back_translate_with_model(aa_sequence: str, organism: str, model: BigBirdFor
                 model=model,
                 deterministic=True
             )
-            return output['predicted_dna'].upper()
+            return output.predicted_dna.upper()
         except Exception as e_inner:
-            logger.error(f"Back-translation failed for {organism} and fallback {DEFAULT_HOST}: {e_inner}")
+            logger.error(f"Back-translation failed for {organism} (resolved as {target_host}) and fallback {DEFAULT_HOST}: {e_inner}")
             return aa_sequence
 
 def compute_masked_mean_embedding(dna_batch: List[str], model: AutoModel, tokenizer: AutoTokenizer, device: torch.device) -> np.ndarray:
