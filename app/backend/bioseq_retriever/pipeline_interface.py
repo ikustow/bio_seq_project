@@ -55,15 +55,15 @@ def main():
 
         print("\n--- Pipeline Summary ---")
         print(f"Detected Type: {result.get('sequence_type')}")
-        print(f"Classification Confidence: {result.get('is_confident')}")
+        # Sequence classification is now certain or error, so confidence is implicit
         print(f"Sequence Length: {len(result.get('sequence') or '')}")
 
         print("\n--- Top 5 Context-Aware Matches (UniProt JSON) ---")
+        # result['final_results'] contains the rerank top-5
         final_results = result.get("final_results", [])
 
-        # Output results with the confidence flag as requested
+        # Output results
         output = {
-            "classification_confident": result.get("is_confident"),
             "top_matches": final_results
         }
 
@@ -73,7 +73,9 @@ def main():
         for i, record in enumerate(final_results, 1):
             acc = record.get('primaryAccession')
             name = record.get('proteinDescription', {}).get('recommendedName', {}).get('fullName', {}).get('value', 'N/A')
-            print(f"{i}. [{acc}] {name}")
+            # Show the search score if available
+            score = record.get('_search_score', 'N/A')
+            print(f"{i}. [{acc}] (Score: {score}) {name}")
 
     except Exception as e:
         print(f"Critical Failure: {e}")

@@ -12,6 +12,7 @@ import streamlit as st
 
 from components import alignment_viewer
 from components.domain_diagram import build_figure
+from components.protein_markdown_export import build_protein_markdown, markdown_filename
 from mock.protein_loader import Candidate, ProteinView
 
 _ALL_SECTIONS: tuple[str, ...] = (
@@ -518,6 +519,7 @@ def _alignment_score_for_candidate(candidate: Candidate, query_sequence: str | N
 
 def _render_switcher(
     candidates: list[Candidate],
+    revealed: set[str],
     query_sequence: str | None,
     *,
     selected_index: int | None = None,
@@ -552,11 +554,36 @@ def _render_switcher(
 
     container_key = f"candidate_switcher_{key_suffix}" if key_suffix else "candidate_switcher"
     with st.container(border=True, key=container_key):
-        st.markdown("#### Top 5 matches")
-        st.caption(
-            "Ranked & re-ranked by the retrieval pipeline. "
-            "Pick a candidate to view its full record."
-        )
+        selected = candidates[chosen]
+        selected_protein = selected["protein"]
+        header_left, header_right = st.columns([3, 1])
+        with header_left:
+            st.markdown("#### Top 5 matches")
+            st.caption(
+                "Ranked & re-ranked by the retrieval pipeline. "
+                "Pick a candidate to view its full record."
+            )
+        with header_right:
+            markdown_report = build_protein_markdown(
+                selected=selected,
+                candidates=candidates,
+                selected_index=chosen,
+                revealed=revealed,
+                query_sequence=query_sequence,
+            )
+            download_key_suffix = f"_{key_suffix}" if key_suffix else ""
+            st.download_button(
+                "Save to .md",
+                data=markdown_report,
+                file_name=markdown_filename(selected_protein),
+                mime="text/markdown",
+                key=f"protein_card_download{download_key_suffix}_{chosen}_{selected_protein.get('accession') or 'protein'}",
+                help=(
+                    "Save this protein card as a formatted Markdown file. "
+                    "You can share it with another LLM as research context."
+                ),
+                use_container_width=True,
+            )
         # Tile colours are computed inline from the score
         # (`_score_background`); layout + the neutral "missing score"
         # style live in style.css.
@@ -639,6 +666,7 @@ def render(
 
     chosen = _render_switcher(
         candidates,
+        revealed,
         query_sequence,
         selected_index=selected_index,
         on_select_index=on_select_index,

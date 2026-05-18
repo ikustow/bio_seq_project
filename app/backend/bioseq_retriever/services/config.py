@@ -32,8 +32,15 @@ PROTEIN_MODEL_NAME = "Rostlab/prot_t5_xl_uniref50"
 DNA_MODEL_NAME = "LongSafari/hyenadna-medium-160k-seqlen-hf"
 RERANK_MODEL_NAME = "intfloat/e5-large-v2"
 
+# Internal sensitivity constant for the rerank signal (margin-aware fusion)
+RERANK_LAMBDA = 0.15
+
 # Sequence length limits
 DNA_MAX_LENGTH = 160_000
 
 # --- Default FAISS Threads ---
 DEFAULT_FAISS_THREADS = int(os.getenv("FAISS_DEFAULT_THREADS", max(1, os.cpu_count())))
+
+# --- HDF5 Loading Settings ---
+# Batch size for reading embeddings from H5 files during index construction
+H5_BATCH_SIZE = int(os.getenv("BIOSEQ_H5_BATCH_SIZE", "1000"))

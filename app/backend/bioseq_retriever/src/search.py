@@ -3,12 +3,11 @@ import time
 from typing import List, Tuple
 
 import httpx
-import numpy as np
 
-from src.config import SEARCH_SERVICE_URL, DNA_SEARCH_SERVICE_URL
+from src.config import SEARCH_SERVICE_URL
 from src.api_client import default_api_client
 
-def search_top_k(
+def search_protein_top_k(
     query_sequence: str, 
     k: int = 25
 ) -> List[Tuple[str, float]]:
@@ -57,7 +56,7 @@ def blast_search(
     """Submit a protein BLAST job to EBI and return ranked hits.
 
     The returned score is percent identity normalized to 0..1 so it lines up
-    with the cosine-similarity score returned by ``search_top_k``.
+    with the cosine-similarity score returned by ``search_protein_top_k``.
     """
     email = os.getenv("BIOSEQ_BLAST_EMAIL", BLAST_DEFAULT_EMAIL)
     print(f"Submitting BLAST job: seq_len={len(query_sequence)}, db={database}, k={k}")

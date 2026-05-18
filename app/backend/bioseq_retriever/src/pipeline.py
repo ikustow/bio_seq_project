@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Optional, TypedDict, Literal
+from typing import List, Dict, Any, Optional, TypedDict, Literal, Union
 from pydantic import BaseModel, Field
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -10,13 +10,20 @@ from urllib.parse import urlparse
 
 from src.utils import get_llm, get_first_fasta_entry, is_secure_path, clean_sequence
 from src.data_fetcher import get_uniprot_records
-from src.search import search_top_k, search_dna_top_k, blast_search
+from src.search import search_protein_top_k, search_dna_top_k, blast_search
 from src.reranking import LocalReranker
 
 from src.config import ALLOWED_DATA_DIR, SEARCH_SERVICE_URL
 
 
 def _rerank_service_alive(url: str = SEARCH_SERVICE_URL, timeout: float = 0.5) -> bool:
+    """Cheap liveness probe for the rerank gateway.
+
+    The rerank node calls a network service; if it's down the LocalReranker
+    raises and we'd lose the ranked top-50 entirely. A 0.5s TCP connect is
+    enough to decide whether to attempt the call or short-circuit to the
+    top-5 slice of what we already have.
+    """
     parsed = urlparse(url)
     host = parsed.hostname or "localhost"
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
@@ -26,15 +33,68 @@ def _rerank_service_alive(url: str = SEARCH_SERVICE_URL, timeout: float = 0.5) -
     except OSError:
         return False
 
-# --- State Definitions ---
 
-class InputExtraction(BaseModel):
-    sequence_or_path: str = Field(description="The extracted raw biological sequence or the file path.")
-    input_type: Literal["SEQUENCE", "FILEPATH"] = Field(description="Whether the input is a raw sequence or a file path.")
-    context: str = Field(description="Any contextual information, questions, or hints provided by the user.")
-    sequence_type: Literal["DNA", "PROTEIN"] = Field(description="The classified type of the biological sequence.")
-    is_confident: bool = Field(description="True if the LLM is highly confident in the sequence type classification.")
-    reasoning: str = Field(description="Brief chain-of-thought reasoning for the extraction and classification.")
+# =============================================================================
+# SCHEMA-GUIDED REASONING ROUTER DEFINITIONS
+# =============================================================================
+
+class AnalysisFailure(BaseModel):
+    """Unified error state for all failure points in the analytical cascade."""
+    kind: Literal["error"] = Field(description="Discriminator for error outcomes.")
+    failure_stage: Literal["INITIAL_ROUTING", "SEQUENCE_VALIDATION", "PATH_VALIDATION"] = Field(description="The logical stage where the analysis failed.")
+    error_message: str = Field(description="A clear, professional error message to be returned to the user.")
+    technical_root_cause: str = Field(description="Elaborate technical explanation of the failure for debugging.")
+
+# --- Success Outcome Schemas ---
+
+class SequenceSuccess(BaseModel):
+    """Final state for a successfully classified and expanded biological sequence."""
+    kind: Literal["sequence_success"]
+    sequence_type: Literal["DNA", "PROTEIN"] = Field(description="The finalized molecular nature.")
+    raw_sequence: str = Field(description="The extracted raw sequence string.")
+    expanded_context: str = Field(description="Richly expanded biological context including synonyms, metabolic pathways, and GO terms.")
+
+class FilePathSuccess(BaseModel):
+    """Final state for a successfully classified and expanded filesystem path."""
+    kind: Literal["filepath_success"]
+    sequence_type: Literal["DNA", "PROTEIN"] = Field(description="The finalized molecular nature.")
+    path: str = Field(description="The extracted filesystem path.")
+    expanded_context: str = Field(description="Richly expanded biological context including synonyms, metabolic pathways, and GO terms.")
+
+# --- Reasoning Cascade Branches ---
+
+class SequenceAnalysis(BaseModel):
+    """Reasoning cascade for biological sequence strings. Implements Step-by-Step validation."""
+    kind: Literal["sequence"] = Field(description="Discriminator for sequence-based routing.")
+    
+    step_1_alphabet_and_molecular_signature: str = Field(description="Examine the unique characters. Search for non-nucleic 'M,W,Y,K' vs high 'A,T,G,C' density.")
+    step_2_functional_clues_from_context: str = Field(description="Analyze the prompt for functional mentions (e.g. 'coding gene', 'translation') to support the alphabet signals.")
+    step_3_certainty_validation: str = Field(description="Synthesize steps 1 & 2. Are you 100% certain? If any ambiguity exists, route to 'error' in the final outcome.")
+    
+    final_outcome: Union[SequenceSuccess, AnalysisFailure] = Field(description="The terminal result of the sequence reasoning path.")
+
+class FilePathAnalysis(BaseModel):
+    """Reasoning cascade for filesystem paths. Implements Step-by-Step validation."""
+    kind: Literal["filepath"] = Field(description="Discriminator for path-based routing.")
+    
+    step_1_extension_integrity_check: str = Field(description="Evaluate the file extension (.faa, .fna, .fasta). Determine if it is explicit or ambiguous.")
+    step_2_contextual_verification: str = Field(description="Does the user refer to this path as a 'protein file', 'gene sequence', or 'FASTA'? Match extension to context.")
+    step_3_certainty_validation: str = Field(description="Are the extension and context consistent and sufficient for a 100% certain classification? If not, route to 'error' in the final outcome.")
+    
+    final_outcome: Union[FilePathSuccess, AnalysisFailure] = Field(description="The terminal result of the path reasoning path.")
+
+# --- Master Router Root ---
+
+class PipelineRouter(BaseModel):
+    """Master router and orchestrator for schema-guided biological analysis. Entry point of the cascade."""
+    step_1_data_extraction_and_mapping: str = Field(description="Initial extraction of candidate sequences, paths, and raw intent metadata.")
+    step_2_initial_routing_logic: str = Field(description="Decide which analytical path is supported by the data (sequence, filepath, or immediate failure).")
+    
+    route: Union[SequenceAnalysis, FilePathAnalysis, AnalysisFailure] = Field(description="The analytical path chosen by the router based on initial evidence.")
+
+# =============================================================================
+# GRAPH STATE DEFINITION
+# =============================================================================
 
 class GraphState(TypedDict):
     prompt: str
@@ -43,14 +103,19 @@ class GraphState(TypedDict):
     context: Optional[str]
     sequence: Optional[str]
     sequence_type: Optional[str]
-    is_confident: Optional[bool]
+    # ``ranked_results`` holds the top-50 from ``rank_*_node`` before
+    # contextual reranking; ``final_results`` is the top-5 the rerank
+    # gateway returns. The downstream adapter (``retriever_pipeline.py``)
+    # and its unit tests consume ``final_results``.
     ranked_results: Optional[List[Dict[str, Any]]]
     final_results: Optional[List[Dict[str, Any]]]
     error: Optional[str]
     # "embeddings" (default, ProtT5+FAISS via search-service) or "blast" (EBI REST).
     search_algorithm: Optional[str]
 
-# --- Node Functions ---
+# =============================================================================
+# NODE FUNCTIONS
+# =============================================================================
 
 # Alphabets for the deterministic fallback. Standard amino-acid alphabet
 # minus the 4 DNA letters gives a "protein-only" set whose presence is a
@@ -107,7 +172,7 @@ def _deterministic_extract(prompt: str) -> Optional[Dict[str, Any]]:
                 "input_type": "SEQUENCE",
                 "context": " ".join(context_parts) or header,
                 "sequence_type": seq_type,
-                "is_confident": False,
+                "error": None,
             }
 
     # 2) Bare sequence — longest contiguous sequence-shaped substring.
@@ -129,46 +194,46 @@ def _deterministic_extract(prompt: str) -> Optional[Dict[str, Any]]:
         "input_type": "SEQUENCE",
         "context": " ".join(context.split()),
         "sequence_type": _classify_sequence_type(best[2]),
-        "is_confident": False,
+        "error": None,
     }
 
 
 def extract_and_classify_node(state: GraphState) -> Dict[str, Any]:
     """
-    Uses LLM with structured output to extract data and classify sequence type.
+    Implements the Schema-Guided Reasoning Cascade.
+    Forces the model through sequential logic gates before finalizing
+    classification and performing query expansion.
 
-    The LLM path (Mistral via langchain) below is the primary extractor: its
-    chain-of-thought captures contextual hints from the surrounding prompt
-    that pure pattern matching misses. We keep it as written by the original
-    author.
-
-    Wrap-strategy: the LLM provider can be transiently unavailable (e.g.
-    Mistral returning HTTP 429 ``service_tier_capacity_exceeded``). To stop
-    a single rate-limit response from killing the whole turn, the
-    ``except`` arm now tries a deterministic FASTA / bare-sequence
-    extractor before giving up. The fallback's output shape mirrors the
-    LLM's, so downstream nodes don't need to know which path produced it;
-    ``is_confident`` is set to False so any consumer that gates on
-    confidence (e.g. classification re-checks) can still tell.
+    When the LLM provider is transiently unavailable (e.g. Mistral returning
+    HTTP 429 ``service_tier_capacity_exceeded``), the ``except`` arm falls
+    back to a deterministic FASTA / bare-sequence extractor before surfacing
+    the error — so a single rate-limit response doesn't kill the whole turn
+    when the prompt has a perfectly parseable sequence in it.
     """
     if state.get("error"): return {}
     llm = get_llm(temperature=0)
-    structured_llm = llm.with_structured_output(InputExtraction)
+    structured_llm = llm.with_structured_output(PipelineRouter)
 
     system_message = (
-        "You are an expert bioinformatics analyst specializing in sequence identification and data extraction. "
-        "Your mission is to parse user input to extract biological data and determine its molecular nature with high precision. "
-        "You must follow this multi-step Chain-of-Thought process:\n\n"
-        "### 1. EXTRACTION STRATEGY\n"
-        "Your first priority is to separate the core data from the surrounding metadata.\n"
-        "- Biological Sequence: Look for strings composed of single-letter codes. They may appear as raw text or within a FASTA format (starting with a '>' header line).\n"
-        "- File Path: Identify strings that resemble filesystem paths (e.g., 'data/sample.fasta').\n"
-        "- Contextual Information: Everything else is context.\n"
-        "*Rule*: If both a sequence and a path are present, prioritize the sequence.\n\n"
-        "### 2. CLASSIFICATION REASONING\n"
-        "Classify as DNA or PROTEIN based on character set and metadata.\n"
-        "### 3. CONFIDENCE ASSESSMENT\n"
-        "Deliver findings in structured format."
+        "You are an elite bioinformatics data architect and routing engine. Your mission is to process raw user prompts "
+        "and route them into a high-precision biological analysis pipeline with absolute scientific accuracy. "
+        "You MUST follow the schema-guided reasoning process. Each field in the schema represents a mandatory logical checkpoint.\n\n"
+        
+        "### YOUR ARCHITECTURAL PROTOCOL:\n"
+        "1. **INITIAL SCAN**: Identify strings resembling biological sequences (IUPAC codes) or filesystem paths.\n"
+        "2. **ROUTING**: Select the analytical branch based on the strongest initial evidence.\n"
+        "   - Select `SequenceAnalysis` if a raw sequence is found.\n"
+        "   - Select `FilePathAnalysis` if a path is found.\n"
+        "   - Select `AnalysisFailure` if data is missing or extraction is immediately impossible.\n"
+        "3. **CASCADING REASONING**: Within the chosen branch, perform mandatory logic steps:\n"
+        "   - **FOR SEQUENCES**: Analyze character distributions (e.g. searching for 'M' or 'W' for proteins) and match with functional context.\n"
+        "   - **FOR PATHS**: Analyze extensions (.faa, .fna, .fasta) and verify against user instructions.\n"
+        "4. **VALIDATION & ERROR ROUTING**: If, during your reasoning steps, you find the classification uncertain or the data invalid, "
+        "you MUST route the `final_outcome` field to an `AnalysisFailure` object. Uncertainty is unacceptable.\n"
+        "5. **QUERY EXPANSION**: If (and only if) you reach a success state, expand the biological intent into a dense field of synonyms, "
+        "relevant GO (Gene Ontology) processes, and metabolic pathways to maximize search precision.\n\n"
+        
+        "Your reasoning must be generous, elaborate, and demonstrate a profound mastery of molecular biology signals."
     )
 
     try:
@@ -177,18 +242,37 @@ def extract_and_classify_node(state: GraphState) -> Dict[str, Any]:
             HumanMessage(content=state['prompt'])
         ])
 
-        return {
-            "sequence_or_path": result.sequence_or_path,
-            "input_type": result.input_type,
-            "context": result.context,
-            "sequence_type": result.sequence_type,
-            "is_confident": result.is_confident
-        }
+        # Traverse the cascade to find the terminal state
+        terminal = result.route
+        if isinstance(terminal, (SequenceAnalysis, FilePathAnalysis)):
+            terminal = terminal.final_outcome
+
+        # Handle the Unified Error Branch (AnalysisFailure)
+        if terminal.kind == "error":
+            return {"error": f"[{terminal.failure_stage}] {terminal.error_message} (Root Cause: {terminal.technical_root_cause})"}
+
+        # Handle Success States
+        if terminal.kind == "sequence_success":
+            return {
+                "sequence_or_path": terminal.raw_sequence,
+                "input_type": "SEQUENCE",
+                "context": terminal.expanded_context,
+                "sequence_type": terminal.sequence_type,
+                "error": None
+            }
+        else: # filepath_success
+            return {
+                "sequence_or_path": terminal.path,
+                "input_type": "FILEPATH",
+                "context": terminal.expanded_context,
+                "sequence_type": terminal.sequence_type,
+                "error": None
+            }
+
     except Exception as e:
-        # Mistral / structured-LLM step failed. Try the deterministic
-        # path before surfacing the error — that way a 429 doesn't take
-        # the whole pipeline down when the prompt has a perfectly
-        # parseable FASTA / raw sequence in it.
+        # LLM step failed (e.g. Mistral 429). Try the deterministic
+        # FASTA / bare-sequence extractor before giving up so a transient
+        # provider hiccup doesn't kill the whole turn.
         fallback = _deterministic_extract(state.get('prompt') or "")
         if fallback is not None:
             print(
@@ -196,7 +280,7 @@ def extract_and_classify_node(state: GraphState) -> Dict[str, Any]:
                 "using deterministic fallback."
             )
             return fallback
-        return {"error": f"Extraction failed: {str(e)}"}
+        return {"error": f"Guided Extraction Pipeline Failure: {str(e)}"}
 
 def resolve_filepath_node(state: GraphState) -> Dict[str, Any]:
     """Node to resolve sequence from a file path with security check."""
@@ -229,13 +313,20 @@ def rank_dna_node(state: GraphState) -> Dict[str, Any]:
     try:
         # Uses raw DNA sequence for search
         matches = search_dna_top_k(state['sequence'], k=50)
+        # matches is List[Tuple[accession, score]]
         records = get_uniprot_records([m[0] for m in matches])
+        
+        # Inject search scores into records for future reranking logic
+        score_map = {m[0]: m[1] for m in matches}
+        for rec in records:
+            rec["_search_score"] = score_map.get(rec.get("primaryAccession"))
+
         return {"ranked_results": records}
     except Exception as e:
         return {"error": f"DNA Ranking failed: {str(e)}"}
 
-def rank_node(state: GraphState) -> Dict[str, Any]:
-    """Performs sequence similarity search via the selected backend."""
+def rank_protein_node(state: GraphState) -> Dict[str, Any]:
+    """Performs protein sequence similarity search via the selected backend."""
     if state.get('error'): return {}
     try:
         algorithm = (state.get("search_algorithm") or "embeddings").lower()
@@ -245,48 +336,47 @@ def rank_node(state: GraphState) -> Dict[str, Any]:
             # query was supplied. Hardcoded to SwissProt for speed/quality.
             matches = blast_search(state['sequence'], k=10)
         else:
-            matches = search_top_k(state['sequence'], k=50)
+            matches = search_protein_top_k(state['sequence'], k=50)
+            
         records = get_uniprot_records([m[0] for m in matches])
-        # Stamp the rank-step score (cosine for embeddings, percent identity
-        # for BLAST) onto each record so the UI can show it in the EMB tile —
-        # the field is consumed by ``uniprot_record_to_candidate``.
-        score_by_accession = {accession: score for accession, score in matches}
-        for record in records:
-            accession = record.get("primaryAccession")
-            if accession in score_by_accession:
-                record["_bioseq_embedding_score"] = score_by_accession[accession]
+
+        # Stamp two score fields onto each record:
+        # - ``_search_score`` feeds the rerank gateway, which sorts by it.
+        # - ``_bioseq_embedding_score`` is what the UI (uniprot_record_to_candidate)
+        #   reads to fill the EMB tile. Same value for both at this stage —
+        #   cosine for embeddings, percent identity for BLAST.
+        score_map = {m[0]: m[1] for m in matches}
+        for rec in records:
+            score = score_map.get(rec.get("primaryAccession"))
+            rec["_search_score"] = score
+            if score is not None:
+                rec["_bioseq_embedding_score"] = score
+
         return {"ranked_results": records}
     except Exception as e:
-        return {"error": f"Ranking failed: {str(e)}"}
+        return {"error": f"Protein Ranking failed: {str(e)}"}
 
 def rerank_node(state: GraphState) -> Dict[str, Any]:
-    """Performs contextual reranking (Top 5).
-
-    Rerank service is best-effort: if the gateway is unreachable (or any other
-    error happens), fall back to the first 5 entries of ``ranked_results``
-    instead of failing the whole pipeline. The BLAST path already returns hits
-    ranked by percent identity, and the frontend re-sorts the top-N by local
-    alignment score anyway — so a missing rerank is degraded but not broken.
-    """
+    """Performs contextual reranking (Top 5)."""
     if state.get('error'): return {}
     ranked = state.get('ranked_results') or []
     algorithm = (state.get("search_algorithm") or "embeddings").lower()
     if algorithm == "blast":
-        # Rerank would stamp ``_rerank_score`` on each record and dominate
-        # ``match_score`` in ``uniprot_record_to_candidate`` — that would
-        # hide the BLAST percent-identity we just attached as the EMB score.
-        # BLAST is already ranked by identity, so skip rerank entirely.
+        # BLAST is already ranked by percent identity; the rerank gateway
+        # would overwrite ``_search_score`` with a contextual score and
+        # hide the identity number we just stamped on for the UI. Skip it.
         return {"final_results": ranked[:5]}
     if not _rerank_service_alive():
-        print(f"Rerank service unreachable at {SEARCH_SERVICE_URL}; using top-5 of ranked_results.")
+        print(f"Rerank service unreachable at {SEARCH_SERVICE_URL}; using top-5 of ranked results.")
         return {"final_results": ranked[:5]}
+
     try:
         reranker = LocalReranker()
         # Takes top 50 matches (DNA or Protein) and reranks them
         final_records = reranker.rerank_by_context(ranked, state['context'], top_n=5)
         return {"final_results": final_records}
     except Exception as e:
-        print(f"Rerank skipped ({e}); falling back to top-5 of ranked_results.")
+        print(f"Rerank skipped ({e}); falling back to top-5 of initial results.")
         return {"final_results": ranked[:5]}
 
 # --- Conditional Routing Logic ---
@@ -298,9 +388,9 @@ def should_resolve_filepath(state: GraphState) -> Literal["resolve", "raw", "err
     if state.get('error'): return "error"
     return "resolve" if state['input_type'] == "FILEPATH" else "raw"
 
-def should_rank(state: GraphState) -> Literal["rank_dna", "protein_path", "error"]:
+def should_rank(state: GraphState) -> Literal["rank_dna", "rank_protein", "error"]:
     if state.get('error'): return "error"
-    return "rank_dna" if state['sequence_type'] == "DNA" else "protein_path"
+    return "rank_dna" if state['sequence_type'] == "DNA" else "rank_protein"
 
 # --- Graph Construction ---
 
@@ -311,7 +401,7 @@ def create_pipeline():
     workflow.add_node("resolve_file", resolve_filepath_node)
     workflow.add_node("use_raw", use_raw_sequence_node)
     workflow.add_node("rank_dna", rank_dna_node)
-    workflow.add_node("rank", rank_node)
+    workflow.add_node("rank_protein", rank_protein_node)
     workflow.add_node("rerank", rerank_node)
     
     workflow.set_entry_point("extract")
@@ -319,12 +409,12 @@ def create_pipeline():
     workflow.add_conditional_edges("extract", should_resolve_filepath, {"resolve": "resolve_file", "raw": "use_raw", "error": END})
     
     # After resolution/raw input, branch to DNA search or Protein search path
-    workflow.add_conditional_edges("resolve_file", should_rank, {"rank_dna": "rank_dna", "protein_path": "rank", "error": END})
-    workflow.add_conditional_edges("use_raw", should_rank, {"rank_dna": "rank_dna", "protein_path": "rank", "error": END})
+    workflow.add_conditional_edges("resolve_file", should_rank, {"rank_dna": "rank_dna", "rank_protein": "rank_protein", "error": END})
+    workflow.add_conditional_edges("use_raw", should_rank, {"rank_dna": "rank_dna", "rank_protein": "rank_protein", "error": END})
     
     # Convergence points
     workflow.add_conditional_edges("rank_dna", check_error, {"error": END, "continue": "rerank"})
-    workflow.add_conditional_edges("rank", check_error, {"error": END, "continue": "rerank"})
+    workflow.add_conditional_edges("rank_protein", check_error, {"error": END, "continue": "rerank"})
     
     workflow.add_edge("rerank", END)
     
@@ -339,7 +429,6 @@ async def run_bioseq_pipeline(prompt: str, search_algorithm: str = "embeddings")
         "context": None,
         "sequence": None,
         "sequence_type": None,
-        "is_confident": None,
         "ranked_results": None,
         "final_results": None,
         "error": None,
