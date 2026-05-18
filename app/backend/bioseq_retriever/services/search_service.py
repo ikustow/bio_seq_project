@@ -72,7 +72,7 @@ def init_models():
     dna_model.eval()
 
     print(f"Loading Reranking model: {RERANK_MODEL_NAME}...")
-    rerank_tokenizer = AutoTokenizer.from_pretrained(RERANK_MODEL_NAME)
+    rerank_tokenizer = AutoTokenizer.from_pretrained(RERANK_MODEL_NAME, padding_side="left")
     rerank_model = AutoModel.from_pretrained(RERANK_MODEL_NAME).to(device)
     rerank_model.eval()
     
@@ -172,30 +172,39 @@ def _embed_dna(sequence: str) -> np.ndarray:
         mean_pooled = outputs.last_hidden_state.mean(dim=1).squeeze()
     return mean_pooled.cpu().numpy().astype(np.float32)
 
-def _embed_rerank_texts(texts: List[str], is_query: bool = False) -> np.ndarray:
+def _embed_rerank_texts(texts: List[str], is_query: bool = False, max_length: int = 8192) -> np.ndarray:
     """
     Generates semantic embeddings using Qwen3-Embedding.
-    Leverages instruction-aware capabilities for high-fidelity biological retrieval.
+    1. Uses last-token pooling (standard for decoder-based embeddings).
+    2. Uses explicit max_length and truncation.
+    3. Distinct paths for query (with instructions) and documents (plain text).
     """
     if is_query:
-        # Detailed instruction to exploit the model's full potential for bioinformatics
+        # Instruction-aware path for queries
         instruction = (
             "Given a bioinformatics context or sequence retrieval prompt, identify relevant biological "
             "entities, molecular functions, biological processes, subcellular localizations, "
             "taxonomic constraints (including species exclusions), and structural relationships "
             "to retrieve matching entries from the Swiss-Prot database."
         )
-        # Qwen models typically use instruction + "\n" + text format
         processed_texts = [f"{instruction}\nQuery: {t}" for t in texts]
     else:
-        # Passages are prefixed for clear role separation
-        processed_texts = [f"Document: {t}" for t in texts]
+        # Plain text path for documents
+        processed_texts = texts
         
-    inputs = rerank_tokenizer(processed_texts, padding=True, truncation=True, return_tensors="pt").to(device)
+    inputs = rerank_tokenizer(
+        processed_texts, 
+        padding=True, 
+        truncation=True, 
+        max_length=max_length, 
+        return_tensors="pt"
+    ).to(device)
+
     with torch.no_grad():
         outputs = rerank_model(**inputs)
-        # Use mean pooling of the last hidden state
-        embeddings = outputs.last_hidden_state.mean(dim=1)
+        # Use last-token pooling of the last hidden state
+        embeddings = outputs.last_hidden_state[:, -1]
+        
     return embeddings.cpu().numpy().astype(np.float32)
 
 # --- Search ---
