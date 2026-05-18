@@ -128,7 +128,7 @@ def back_translate_with_model(aa_sequence: str, organism: str, model: BigBirdFor
             return aa_sequence
 
 def compute_masked_mean_embedding(dna_batch: List[str], model: AutoModel, tokenizer: AutoTokenizer, device: torch.device) -> np.ndarray:
-    """Computes fixed-size mean embeddings while ignoring padding tokens."""
+    """Computes mean embeddings, handling cases where attention_mask is missing."""
     inputs = tokenizer(
         dna_batch,
         return_tensors="pt",
@@ -140,12 +140,17 @@ def compute_masked_mean_embedding(dna_batch: List[str], model: AutoModel, tokeni
     with torch.inference_mode():
         outputs = model(**inputs)
         hidden = outputs.last_hidden_state # [B, L, D]
-        mask = inputs["attention_mask"].unsqueeze(-1) # [B, L, 1]
         
-        # Mean pooling ignoring padding
-        sum_embeddings = (hidden * mask).sum(dim=1)
-        num_tokens = mask.sum(dim=1)
-        embeddings = sum_embeddings / num_tokens
+        # Check if attention_mask is available
+        if "attention_mask" in inputs:
+            mask = inputs["attention_mask"].unsqueeze(-1) # [B, L, 1]
+            # Mean pooling ignoring padding
+            sum_embeddings = (hidden * mask).sum(dim=1)
+            num_tokens = mask.sum(dim=1)
+            embeddings = sum_embeddings / num_tokens
+        else:
+            # Fallback to standard mean pooling if mask is missing
+            embeddings = hidden.mean(dim=1)
         
         # Ensure Batch dimension exists
         if embeddings.ndim == 1:
