@@ -5,6 +5,10 @@ gatherUsageStats = false
 headless = true
 enableXsrfProtection = true
 enableCORS = false
+# Skip site-packages during file-watcher introspection. The watcher otherwise
+# triggers transformers' lazy submodule imports, which raise torchvision
+# ModuleNotFoundError tracebacks on every rerun — pure console noise.
+folderWatchBlacklist = [".venv"]
 
 [theme]
 base = "light"

@@ -7,13 +7,16 @@
     --right-panel-max-width: 1400px;
     --right-panel-bg: #e4eaf2;
     --right-panel-border: #cbd5e1;
-    --topbar-height: 90px;
+    --topbar-height: 68px;
     /* Dynamic top gap on the (fixed) sidebar — JS in app.py keeps this in
        sync with the topbar's translateY so the sidebar's content rides up
        together with the bar. At scroll 0 it equals --topbar-height; once
        the bar has fully scrolled out (scrollY >= --topbar-height) it
-       drops to 0, snapping the sidebar's top item to the viewport edge. */
-    --topbar-offset: 90px;
+       drops to 0, snapping the sidebar's top item to the viewport edge.
+       NOTE: with the global page scroll disabled (see the html/body
+       overflow rule further down) this offset stays at --topbar-height
+       permanently — the topbar no longer slides. */
+    --topbar-offset: 68px;
 }
 
 /* ---------- Fixed full-width topbar ----------
@@ -46,12 +49,12 @@
     flex-shrink: 0;
 }
 .bioseq-topbar-logo {
-    height: 62px;
+    height: 46px;
     width: auto;
     display: block;
 }
 .bioseq-topbar-title {
-    font-size: 1.55rem;
+    font-size: 1.3rem;
     font-weight: 700;
     color: #0f172a;
     letter-spacing: -0.01em;
@@ -83,12 +86,26 @@
 }
 
 /* When the sidebar is collapsed, Streamlit shows the expand-arrow
-   button in the top-left (inside stHeader). Without this it would
-   land at y=0 and visually punch through the topbar. Push it down so
-   it lives in the sidebar's gutter just below the topbar. */
+   button in the top-left (inside stHeader). stHeader is a flex
+   toolbar with a small intrinsic height, so the previous margin-top
+   push got absorbed/clipped — the arrow ended up sitting inside the
+   topbar instead of below it, and drifted out of sync with the
+   collapse button on scroll. Pull the button out of flow with
+   position:fixed and anchor top to --topbar-offset (kept in sync
+   with the topbar's translateY by the scroll JS in app.py). The
+   collapse button inside the expanded sidebar sits at the same Y
+   because the sidebar's padding-top also follows --topbar-offset;
+   we then add the same vertical stack the collapse button has on
+   top of it — stSidebarContent's 0.5rem padding-top plus
+   stSidebarHeader's 0.25rem (= 0.75rem) — so the two arrows line up
+   exactly regardless of scroll position. */
 [data-testid="stExpandSidebarButton"],
 button[data-testid="stExpandSidebarButton"] {
-    margin-top: var(--topbar-height) !important;
+    position: fixed !important;
+    top: calc(var(--topbar-offset) + 0.75rem) !important;
+    left: 0.5rem !important;
+    margin-top: 0 !important;
+    z-index: 1000002 !important;
 }
 
 /* Make the Streamlit default header transparent so the title sits below
@@ -105,12 +122,17 @@ button[data-testid="stExpandSidebarButton"] {
 [data-testid="stMainBlockContainer"],
 [data-testid="block-container"],
 .main .block-container {
-    /* Leave room for the fixed topbar plus a small breathing gap so the
-       first row of content doesn't crash into the topbar's bottom edge. */
-    padding-top: calc(var(--topbar-height) + 0.75rem) !important;
+    /* Just clear the fixed topbar — no extra breathing gap. The
+       previous calc(topbar + 0.75rem) was the wide purple band the
+       user pointed out at the top of the page. */
+    padding-top: var(--topbar-height) !important;
     padding-bottom: 1.5rem !important;
     /* padding-left matches the column gap below so the visual gap to
-       the sidebar equals the gap from chat to the right panel. */
+       the sidebar equals the gap from chat to the right panel.
+       padding-right is sized to fit the right panel's scrollbar (now
+       rendered to the right of the colored panel rather than inside
+       it — see .st-key-main_right) with a small buffer from the
+       viewport edge. */
     padding-left: 1.25rem !important;
     padding-right: 0.6rem !important;
     max-width: 100% !important;
@@ -183,10 +205,66 @@ button[data-testid="stExpandSidebarButton"] {
     min-width: var(--right-panel-min-width) !important;
     max-width: var(--right-panel-max-width) !important;
     position: relative;
-    background: var(--right-panel-bg);
-    border-radius: 12px;
-    padding: 10px 12px 14px !important;
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.2);
+    /* The right column manages its own vertical scroll so the global
+       page scroll can stay disabled (see the html/body rule below).
+       Visual chrome (background, rounded corners, box-shadow) lives on
+       the inner .st-key-main_right instead — that way the scrollbar
+       (rendered by THIS element) appears to the *right* of the colored
+       panel rather than inside it. ``scrollbar-gutter: stable`` keeps
+       the inner panel from shrinking when scroll-needed flips on/off.
+       Padding-bottom leaves room for the inner panel's box-shadow so
+       it isn't clipped by the overflow rule. Without ``min-height: 0``
+       the column would refuse to shrink below its content height (flex
+       items default to ``min-height: auto``), which would defeat the
+       cap and bring the page-level scroll back. */
+    max-height: calc(100vh - var(--topbar-height) - 2rem);
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
+    /* Padding gives the inner panel's box-shadow room to paint without
+       being clipped by the overflow rules above. Left = 10px for the
+       shadow that extends out of .st-key-main_right's left side;
+       bottom = 18px so the same shadow's lower edge isn't shaved off
+       when the user has scrolled all the way down; top = 4px so the
+       small upward portion of the shadow (3px y-offset reduces it to
+       ~5px) is visible too. Right stays 0 because scrollbar-gutter
+       reserves space on that side. */
+    padding: 4px 0 18px 10px !important;
+    background: transparent;
+    box-shadow: none;
+    border-radius: 0;
+}
+
+/* The colored, rounded panel itself — moved off the outer stColumn so
+   the scroll gutter on that column sits visually to the right of this
+   box rather than inside it. The 12px margin-right is the visible gap
+   between this panel's right edge and the scrollbar. */
+.st-key-main_right {
+    background: var(--right-panel-bg) !important;
+    border-radius: 12px !important;
+    padding: 12px 12px 14px !important;
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.2) !important;
+    margin-right: 12px;
+    box-sizing: border-box;
+}
+
+/* ---------- Disable global page scroll ----------
+   Both columns manage their own vertical scroll (chat_area on the left
+   via the JS resizer in components/chat.py; the right column via the
+   ``overflow-y: auto`` rule above), so the page itself has nothing to
+   scroll. The topbar slide-up animation in app.py becomes inert under
+   this rule — scrollY stays at 0 and the bar is permanently visible.
+   That's the intentional trade-off for keeping the composer pinned to
+   the bottom of the viewport regardless of content height. */
+html,
+body,
+[data-testid="stApp"],
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"] {
+    height: 100vh !important;
+    max-height: 100vh !important;
+    overflow: hidden !important;
 }
 
 /* Section blocks (Identification, Alignment, Function, etc) inside
@@ -327,20 +405,18 @@ html.is-resizing-right * {
     font-size: 0.82rem;
 }
 
-/* ---------- Chat column header ---------- */
-.chat-title {
-    font-size: 1.05rem;
-    font-weight: 600;
-    color: #0f172a;
-    letter-spacing: 0.01em;
-    line-height: 1.4;
-    margin: 0;
-    padding: 0;
-}
-
 /* Tighter chat spacing */
 [data-testid="stChatMessage"] {
     padding: 0.5rem 0.75rem;
+}
+
+/* The vertical block inside a chat message stacks its child elements
+   (text, mention chips, attachment cards) with Streamlit's default
+   ``gap: 1rem`` (16px), shown as the wide violet stripes in DevTools
+   between each item. Cut to 0.33rem (~5px) — one third of the
+   default — so the items in a single message read as a unit. */
+[data-testid="stChatMessageContent"] [data-testid="stVerticalBlock"] {
+    gap: 0.33rem !important;
 }
 
 /* Subtle borders on bordered containers */
@@ -428,50 +504,105 @@ div.stButton > button:hover {
     text-align: right;
 }
 
-/* Reduce vertical gap above the chat container so the title sits closer */
-div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
-    margin-bottom: 0.25rem;
-}
 
-/* Tighten the chat input area at the bottom */
+/* Tighten the chat input area at the bottom.
+   IMPORTANT: zero margin AND padding on the outer wrapper so its
+   bounding box exactly matches the visible green box inside
+   (.st-emotion-cache-1s6rup). Streamlit's emotion-cache class on the
+   wrapper otherwise adds an invisible padding above/below the green
+   box — making the "stChatInput" element bigger than what you see
+   on screen, so layout math against the previous sibling's
+   margin-bottom comes out wrong by a ghost ~8-16px. With this
+   override, the previous slot's bottom edge sits exactly one
+   margin-bottom away from the green box's top edge. */
 [data-testid="stChatInput"] {
-    margin-top: 0.5rem;
+    margin: 0 !important;
+    padding: 0 !important;
 }
 
-/* ---------- Chat column: stable Reset button ----------
-   The Reset button now lives inside .st-key-chat_toolbar; CSS pins it
-   to a fixed width and right-aligns it inside its column so the right
-   edge of the button always lines up with the right edge of the chat
-   area (which is where the message bubbles end). */
-.st-key-chat_toolbar [data-testid="stHorizontalBlock"] {
-    gap: 0.5rem !important;
-    align-items: center;
-}
-/* The right-hand column that holds the Reset button: don't stretch the
-   button to fill it; align children to the end so the button sits flush
-   right. */
-.st-key-chat_toolbar [data-testid="stColumn"]:last-child {
+/* Tighten the spacing between chat messages. Streamlit's
+   stVerticalBlock (the chat_area itself is one) sets ``gap: 1rem``
+   via an auto-generated emotion-cache class — that 16px shows up in
+   Chrome DevTools as the wide violet stripe between EVERY message
+   inside the 540px scroll box. Override the gap on the keyed
+   container so messages stack tighter. Also push the first message
+   down with ``margin-top: auto`` so when the conversation is short
+   the leftover space appears ABOVE the chat (where new messages
+   arrive) instead of below (between the last message and the
+   composer). Padding-bottom keeps the last visible item (a chat
+   message in normal flow, or the "Try the demo sequence" button in
+   the empty state) from kissing the chat_area's bottom edge — which,
+   combined with main_left's gap: 0, would make it touch the input
+   immediately below. */
+.st-key-chat_area {
+    gap: 0.25rem !important;
     display: flex !important;
-    justify-content: flex-end !important;
-    min-width: 110px;
+    flex-direction: column !important;
+    padding-bottom: 0.85rem !important;
 }
-.st-key-chat_toolbar [data-testid="stColumn"]:last-child > div {
-    width: auto !important;
-    flex: 0 0 auto !important;
+.st-key-chat_area > *:first-child {
+    margin-top: auto !important;
 }
-.st-key-chat_reset_btn button {
-    width: 100px !important;
-    min-width: 100px !important;
-    max-width: 100px !important;
-    white-space: nowrap !important;
-    padding-left: 14px !important;
-    padding-right: 14px !important;
+
+/* Pin the chat input flush to the bottom of the chat scroll area.
+   The previous "shrink wrapper margins" attempts didn't help because
+   the actual ~150px violet band was the parent's own flex gap, not
+   wrapper margins. ``.st-key-main_left`` is a flex column with
+   ``gap: 1rem`` between EVERY direct child (toolbar, chat_area,
+   mention_bridge, autocomplete, preview, input) — five gaps × 16px
+   alone plus the reserved 22px preview slot + the hint line stack
+   into the big purple dead-band visible in DevTools. Killing the
+   gap directly removes all of it in one go. */
+.st-key-main_left {
+    gap: 0 !important;
 }
-.st-key-chat_reset_btn button p,
-.st-key-chat_reset_btn button div {
-    white-space: nowrap !important;
-    overflow: visible !important;
-    text-overflow: clip !important;
+/* Every elementContainer wrapper Streamlit places between chat_area
+   and the input contributes its own default ~1rem bottom margin on
+   top of the flex gap — zero those too so nothing stacks back. */
+.st-key-main_left > [data-testid="stElementContainer"] {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+}
+/* Hide the default "Type or paste a sequence…" hint that was
+   permanently parked in the preview slot. It was the visible reason
+   the slot reserved 22px of height even when nothing was detected.
+   When the live-preview JS injects a real sequence/UniProt badge,
+   the slot grows naturally. */
+.bioseq-preview-hint {
+    display: none !important;
+}
+/* Slots that sit between the chat scroll area and the input field
+   (autocomplete chips, live-preview badge). The previous "zero
+   everything out" override made them so short the chips/badges
+   overflowed their own box and looked clipped at the top edge.
+   Approach now:
+     - When the slot has no live content → margin/padding/min-height
+       all collapse to 0 (slot is invisible, layout is tight).
+     - When the slot DOES have content → small vertical padding + a
+       min-height tall enough for one row of chips/badges, so nothing
+       gets clipped. The input naturally shifts down by exactly the
+       slot's rendered height. */
+.bioseq-autocomplete-slot,
+.bioseq-preview-slot {
+    margin: 0 !important;
+    padding: 0 !important;
+    min-height: 0 !important;
+}
+/* min-height must fit: chip border 2px + padding ~6px + line-height
+   ~19px = ~27px chip total + 12.8px slot padding = ~40px. Use 44px
+   to leave a small visual buffer so the chip never grazes the slot
+   edge. margin-bottom adds a real gap between the slot and the chat
+   input below (main_left's flex gap is 0, so without this margin the
+   green input box visually kissed/overlapped the chip's bottom). */
+.bioseq-autocomplete-slot:not(:empty) {
+    padding: 0.4rem 0.25rem !important;
+    min-height: 44px !important;
+    margin-bottom: 0.75rem !important;
+}
+.bioseq-preview-slot:has(.bioseq-preview-badge) {
+    padding: 0.4rem 0.25rem !important;
+    min-height: 44px !important;
+    margin-bottom: 0.75rem !important;
 }
 
 /* ---------- Top 5 matches: prevent the accession label and score
@@ -503,9 +634,19 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
    adds that data-testid to the chosen row). Show one continuous indigo
    ring around the whole cell, no internal seams. */
 [class*="st-key-candidate_cell_"]:has(button[data-testid="stBaseButton-primary"]) {
-    border-color: #4f46e5;
-    box-shadow: 0 0 0 1px #4f46e5;
-    background: #eef2ff;
+    border-color: #1862B5;
+    box-shadow: 0 2px 8px rgba(24, 98, 181, 0.30),
+                inset 0 0 0 1px #1862B5;
+    background: #2079D6;
+}
+/* Selected cell: flip the accession text to white so it's legible on
+   the solid-blue button area. The base rule on
+   ``[class*="..."] button`` forces ``color: #1e293b !important``, so
+   we override it here with matching specificity + ``!important``. The
+   inner markdown <p> inherits the colour from the button. */
+[class*="st-key-candidate_cell_"]:has(button[data-testid="stBaseButton-primary"]) button,
+[class*="st-key-candidate_cell_"]:has(button[data-testid="stBaseButton-primary"]) button [data-testid="stMarkdownContainer"] p {
+    color: #ffffff !important;
 }
 /* Lock the button itself. NOTE: the real DOM is
      div.stButton  >  span[data-testid=stTooltipHoverTarget]  >  button
@@ -563,7 +704,11 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     margin: 0 !important;
 }
 [class*="st-key-candidate_cell_"]:has(button[data-testid="stBaseButton-primary"]) .candidate-metrics {
-    border-top-color: rgba(79, 70, 229, 0.3) !important;
+    /* Seam between the solid-blue button half and the EMB/SEQ tile
+       half: a faint white separator reads cleanly on the new blue
+       background where the previous translucent-blue stroke
+       disappeared. */
+    border-top-color: rgba(255, 255, 255, 0.55) !important;
 }
 /* The per-letter wrap was coming from Streamlit's markdown container
    defaulting to `overflow-wrap: break-word` (and the inner <p> to
@@ -587,16 +732,30 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
 
 /* Tighten the gap between the 5 candidate columns — at 280–320px right
    panel width every pixel counts, and the default 1rem gap was eating
-   ~64px just on whitespace between the buttons. */
-.st-key-candidate_switcher [data-testid="stHorizontalBlock"] {
-    gap: 0.25rem !important;
+   ~64px just on whitespace between the buttons.
+
+   NOTE: the container key is `candidate_switcher_{suffix}` per-sequence,
+   so the resulting class is `st-key-candidate_switcher_seq_…`. A plain
+   `.st-key-candidate_switcher` selector would NOT match that — CSS class
+   selectors require the exact class name. Use a prefix attribute
+   selector so it matches every per-sequence switcher. */
+[class*="st-key-candidate_switcher"] [data-testid="stHorizontalBlock"] {
+    gap: 0.5rem !important;
+}
+/* Streamlit's stColumn ships with its own horizontal padding via the
+   auto-generated emotion-cache class — that padding is what shows
+   up as the violet free-space stripe between candidate buttons,
+   not the parent flex `gap`. Zero it so the cells sit nearly flush. */
+[class*="st-key-candidate_switcher"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
 }
 
 /* Tighten the bordered "Top 5 matches" container: Streamlit's
    border=True adds ~15px of padding all around, plus 1rem of vertical
    gap between the title, caption and the button row. The user wants
    the visible padding around the candidate buttons collapsed. */
-.st-key-candidate_switcher {
+[class*="st-key-candidate_switcher"] {
     padding-top: 0.5rem !important;
     padding-bottom: 0.5rem !important;
     gap: 0.4rem !important;
@@ -643,6 +802,13 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
 }
 [class*="st-key-candidate_cell_"] .candidate-score + .candidate-score {
     border-left: 1px solid rgba(17, 24, 39, 0.1) !important;
+}
+/* Neutral fill for tiles with no score yet (alignment not computed,
+   embedding pending, etc.). Carries the "--" placeholder so it's
+   clearly different from a real low-confidence reading. */
+[class*="st-key-candidate_cell_"] .candidate-score.candidate-score-missing {
+    background: #e5e7eb !important;
+    color: #4b5563 !important;
 }
 [class*="st-key-candidate_cell_"] .candidate-score-label,
 [class*="st-key-candidate_cell_"] .candidate-score-value {
@@ -733,13 +899,14 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     top: auto;
     right: 8px;
     bottom: 8px;
-    /* Start tucked into the corner at the minimum drag-resize size — just
-       enough to show the header strip. The user resizes from the bottom-
-       right corner whenever they need to read the payload. */
-    width: 110px;
-    height: 22px;
-    min-width: 90px;
-    min-height: 22px;
+    /* Start tucked into the corner at a small but visible default size —
+       enough to clearly show the header as a drag handle. The user
+       resizes from the bottom-right corner whenever they need to read
+       the payload. */
+    width: 200px;
+    height: 42px;
+    min-width: 140px;
+    min-height: 30px;
     max-width: calc(100vw - 16px);
     max-height: calc(100vh - 16px);
     background: #0f172a;
@@ -749,6 +916,13 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     box-shadow: 0 18px 48px rgba(15, 23, 42, 0.45);
     /* Must beat Streamlit's sidebar (~999990) and any modal/toasts. */
     z-index: 2147483600;
+    /* Explicit ``pointer-events: auto`` so the panel is never made
+       non-interactive by an inherited ``pointer-events: none`` from a
+       wrapper. Combined with the body-level positioning this is the
+       last line of defense against the "panel goes click-dead" symptom
+       that can otherwise happen if a Streamlit rerun lands while a
+       drag/resize is in flight. */
+    pointer-events: auto;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -803,20 +977,33 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
 .lldp-header {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 3px 8px;
-    background: #1e293b;
+    gap: 8px;
+    padding: 6px 10px;
+    background: linear-gradient(to bottom, #243349, #1e293b);
     border-bottom: 1px solid #334155;
-    font-size: 10px;
+    font-size: 12px;
     color: #f1f5f9;
     user-select: none;
+    -webkit-user-select: none;
     cursor: move;
     touch-action: none;
-    min-height: 22px;
+    min-height: 30px;
+}
+
+/* Belt-and-braces: kill text selection on every descendant of the header
+   so clicking the "Debug" label, the dot, or any padding starts a drag
+   instead of selecting that element's text. Without this, browsers that
+   don't propagate ``user-select: none`` reliably (older WebKit) could
+   still let the click initiate a text-selection drag. */
+.lldp-header,
+.lldp-header * {
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 .lldp-header strong {
     font-weight: 600;
+    letter-spacing: 0.02em;
 }
 
 .lldp-dot {
@@ -994,9 +1181,9 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
 }
 
 .bioseq-chip:hover {
-    border-color: #6366f1;
-    background: #f8faff;
-    box-shadow: 0 2px 6px rgba(79, 70, 229, 0.12);
+    border-color: #2079D6;
+    background: #EDF3FB;
+    box-shadow: 0 2px 6px rgba(32, 121, 214, 0.15);
     text-decoration: none !important;
 }
 
@@ -1004,10 +1191,13 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     transform: translateY(1px);
 }
 
-.bioseq-chip.is-selected {
-    border-color: #4338ca;
-    background: #eef2ff;
-    box-shadow: inset 0 0 0 1px #4338ca;
+.bioseq-chip.is-selected,
+.bioseq-chip.is-selected:hover {
+    border-color: #1862B5;
+    background: #2079D6;
+    color: #ffffff !important;
+    box-shadow: 0 2px 8px rgba(24, 98, 181, 0.35),
+                inset 0 0 0 1px #1862B5;
 }
 
 .bioseq-chip-header {
@@ -1028,36 +1218,45 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     flex: 1 1 auto;
 }
 
-/* Round "+" button on each chip: inserts ``@<label>`` into the chat
-   input. Sits in the chip header row, opposite the label. */
+/* Paste-icon button on each chip: inserts ``@<label>`` into the chat
+   input. The PNG is supplied as a mask-image (injected per-render by
+   object_bar.py) so we can recolor it with ``background-color`` —
+   blue on white chips, white when the chip is selected. */
 .bioseq-chip-insert {
     flex-shrink: 0;
     width: 22px;
     height: 22px;
     padding: 0;
     margin: 0;
-    border-radius: 999px;
-    background: transparent;
-    color: #4338ca;
-    border: 1px solid #c7d2fe;
-    font-size: 0.95rem;
-    font-weight: 600;
-    line-height: 1;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+    border: none;
+    border-radius: 6px;
+    background-color: #2079D6;
+    -webkit-mask-size: 14px 14px;
+            mask-size: 14px 14px;
+    -webkit-mask-repeat: no-repeat;
+            mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+            mask-position: center;
     cursor: pointer;
-    transition: background-color 0.12s ease, color 0.12s ease,
-                border-color 0.12s ease;
+    transition: background-color 0.12s ease, transform 0.05s ease;
 }
 
 .bioseq-chip-insert:hover {
-    background: #c7d2fe;
-    color: #1e1b4b;
+    background-color: #1862B5;
+    transform: scale(1.08);
 }
 
 .bioseq-chip-insert:active {
-    background: #a5b4fc;
+    background-color: #134A8A;
+    transform: scale(0.96);
+}
+
+.bioseq-chip.is-selected .bioseq-chip-insert {
+    background-color: #ffffff;
+}
+
+.bioseq-chip.is-selected .bioseq-chip-insert:hover {
+    background-color: rgba(255, 255, 255, 0.82);
 }
 
 /* Drag preview: dim the chip while it's being dragged. */
@@ -1070,13 +1269,13 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
 .bioseq-drop-target,
 [data-testid="stChatInput"]:has(textarea.bioseq-drop-target),
 [data-testid="stChatInput"]:has([contenteditable].bioseq-drop-target) {
-    outline: 2px dashed #6366f1 !important;
+    outline: 2px dashed #2079D6 !important;
     outline-offset: 2px;
     border-radius: 14px;
 }
 
 .bioseq-chip.is-selected .bioseq-chip-label {
-    color: #312e81;
+    color: #ffffff;
 }
 
 /* Status pill sits on its own row beneath the caption — keeps the chip
@@ -1111,7 +1310,8 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     background: #dcfce7;
     color: #166534;
 }
-.bioseq-chip-status-error {
+.bioseq-chip-status-error,
+.bioseq-chip-status-search_failed {
     background: #fee2e2;
     color: #991b1b;
 }
@@ -1134,7 +1334,7 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
 }
 
 .bioseq-chip.is-selected .bioseq-chip-caption {
-    color: #4338ca;
+    color: rgba(255, 255, 255, 0.88);
 }
 
 /* ---------- Compact Sequence Inspector header ---------- */
@@ -1195,7 +1395,8 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     background: #e5e7eb;
     color: #4b5563;
 }
-.bioseq-seq-header__badge--status.bioseq-seq-header__status-error {
+.bioseq-seq-header__badge--status.bioseq-seq-header__status-error,
+.bioseq-seq-header__badge--status.bioseq-seq-header__status-search_failed {
     background: #fee2e2;
     color: #991b1b;
 }
@@ -1257,9 +1458,9 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
 }
 
 .bioseq-autocomplete-item {
-    background: #eef2ff;
-    color: #312e81;
-    border: 1px solid #c7d2fe;
+    background: #EDF3FB;
+    color: #1862B5;
+    border: 1px solid #C7D8F0;
     border-radius: 999px;
     padding: 0.18rem 0.7rem;
     font-size: 0.78rem;
@@ -1270,12 +1471,12 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
 }
 
 .bioseq-autocomplete-item:hover {
-    background: #c7d2fe;
-    border-color: #818cf8;
+    background: #D7E4F6;
+    border-color: #2079D6;
 }
 
 .bioseq-autocomplete-item:active {
-    background: #a5b4fc;
+    background: #A8C0E5;
 }
 
 /* ---------- Live composer preview ---------- */
@@ -1336,28 +1537,173 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
    Important: target the BUTTON elements only. Don't use generic
    [aria-label*="attach"] selectors because Streamlit copies the chat
    placeholder ("…attach a FASTA file…") into the textarea's aria-label,
-   which would shrink the textarea itself to 32×32. */
+   which would shrink the textarea itself to 32×32.
 
-[data-testid="stChatInput"] button[data-testid*="ChatInputUpload"] {
+   Layout strategy (DO NOT switch this to display:contents / row-flex —
+   tried twice, both times it broke Streamlit's textarea autosize: the
+   inner baseweb wrappers compute height from scrollHeight under the
+   assumption that the textarea is the only thing in a column-flex; if
+   you turn the parent into a row, autosize miscalculates and the
+   textarea snaps to ~278px even with two lines of text, producing a
+   huge empty box).
+
+   Constraints we have to satisfy together:
+     (1) `+` always bottom-left, send always bottom-right;
+     (2) the buttons never push the input taller than the textarea
+         itself needs — i.e. the native controls-row's ~20px ghost
+         height has to be removed;
+     (3) the visible text must stay aligned with `+` — and crucially,
+         `.bioseq-input-mirror` (the JS-positioned overlay that shows
+         the colored @mention text on top of the transparent textarea,
+         see components/chat.py MIRROR_STYLES) clones the textarea's
+         computed PADDING verbatim. If we add padding-left to the
+         textarea to clear `+`, the mirror inherits it and the visible
+         text moves with it — the gap user sees grows.
+
+   Approach:
+     - Pin `+` and send via position:absolute on `stChatInput` —
+       Streamlit's autosize doesn't care about absolutely positioned
+       siblings, so textarea sizing stays correct.
+     - Take the native controls-row OUT of flex flow by positioning
+       IT absolutely too (height:0 alone didn't reliably collapse the
+       row across Streamlit's emotion-cache shuffles; full
+       position:absolute does).
+     - Reserve the left/right gutter via MARGIN on the textarea
+       wrapper, NOT padding on the textarea — so the mirror stays
+       pixel-aligned with the textarea text. */
+[data-testid="stChatInput"] {
+    position: relative !important;
+}
+
+/* ---------- Highlight the chat input as the page's primary CTA ----------
+   This is the first thing the user should notice when the app loads, so
+   the box itself carries a blue ring and a soft blurred glow that
+   spills outward. Target the INNER box (e1vtqrcf1) — that's the visible
+   rounded rectangle Streamlit draws; stChatInput itself is just a thin
+   wrapper that data-testid hangs on.
+   The focus state deepens the ring + glow so typing feedback stays
+   crisp. */
+/* Brand blue #2079D6 — same hue used on the user chat-bubble
+   (line ~1671) — keeps the page visually unified. */
+[data-testid="stChatInput"] > div {
+    border: 2px solid #2079D6 !important;
+    border-radius: 14px !important;
+    box-shadow:
+        0 4px 16px rgba(32, 121, 214, 0.25),
+        0 12px 32px rgba(32, 121, 214, 0.18) !important;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease !important;
+}
+[data-testid="stChatInput"] > div:focus-within {
+    border-color: #1862B5 !important;
+    box-shadow:
+        0 0 0 3px rgba(32, 121, 214, 0.18),
+        0 6px 20px rgba(32, 121, 214, 0.32),
+        0 16px 40px rgba(32, 121, 214, 0.22) !important;
+}
+
+/* Ground truth DOM (verified via outerHTML dump):
+     [data-testid="stChatInput"]
+       └─ div.…1s6rup            (green box, e1vtqrcf1)
+           └─ div.…vdir7f         (flex-column, e1vtqrcf3)
+               ├─ div.…r0dft0     (textarea wrapper, e1vtqrcf4)
+               │   └─ [data-baseweb="textarea"]
+               │       └─ [data-baseweb="base-input"]
+               │           └─ <textarea data-testid="stChatInputTextArea">
+               └─ div.…2e5lff     (CONTROLS ROW, e1vtqrcf7)
+                   ├─ div.…d1huln (upload column, e1vtqrcf5)
+                   │   └─ [data-testid="stChatInputFileUploadButton"]
+                   │       └─ <input type="file"> + tooltip wrapper
+                   │           └─ <button aria-label="Upload files">  ← + button
+                   └─ div.…k1jj38 (submit column, e1vtqrcf6)
+                       └─ <button data-testid="stChatInputSubmitButton">  ← ↑ button
+
+   CRITICAL: the `+` button itself has NO data-testid — only its
+   wrapper does (stChatInputFileUploadButton). Earlier selectors that
+   targeted `button[data-testid*="ChatInputUpload"]` matched nothing,
+   so `+` kept its native styling (sat below textarea in its own row)
+   while `↑` did get pinned. That's the bug behind the asymmetric
+   layout we saw. Now we target `+` by aria-label, `↑` by its testid,
+   and the controls-row via the wrapper testid that DOES exist on it. */
+
+/* Take the controls-row out of layout flow entirely so it contributes
+   zero height. `pointer-events: none` on the row so it never blocks
+   clicks landing on the textarea; the buttons themselves get
+   `pointer-events: auto` back below. */
+[data-testid="stChatInput"] > div > div > div:has([data-testid="stChatInputFileUploadButton"]),
+[data-testid="stChatInput"] > div > div > div:has(button[data-testid="stChatInputSubmitButton"]) {
+    position: absolute !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    pointer-events: none !important;
+    z-index: 4 !important;
+}
+
+/* Reserve a 48px left and right gutter on the textarea WRAPPER (not
+   the textarea itself) so the mirror's padding clone is untouched and
+   the visible text stays pixel-aligned with the actual textarea text.
+   48px = 12px offset from edge + 32px button width + ~4px breathing.
+
+   IMPORTANT: use padding, NOT margin. The wrapper carries `width: 100%`
+   + `flex: 1 1 0%` from Streamlit's own CSS, so margins would be added
+   OUTSIDE that 100% and push the wrapper ~96px past the green box's
+   right edge. With `box-sizing: border-box` (set globally), padding
+   lives INSIDE the declared width, so the wrapper still fits. The
+   inner textarea is shifted inward by the wrapper's padding; the
+   mirror tracks the textarea via getBoundingClientRect() so it stays
+   pixel-aligned. */
+[data-testid="stChatInput"] > div > div > div:has(> [data-baseweb="textarea"]) {
+    padding-left: 48px !important;
+    padding-right: 48px !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    box-sizing: border-box !important;
+}
+
+/* Both icon buttons — pinned to the bottom corners of stChatInput.
+   ``bottom`` is tuned so the 32px button sits visually centred at the
+   1-line default height (Streamlit's empty single-row chat input is
+   ~52px tall: 52/2 − 16 ≈ 10px). Because the offset is measured from
+   the BOTTOM, growing the textarea to multiple lines pushes the
+   buttons up with the new bottom edge — same relative position to the
+   floor, just like before. */
+[data-testid="stChatInput"] button[aria-label="Upload files"],
+[data-testid="stChatInput"] button[data-testid="stChatInputSubmitButton"] {
+    position: absolute !important;
+    bottom: 14px !important;
+    z-index: 5 !important;
     width: 32px !important;
     height: 32px !important;
+    min-width: 32px !important;
+    min-height: 32px !important;
     border-radius: 999px !important;
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
+    pointer-events: auto !important;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+[data-testid="stChatInput"] button[aria-label="Upload files"] {
+    left: 12px !important;
     background: #e5e7eb !important;
     color: #4b5563 !important;
     border: 1px solid transparent !important;
-    transition: background-color 0.15s ease, color 0.15s ease;
+}
+[data-testid="stChatInput"] button[data-testid="stChatInputSubmitButton"] {
+    right: 12px !important;
 }
 
-[data-testid="stChatInput"] button[data-testid*="ChatInputUpload"]:hover {
-    background: #c7d2fe !important;
-    color: #312e81 !important;
+[data-testid="stChatInput"] button[aria-label="Upload files"]:hover {
+    background: #D7E4F6 !important;
+    color: #1862B5 !important;
 }
 
-[data-testid="stChatInput"] button[data-testid*="ChatInputUpload"]:active {
-    background: #a5b4fc !important;
+[data-testid="stChatInput"] button[aria-label="Upload files"]:active {
+    background: #A8C0E5 !important;
 }
 
 /* ---------- Live @mention highlighting inside the chat input ----------
@@ -1370,15 +1716,15 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
 
 [data-testid="stChatInput"] textarea {
     color: transparent !important;
-    caret-color: #1e3a8a !important;
+    caret-color: #2079D6 !important;
 }
 [data-testid="stChatInput"] textarea::placeholder {
     color: #9ca3af !important;
     -webkit-text-fill-color: #9ca3af !important;
 }
 [data-testid="stChatInput"] textarea::selection {
-    background: #dbeafe !important;
-    color: #1e3a8a !important;
+    background: #D7E4F6 !important;
+    color: #1862B5 !important;
 }
 
 .bioseq-input-mirror {
@@ -1403,9 +1749,9 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
 }
 
 .bioseq-input-mirror .bioseq-mention-tok {
-    color: #1d4ed8;
-    background: rgba(29, 78, 216, 0.10);
-    box-shadow: inset 0 0 0 1px rgba(29, 78, 216, 0.45);
+    color: #2079D6;
+    background: rgba(32, 121, 214, 0.10);
+    box-shadow: inset 0 0 0 1px rgba(32, 121, 214, 0.45);
     border-radius: 3px;
 }
 
@@ -1416,22 +1762,33 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     align-items: center;
     padding: 0 0.4rem;
     border-radius: 6px;
-    background: #eef2ff;
-    color: #3730a3 !important;
+    background: #EDF3FB;
+    color: #1862B5 !important;
     text-decoration: none !important;
     font-weight: 600;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     font-size: 0.9em;
     line-height: 1.4;
     cursor: pointer;
-    border: 1px solid #c7d2fe;
+    border: 1px solid #C7D8F0;
     transition: background-color 0.12s ease, border-color 0.12s ease;
 }
 
 .bioseq-mention:hover {
-    background: #c7d2fe;
-    border-color: #818cf8;
+    background: #D7E4F6;
+    border-color: #2079D6;
     text-decoration: none !important;
+}
+
+/* Drag affordance: matches the Object Bar chip so users learn it once.
+   ``onChipDragStart`` toggles ``.is-dragging`` for both surfaces. */
+.bioseq-mention {
+    cursor: grab;
+}
+
+.bioseq-mention.is-dragging {
+    opacity: 0.55;
+    cursor: grabbing;
 }
 
 /* Claude-Code-style user bubble.
@@ -1440,8 +1797,8 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
    bot avatar (both are at the same X offset). The inner content wrapper
    is forced transparent so there's only one visible rectangle. */
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageContent"][aria-label*="user" i]) {
-    background: #e6efff !important;
-    color: #1d4ed8;
+    background: #EDF3FB !important;
+    color: #2079D6;
     border-radius: 14px;
     border: none !important;
     padding: 0.55rem 0.9rem !important;
@@ -1466,6 +1823,31 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     box-shadow: none !important;
 }
 
+/* Inline "Working…" progress indicator rendered while the retriever is
+   running. A small spinning ring + a stage label, no expandable shell. */
+.bioseq-progress {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    color: #5b6478;
+    font-size: 0.95em;
+}
+.bioseq-progress-spinner {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid #d4d8e1;
+    border-top-color: #4a6bff;
+    animation: bioseq-progress-spin 0.9s linear infinite;
+}
+.bioseq-progress-label {
+    line-height: 1.2;
+}
+@keyframes bioseq-progress-spin {
+    to { transform: rotate(360deg); }
+}
+
 /* The msg-body wrapper is now just a flow container — preserve newlines
    and inherit colour/background from the outer bubble. */
 .bioseq-msg-body {
@@ -1482,7 +1864,7 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
 
 /* Inline @mentions on the light-blue bubble — deeper blue chip. */
 [data-testid="stChatMessageContent"][aria-label*="user" i] .bioseq-mention {
-    background: #c7d8f5;
+    background: #C7D8F0;
     color: #1e3a8a !important;
     border-color: #93b4ea;
 }
@@ -1501,10 +1883,10 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     align-items: center;
     gap: 0.4rem 0.55rem;
     background: #ffffff;
-    border: 1px solid #c7d8f5;
+    border: 1px solid #C7D8F0;
     border-radius: 10px;
     padding: 0.35rem 0.65rem;
-    margin-top: 0.4rem;
+    margin-top: 0;
     font-size: 0.82rem;
     line-height: 1.35;
     color: #334155;
@@ -1529,7 +1911,7 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
 
 .bioseq-attach-label {
     font-weight: 700;
-    color: #312e81;
+    color: #1862B5;
     letter-spacing: 0.01em;
 }
 
@@ -1540,7 +1922,7 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
 .bioseq-attach-divider {
     width: 1px;
     height: 14px;
-    background: #c7d8f5;
+    background: #C7D8F0;
 }
 
 .bioseq-attach-best-label {
@@ -1551,7 +1933,7 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
 }
 
 .bioseq-attach-best {
-    color: #1d4ed8;
+    color: #2079D6;
     font-weight: 600;
 }
 
@@ -1580,7 +1962,8 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     background: #e5e7eb;
     color: #4b5563;
 }
-.bioseq-attach-status-error {
+.bioseq-attach-status-error,
+.bioseq-attach-status-search_failed {
     background: #fee2e2;
     color: #991b1b;
 }
@@ -1625,7 +2008,7 @@ div[data-testid="stVerticalBlock"] > div:has(> .chat-title) {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #6366f1;
+    background: #2079D6;
     animation: bioseq-thinking-pulse 1.1s ease-in-out infinite;
 }
 

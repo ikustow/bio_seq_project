@@ -213,6 +213,7 @@ def _pdb_cache_path(accession: str) -> Path:
     return Path(__file__).parent.parent / "assets" / f"AF-{accession}-F1-model_v4.pdb"
 
 
+@st.cache_data(show_spinner=False)
 def _fetch_pdb(accession: str) -> str | None:
     cache = _pdb_cache_path(accession)
     if cache.exists():
@@ -231,9 +232,22 @@ def _fetch_pdb(accession: str) -> str | None:
         return None
 
 
-def _render_structure(p: ProteinView) -> None:
+@st.cache_data(show_spinner=False)
+def _build_py3dmol_html(pdb: str) -> str | None:
     try:
         import py3Dmol  # type: ignore
+    except Exception:
+        return None
+    view = py3Dmol.view(width=560, height=380)
+    view.addModel(pdb, "pdb")
+    view.setStyle({"cartoon": {"color": "spectrum"}})
+    view.zoomTo()
+    return view._make_html()
+
+
+def _render_structure(p: ProteinView) -> None:
+    try:
+        import py3Dmol  # type: ignore  # noqa: F401
     except Exception:
         st.info(
             "3D viewer dependency (py3Dmol) missing. "
@@ -249,11 +263,14 @@ def _render_structure(p: ProteinView) -> None:
         )
         return
 
-    view = py3Dmol.view(width=560, height=380)
-    view.addModel(pdb, "pdb")
-    view.setStyle({"cartoon": {"color": "spectrum"}})
-    view.zoomTo()
-    st.components.v1.html(view._make_html(), height=400, scrolling=False)
+    viewer_html = _build_py3dmol_html(pdb)
+    if not viewer_html:
+        st.info(
+            "3D viewer could not be initialised. "
+            f"Open on [AlphaFold DB](https://alphafold.ebi.ac.uk/entry/{p['alphafold_accession']})."
+        )
+        return
+    st.components.v1.html(viewer_html, height=400, scrolling=False)
     st.caption(
         f"AlphaFold predicted structure · "
         f"[AF-{p['alphafold_accession']}-F1](https://alphafold.ebi.ac.uk/entry/{p['alphafold_accession']})"
@@ -380,14 +397,46 @@ _LOCKED_HINTS = {
 }
 
 
-def _match_tone(score: float) -> str:
-    if score >= 90:
-        return "green"
-    if score >= 70:
-        return "yellow"
-    if score >= 50:
-        return "orange"
-    return "red"
+# EMB/SEQ score gradient — non-linear on purpose. Real candidates
+# cluster at the high end (80–100% is the working range), so most of
+# the perceptual contrast lives there: 80→90→95→100 each step bumps
+# saturation up and lightness down so 100% reads as visibly "best"
+# rather than a slightly-greener 90%. Sub-50 scores are already a bad
+# outcome and don't need fine resolution, so the red→yellow half is
+# spaced more loosely. Each stop is
+# ``(score_fraction, (hue, saturation%, lightness%))`` and bracketing
+# stops are linearly interpolated in HSL space.
+_SCORE_GRADIENT_STOPS: tuple[tuple[float, tuple[int, int, int]], ...] = (
+    (0.00, (0,   72, 80)),
+    (0.25, (20,  78, 76)),
+    (0.50, (45,  88, 74)),
+    (0.70, (62,  82, 72)),
+    (0.80, (85,  62, 70)),
+    (0.90, (118, 55, 66)),
+    (0.95, (135, 62, 58)),
+    (1.00, (142, 70, 48)),
+)
+
+
+def _score_background(score: float) -> str:
+    """Return an ``hsl(...)`` string for the tile background.
+
+    ``score`` is expected on a 0..100 scale. Out-of-range values are
+    clamped so an unexpected backend value can't produce a NaN colour.
+    """
+    t = max(0.0, min(1.0, score / 100.0))
+    stops = _SCORE_GRADIENT_STOPS
+    for i in range(len(stops) - 1):
+        t0, c0 = stops[i]
+        t1, c1 = stops[i + 1]
+        if t <= t1:
+            f = 0.0 if t1 == t0 else (t - t0) / (t1 - t0)
+            h = c0[0] + (c1[0] - c0[0]) * f
+            s = c0[1] + (c1[1] - c0[1]) * f
+            l = c0[2] + (c1[2] - c0[2]) * f
+            return f"hsl({h:.0f}, {s:.0f}%, {l:.0f}%)"
+    h, s, l = stops[-1][1]
+    return f"hsl({h}, {s}%, {l}%)"
 
 
 _SCORE_TOOLTIPS: dict[str, str] = {
@@ -406,15 +455,19 @@ _SCORE_TOOLTIPS: dict[str, str] = {
 
 def _score_tile(label: str, score: float | None) -> str:
     if score is None or score <= 0:
-        tone = "gray"
+        # Missing-score tiles keep the neutral grey class so users
+        # don't mistake them for a real low-confidence reading.
+        extra_class = " candidate-score-missing"
+        style_attr = ""
         value = "--"
     else:
-        tone = _match_tone(score)
+        extra_class = ""
+        style_attr = f" style=\"background-color: {_score_background(score)}\""
         value = f"{int(round(score))}%"
     tooltip = _SCORE_TOOLTIPS.get(label, label)
     return (
-        f"<span class='candidate-score candidate-score-{tone}' "
-        f"title=\"{html.escape(tooltip)}\">"
+        f"<span class='candidate-score{extra_class}'"
+        f"{style_attr} title=\"{html.escape(tooltip)}\">"
         f"<span class='candidate-score-label'>{html.escape(label)}</span>"
         f"<span class='candidate-score-value'>{html.escape(value)}</span>"
         "</span>"
@@ -435,6 +488,22 @@ def _select_candidate(index: int) -> None:
 
 def _select_candidate_via_callback(index: int, callback) -> None:
     callback(index)
+
+
+def _normalize_match_score(value: object) -> float | None:
+    """Render-time guard: backend `matches` arrive on a 0..1 scale, while the
+    legacy `st.session_state.candidates` path already pre-multiplies to %.
+    Treat values in (0, 1] as 0..1 and rescale; leave everything else alone.
+    """
+    try:
+        score = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if score <= 0:
+        return 0.0
+    if score <= 1:
+        return score * 100.0
+    return score
 
 
 def _alignment_score_for_candidate(candidate: Candidate, query_sequence: str | None) -> float | None:
@@ -488,26 +557,15 @@ def _render_switcher(
             "Ranked & re-ranked by the retrieval pipeline. "
             "Pick a candidate to view its full record."
         )
-        # Only the tile background colours live inline — all layout
-        # rules (sizes, grid structure, font sizing) live in style.css
-        # so there's a single source of truth.
-        st.markdown(
-            """
-            <style>
-              .candidate-score-green { background: #bbf7d0; }
-              .candidate-score-yellow { background: #fef08a; }
-              .candidate-score-orange { background: #fed7aa; }
-              .candidate-score-red { background: #fecaca; }
-              .candidate-score-gray { background: #e5e7eb; color: #4b5563; }
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
+        # Tile colours are computed inline from the score
+        # (`_score_background`); layout + the neutral "missing score"
+        # style live in style.css.
         columns = st.columns(len(candidates))
         for index, candidate in enumerate(candidates):
             protein = candidate["protein"]
             accession = protein.get("accession") or ""
             alignment_score = _alignment_score_for_candidate(candidate, query_sequence)
+            match_score = _normalize_match_score(candidate.get("match_score"))
             cell_key = f"candidate_cell_{key_suffix}_{index}" if key_suffix else f"candidate_cell_{index}"
             btn_key = (
                 f"candidate_button_{key_suffix}_{index}_{accession}"
@@ -542,7 +600,7 @@ def _render_switcher(
                     st.markdown(
                         f"<div class='candidate-metrics{active_metrics_class}'>"
                         "<div class='candidate-scores'>"
-                        f"{_score_tile('EMB', candidate['match_score'])}"
+                        f"{_score_tile('EMB', match_score)}"
                         f"{_score_tile('SEQ', alignment_score)}"
                         "</div>"
                         "</div>",
@@ -588,7 +646,7 @@ def render(
     )
     selected = candidates[chosen]
     protein = selected["protein"]
-    score = selected["match_score"]
+    score = _normalize_match_score(selected.get("match_score")) or 0.0
 
     if score <= 0:
         confidence_badge = ":gray-badge[match-confidence unavailable]"

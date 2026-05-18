@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import datetime as _dt
 import html
+from pathlib import Path
 from typing import Any
 
 import streamlit as st
@@ -11,6 +13,37 @@ import streamlit as st
 import chat_pipeline
 import session_db_adapter
 import session_identity
+
+_PLUS_ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "Plus.png"
+
+
+@st.cache_data(show_spinner=False)
+def _new_chat_button_css(icon_path: str) -> str:
+    """Replace the default emoji icon on the 'New chat' button with Plus.png.
+
+    Streamlit's ``st.button`` only accepts emoji / Material icons, so we
+    target the keyed wrapper (``.st-key-sidebar_new_chat``) and inject a
+    ``::before`` pseudo-element carrying the PNG as a base64 data URI.
+    """
+    path = Path(icon_path)
+    if not path.exists():
+        return ""
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return (
+        "<style>"
+        ".st-key-sidebar_new_chat div.stButton > button > div {"
+        " transform: translateX(-0.55rem); }"
+        ".st-key-sidebar_new_chat div.stButton > button > div p,"
+        ".st-key-sidebar_new_chat div.stButton > button > div {"
+        " font-weight: 700 !important; }"
+        ".st-key-sidebar_new_chat div.stButton > button > div::before {"
+        f" content: ''; display: inline-block; width: 18px; height: 18px;"
+        f" margin-right: 0.5rem; vertical-align: -3px;"
+        f" background-image: url('data:image/png;base64,{encoded}');"
+        " background-size: contain; background-repeat: no-repeat;"
+        " background-position: center; }"
+        "</style>"
+    )
 
 
 def render() -> None:
@@ -40,7 +73,11 @@ def render() -> None:
         )
         st.session_state["search_algorithm"] = picked
 
-        if st.button("➕ New chat", width="stretch", key="sidebar_new_chat"):
+        css = _new_chat_button_css(str(_PLUS_ICON_PATH))
+        if css:
+            st.markdown(css, unsafe_allow_html=True)
+        button_label = "New chat" if css else "➕ New chat"
+        if st.button(button_label, width="stretch", key="sidebar_new_chat"):
             _start_fresh_session()
             st.rerun()
 

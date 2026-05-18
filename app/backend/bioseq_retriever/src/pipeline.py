@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 
+import re
 import socket
 from urllib.parse import urlparse
 
@@ -51,14 +52,109 @@ class GraphState(TypedDict):
 
 # --- Node Functions ---
 
+# Alphabets for the deterministic fallback. Standard amino-acid alphabet
+# minus the 4 DNA letters gives a "protein-only" set whose presence is a
+# strong signal that the input is a protein, not DNA. Kept inline so the
+# inner retriever stays free of upward dependencies on app_services.
+_AA_EXTENDED = set("ACDEFGHIKLMNPQRSTVWYBJUOZX*")
+_DNA_ALPHABET = set("ACGTUN")
+_PROTEIN_ONLY = set("EFILPQ")
+_MIN_SEQ_LEN = 30
+_SEQ_RUN_RE = re.compile(r"[ACDEFGHIKLMNPQRSTVWYBJUOZX*\-\s\d]{30,}")
+
+
+def _classify_sequence_type(normalized: str) -> str:
+    """Best-effort DNA/PROTEIN classification from the residue alphabet."""
+    letters = set(normalized)
+    if letters & _PROTEIN_ONLY:
+        return "PROTEIN"
+    if letters <= _DNA_ALPHABET:
+        return "DNA"
+    return "PROTEIN"
+
+
+def _deterministic_extract(prompt: str) -> Optional[Dict[str, Any]]:
+    """Pattern-matching fallback for ``extract_and_classify_node``.
+
+    Mirrors the LLM's output shape so callers can't tell which path
+    produced the result. Returns ``None`` when no plausible sequence is
+    visible in the prompt — in that case the caller should surface the
+    original LLM error rather than fabricate an extraction.
+    """
+    if not prompt:
+        return None
+
+    # 1) FASTA — most reliable. Body is the run of sequence-shaped lines
+    #    following a ``>header`` line.
+    fasta_match = re.search(r"^>.*$", prompt, flags=re.MULTILINE)
+    if fasta_match:
+        lines = prompt[fasta_match.start():].splitlines()
+        header = lines[0]
+        body_lines: List[str] = []
+        for line in lines[1:]:
+            compact = "".join(line.split()).upper()
+            if compact and set(compact) <= (_AA_EXTENDED | {"-"}):
+                body_lines.append(line)
+            else:
+                break
+        body = "".join(body_lines).strip()
+        if body:
+            normalized = re.sub(r"\s+", "", body).upper()
+            seq_type = _classify_sequence_type(normalized)
+            context_parts = (prompt[:fasta_match.start()] + " " + header).split()
+            return {
+                "sequence_or_path": header + "\n" + body,
+                "input_type": "SEQUENCE",
+                "context": " ".join(context_parts) or header,
+                "sequence_type": seq_type,
+                "is_confident": False,
+            }
+
+    # 2) Bare sequence — longest contiguous sequence-shaped substring.
+    best: Optional[tuple] = None  # (start, end, normalized_body)
+    for match in _SEQ_RUN_RE.finditer(prompt):
+        normalized = re.sub(r"[\s\d]", "", match.group(0)).upper()
+        if len(normalized) < _MIN_SEQ_LEN:
+            continue
+        if not set(normalized) <= _AA_EXTENDED:
+            continue
+        if best is None or len(normalized) > len(best[2]):
+            best = (match.start(), match.end(), normalized)
+    if best is None:
+        return None
+
+    context = (prompt[:best[0]] + " " + prompt[best[1]:]).strip()
+    return {
+        "sequence_or_path": best[2],
+        "input_type": "SEQUENCE",
+        "context": " ".join(context.split()),
+        "sequence_type": _classify_sequence_type(best[2]),
+        "is_confident": False,
+    }
+
+
 def extract_and_classify_node(state: GraphState) -> Dict[str, Any]:
     """
     Uses LLM with structured output to extract data and classify sequence type.
+
+    The LLM path (Mistral via langchain) below is the primary extractor: its
+    chain-of-thought captures contextual hints from the surrounding prompt
+    that pure pattern matching misses. We keep it as written by the original
+    author.
+
+    Wrap-strategy: the LLM provider can be transiently unavailable (e.g.
+    Mistral returning HTTP 429 ``service_tier_capacity_exceeded``). To stop
+    a single rate-limit response from killing the whole turn, the
+    ``except`` arm now tries a deterministic FASTA / bare-sequence
+    extractor before giving up. The fallback's output shape mirrors the
+    LLM's, so downstream nodes don't need to know which path produced it;
+    ``is_confident`` is set to False so any consumer that gates on
+    confidence (e.g. classification re-checks) can still tell.
     """
     if state.get("error"): return {}
     llm = get_llm(temperature=0)
     structured_llm = llm.with_structured_output(InputExtraction)
-    
+
     system_message = (
         "You are an expert bioinformatics analyst specializing in sequence identification and data extraction. "
         "Your mission is to parse user input to extract biological data and determine its molecular nature with high precision. "
@@ -74,13 +170,13 @@ def extract_and_classify_node(state: GraphState) -> Dict[str, Any]:
         "### 3. CONFIDENCE ASSESSMENT\n"
         "Deliver findings in structured format."
     )
-    
+
     try:
         result = structured_llm.invoke([
             SystemMessage(content=system_message),
             HumanMessage(content=state['prompt'])
         ])
-        
+
         return {
             "sequence_or_path": result.sequence_or_path,
             "input_type": result.input_type,
@@ -89,6 +185,17 @@ def extract_and_classify_node(state: GraphState) -> Dict[str, Any]:
             "is_confident": result.is_confident
         }
     except Exception as e:
+        # Mistral / structured-LLM step failed. Try the deterministic
+        # path before surfacing the error — that way a 429 doesn't take
+        # the whole pipeline down when the prompt has a perfectly
+        # parseable FASTA / raw sequence in it.
+        fallback = _deterministic_extract(state.get('prompt') or "")
+        if fallback is not None:
+            print(
+                f"extract_and_classify_node: LLM failed ({e}); "
+                "using deterministic fallback."
+            )
+            return fallback
         return {"error": f"Extraction failed: {str(e)}"}
 
 def resolve_filepath_node(state: GraphState) -> Dict[str, Any]:
@@ -140,6 +247,14 @@ def rank_node(state: GraphState) -> Dict[str, Any]:
         else:
             matches = search_top_k(state['sequence'], k=50)
         records = get_uniprot_records([m[0] for m in matches])
+        # Stamp the rank-step score (cosine for embeddings, percent identity
+        # for BLAST) onto each record so the UI can show it in the EMB tile —
+        # the field is consumed by ``uniprot_record_to_candidate``.
+        score_by_accession = {accession: score for accession, score in matches}
+        for record in records:
+            accession = record.get("primaryAccession")
+            if accession in score_by_accession:
+                record["_bioseq_embedding_score"] = score_by_accession[accession]
         return {"ranked_results": records}
     except Exception as e:
         return {"error": f"Ranking failed: {str(e)}"}
@@ -155,6 +270,13 @@ def rerank_node(state: GraphState) -> Dict[str, Any]:
     """
     if state.get('error'): return {}
     ranked = state.get('ranked_results') or []
+    algorithm = (state.get("search_algorithm") or "embeddings").lower()
+    if algorithm == "blast":
+        # Rerank would stamp ``_rerank_score`` on each record and dominate
+        # ``match_score`` in ``uniprot_record_to_candidate`` — that would
+        # hide the BLAST percent-identity we just attached as the EMB score.
+        # BLAST is already ranked by identity, so skip rerank entirely.
+        return {"final_results": ranked[:5]}
     if not _rerank_service_alive():
         print(f"Rerank service unreachable at {SEARCH_SERVICE_URL}; using top-5 of ranked_results.")
         return {"final_results": ranked[:5]}

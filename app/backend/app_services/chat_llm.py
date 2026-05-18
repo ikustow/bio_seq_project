@@ -14,6 +14,7 @@ mutation remain in the frontend for the first migration step.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -301,6 +302,90 @@ def build_protein_context(candidate: dict[str, Any] | None) -> str | None:
     return "\n".join(lines)
 
 
+_MENTION_TOKEN_RE = re.compile(r"@([A-Za-z0-9_]+)")
+
+
+def build_mentioned_protein_contexts(
+    prompt: str,
+    objects: dict[str, Any],
+    *,
+    skip_accessions: set[str] | None = None,
+) -> list[tuple[str, str]]:
+    """Render full UniProt context for every ``@label`` named in ``prompt``.
+
+    For each Sequence object referenced in the user's message, picks the
+    user-selected protein match (``matches[selected_match_index]``, or the
+    top match when no index is set) and runs it through
+    :func:`build_protein_context`. That gives the LLM the same rich block
+    the right-hand card shows — for **each** referenced Sequence, not just
+    the workspace-wide selected one — so it can compare two proteins side
+    by side.
+
+    Returns ``[(label, context_text), ...]``. ``skip_accessions`` suppresses
+    proteins that were already injected by the caller (e.g. via
+    ``selected_candidate``) to avoid duplicate context blocks.
+    """
+    if not prompt or not objects:
+        return []
+    skip = {a.upper() for a in (skip_accessions or set()) if a}
+    out: list[tuple[str, str]] = []
+    seen_tokens: set[str] = set()
+    for match in _MENTION_TOKEN_RE.finditer(prompt):
+        token = match.group(1)
+        if token in seen_tokens:
+            continue
+        seen_tokens.add(token)
+
+        target: dict[str, Any] | None = None
+        for obj in objects.values():
+            if not isinstance(obj, dict):
+                continue
+            label = str(obj.get("label") or "")
+            accession = str(obj.get("accession") or "")
+            if token == label or token == accession:
+                target = obj
+                break
+        if target is None:
+            continue
+
+        protein: dict[str, Any] | None = None
+        match_score: Any = None
+        kind = target.get("kind")
+        if kind == "sequence":
+            matches = target.get("matches") or []
+            if not matches:
+                continue
+            try:
+                chosen = int(target.get("selected_match_index") or 0)
+            except (TypeError, ValueError):
+                chosen = 0
+            if chosen < 0 or chosen >= len(matches):
+                chosen = 0
+            mrec = matches[chosen]
+            if isinstance(mrec, dict):
+                protein = mrec.get("protein")
+                match_score = mrec.get("match_score")
+        elif kind == "protein":
+            card = target.get("card")
+            if isinstance(card, dict):
+                protein = card
+                match_score = target.get("match_score")
+
+        if not isinstance(protein, dict):
+            continue
+        accession = str(protein.get("accession") or "").upper()
+        if accession and accession in skip:
+            continue
+
+        rendered = build_protein_context({"protein": protein, "match_score": match_score or 0})
+        if not rendered:
+            continue
+        out.append((token, f"**Context for `@{token}`:**\n{rendered}"))
+        if accession:
+            skip.add(accession)
+    return out
+
+
 def build_objects_context(
     objects: dict[str, Any],
     selected_object_id: str | None,
@@ -389,6 +474,7 @@ def _build_gemini_contents(request: ChatLLMRequest) -> list[dict[str, Any]]:
                 ],
             }
         )
+    injected_accessions: set[str] = set()
     protein_context = build_protein_context(request.selected_candidate)
     if protein_context:
         contents.append({"role": "user", "parts": [{"text": protein_context}]})
@@ -400,6 +486,29 @@ def _build_gemini_contents(request: ChatLLMRequest) -> list[dict[str, Any]]:
                         "text": (
                             "I understand. I have the context about the current protein. "
                             "I'll use this information to answer your questions."
+                        )
+                    }
+                ],
+            }
+        )
+        if isinstance(request.selected_candidate, dict):
+            sel_protein = request.selected_candidate.get("protein") or {}
+            if isinstance(sel_protein, dict):
+                acc = str(sel_protein.get("accession") or "").upper()
+                if acc:
+                    injected_accessions.add(acc)
+
+    for label, mention_context in build_mentioned_protein_contexts(
+        request.prompt, request.objects, skip_accessions=injected_accessions
+    ):
+        contents.append({"role": "user", "parts": [{"text": mention_context}]})
+        contents.append(
+            {
+                "role": "model",
+                "parts": [
+                    {
+                        "text": (
+                            f"Got it — I now have the full UniProt context for `@{label}`."
                         )
                     }
                 ],
@@ -440,6 +549,7 @@ def _build_openai_messages(request: ChatLLMRequest, system_prompt_text: str) -> 
                 )
             )
         )
+    injected_accessions: set[str] = set()
     protein_context = build_protein_context(request.selected_candidate)
     if protein_context:
         messages.append(HumanMessage(content=protein_context))
@@ -449,6 +559,22 @@ def _build_openai_messages(request: ChatLLMRequest, system_prompt_text: str) -> 
                     "I understand. I have the context about the current protein. "
                     "I'll use this information to answer your questions."
                 )
+            )
+        )
+        if isinstance(request.selected_candidate, dict):
+            sel_protein = request.selected_candidate.get("protein") or {}
+            if isinstance(sel_protein, dict):
+                acc = str(sel_protein.get("accession") or "").upper()
+                if acc:
+                    injected_accessions.add(acc)
+
+    for label, mention_context in build_mentioned_protein_contexts(
+        request.prompt, request.objects, skip_accessions=injected_accessions
+    ):
+        messages.append(HumanMessage(content=mention_context))
+        messages.append(
+            AIMessage(
+                content=f"Got it — I now have the full UniProt context for `@{label}`."
             )
         )
 

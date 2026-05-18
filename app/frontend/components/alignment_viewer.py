@@ -343,6 +343,7 @@ def fallback_pairwise_alignment(
     return "".join(aligned_1), "".join(aligned_2), float(best_score), 0, end_column
 
 
+@st.cache_data(show_spinner=False)
 def run_alignment(
     seq1_name: str,
     seq2_name: str,
@@ -392,6 +393,7 @@ def run_alignment(
     )
 
 
+@st.cache_data(show_spinner=False)
 def analyze_alignment(result: AlignmentResult) -> AlignmentMetrics:
     matrix = load_blosum62()
     aligned_length = len(result.aligned_seq1)
@@ -479,6 +481,7 @@ def residue_class(aa: str, other: str, matrix) -> str:
     return "mismatch"
 
 
+@st.cache_data(show_spinner=False)
 def build_interactive_alignment_html(result: AlignmentResult) -> str:
     matrix = load_blosum62()
     seq1_position = 0

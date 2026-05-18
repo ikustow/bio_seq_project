@@ -26,6 +26,7 @@ _STATUS_LABEL: dict[str, str] = {
     "searching": "searching…",
     "ready": "ready",
     "not_searched": "not searched",
+    "search_failed": "search failed",
     "error": "error",
 }
 
@@ -150,20 +151,40 @@ def _render_sequence(seq: dict) -> None:
     matches = seq.get("matches") or []
     chosen_idx = int(seq.get("selected_match_index") or 0)
 
-    if status == "searching":
+    # A search counts as "in progress" only while there's still a pending
+    # backend call. When the backend returned but produced no patch (e.g.
+    # pipeline.error path in BioSeqChatService), the sequence is left at
+    # status="searching" with no matches — surface that as a recoverable
+    # failure instead of an indefinite spinner.
+    pending_run = bool(st.session_state.get("pending_run"))
+    active_states = {"searching", "queued", "classifying"}
+    search_in_progress = pending_run and status in active_states
+    stalled = (
+        not matches
+        and status in active_states
+        and not pending_run
+    )
+
+    if search_in_progress:
         st.info("Searching for similar proteins…")
         return
-    if status == "error":
-        st.error("Sequence search ended with an error. See warnings above.")
+    if status in {"search_failed", "error"} or stalled:
+        st.error(
+            "The search did not return any matches — the backend may have "
+            "been unreachable or returned an error."
+        )
+        _render_retry_search_button(seq)
         return
     if status == "not_searched":
         st.info(
-            "Automatic search was skipped for this sequence. Open it or "
-            "send another message to run the retriever."
+            "Automatic search was skipped for this sequence. Use Search "
+            "again to run the retriever."
         )
+        _render_retry_search_button(seq)
         return
     if not matches:
         st.caption("No matches yet for this sequence.")
+        _render_retry_search_button(seq)
         return
 
     query_seq = seq.get("protein_sequence") or seq.get("normalized_sequence") or ""
@@ -186,6 +207,34 @@ def _render_sequence(seq: dict) -> None:
         on_select_index=_select_match,
         key_suffix=sequence_id,
     )
+
+
+def _render_retry_search_button(seq: dict) -> None:
+    """Re-run the retriever for a Sequence whose first search produced nothing.
+
+    Goes through the same ``_stage_submission`` path the chat-input field
+    uses (so there is only one submission code path to maintain). The
+    sequence is flipped back to ``queued`` first so the backend's
+    ``_retriever_input_from_request`` finds it as a pending sequence and
+    feeds its body to the pipeline — same as the original submission.
+    """
+    label = seq.get("label") or ""
+    if not label:
+        return
+    if not st.button(
+        "🔄 Search again",
+        key=f"retry_search_{seq['id']}",
+        help="Re-run the retriever for this sequence.",
+        type="primary",
+    ):
+        return
+    session_objects.set_sequence_status(seq["id"], "queued")
+    # Local import — chat imports from object_inspector indirectly via
+    # the components package, so a top-level import here would cycle.
+    from components.chat import _stage_submission
+
+    if _stage_submission(f"@{label}", []):
+        st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +372,7 @@ def _status_badge(status: str) -> str:
         "searching": ":blue-badge[searching...]",
         "ready": ":green-badge[ready]",
         "not_searched": ":gray-badge[not searched]",
+        "search_failed": ":red-badge[search failed]",
         "error": ":red-badge[error]",
     }
     return mapping.get(status, f":gray-badge[{status}]")

@@ -13,6 +13,7 @@ import re
 import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import Any
 
 import streamlit as st
 
@@ -58,6 +59,45 @@ def _sanitize_mentions_html(text: str) -> str:
     return _ANCHOR_MENTION_RE.sub(lambda m: "@" + m.group(1).strip(), text)
 
 
+# Splits text into alternating non-code / code segments so caller-provided
+# substitutions can skip the code parts. Both inline ``` `x` ``` and fenced
+# ```` ```...``` ```` are preserved. We need this because the mention
+# substitution that turns ``@Seq_A`` into an ``<a class="bioseq-mention">``
+# anchor blindly replaces inside Markdown code spans — but inside a
+# ``<code>`` element the browser treats angle brackets as literal text,
+# so the HTML markup ends up *displayed* instead of *rendered* (the
+# "string with tags" the user kept seeing).
+_CODE_SPAN_RE = re.compile(r"(```.*?```|`[^`\n]+`)", re.DOTALL)
+
+
+def _sub_mentions_outside_code(text: str, replacer: Callable[[re.Match], str]) -> str:
+    parts = _CODE_SPAN_RE.split(text or "")
+    out: list[str] = []
+    for index, part in enumerate(parts):
+        if index % 2 == 1:
+            # Code span. ``@<label>`` mentions are the central interactive
+            # element of the chat — every recognised label must render as
+            # a clickable chip, including when the LLM wraps it in
+            # backticks (Gemini's default formatting for `@Seq_A`). If the
+            # span's entire content is a single mention that resolves in
+            # the registry, drop the backticks and emit the chip instead
+            # of leaving a non-interactive ``<code>`` block. Spans that
+            # don't contain a known mention pass through unchanged so
+            # legitimate inline code (accession strings that aren't in
+            # the registry, gene names, etc.) keep their formatting.
+            inner = part.strip("`").strip()
+            inner_match = _MENTION_RE.fullmatch(inner)
+            if inner_match is not None:
+                replaced = replacer(inner_match)
+                if replaced != inner_match.group(0):
+                    out.append(replaced)
+                    continue
+            out.append(part)
+        else:
+            out.append(_MENTION_RE.sub(replacer, part))
+    return "".join(out)
+
+
 def _label_to_object_id() -> dict[str, str]:
     """Map every label and accession in the registry to its object id."""
     mapping: dict[str, str] = {}
@@ -72,9 +112,12 @@ def _label_to_object_id() -> dict[str, str]:
 
 
 def _mention_anchor(object_id: str, label: str) -> str:
+    safe_label = html.escape(label)
     return (
         f'<a href="#mention-{object_id}" class="bioseq-mention" '
-        f'data-object-id="{object_id}">@{html.escape(label)}</a>'
+        f'draggable="true" '
+        f'data-object-id="{object_id}" '
+        f'data-label="{safe_label}">@{safe_label}</a>'
     )
 
 
@@ -96,7 +139,7 @@ def _render_user_text(text: str) -> None:
             return match.group(0)
         return _mention_anchor(object_id, label)
 
-    rendered = _MENTION_RE.sub(replace, escaped)
+    rendered = _sub_mentions_outside_code(escaped, replace)
     st.markdown(
         f'<div class="bioseq-msg-body">{rendered}</div>',
         unsafe_allow_html=True,
@@ -122,7 +165,7 @@ def _render_assistant_text(text: str) -> None:
             return match.group(0)
         return _mention_anchor(object_id, label)
 
-    rendered = _MENTION_RE.sub(replace, text)
+    rendered = _sub_mentions_outside_code(text, replace)
     st.markdown(rendered, unsafe_allow_html=True)
 
 
@@ -180,15 +223,23 @@ _MENTION_BRIDGE_JS = r"""
 (function () {
   const win = window.parent;
   const doc = win.document;
-  if (win.__bioseqMentionBridgeInstalled) return;
-  win.__bioseqMentionBridgeInstalled = true;
 
   // Match any anchor with a ``data-object-id`` — covers both inline
   // ``.bioseq-mention`` chips in chat history and large
   // ``.bioseq-chip`` cards in the Session Objects bar. A click on the
   // bar background (anywhere inside ``.st-key-object_bar`` that is
   // not a chip or interactive control) clears the selection instead.
-  doc.addEventListener('click', function (event) {
+  //
+  // IMPORTANT — re-install on every iframe load instead of guarding
+  // with ``if (installed) return;``. ``components.html()`` lives in
+  // an iframe whose JS context Streamlit can throw away on a rerun;
+  // when that happens, any handler we registered on
+  // ``window.parent.document`` from the dead iframe becomes a
+  // "zombie" — its closure is detached, the listener silently no-ops,
+  // and chips stop responding to clicks. Storing the previous handler
+  // on ``doc`` lets us remove it before installing a fresh one defined
+  // in THIS iframe's live context, so the listener always works.
+  const handler = function (event) {
     if (!event.target.closest) return;
     const anchor = event.target.closest('a[data-object-id]');
     if (anchor) {
@@ -210,7 +261,15 @@ _MENTION_BRIDGE_JS = r"""
     if (!wrapper) return;
     const btn = wrapper.querySelector('button');
     if (btn) btn.click();
-  }, true);
+  };
+
+  if (doc.__bioseqMentionBridgeHandler) {
+    try {
+      doc.removeEventListener('click', doc.__bioseqMentionBridgeHandler, true);
+    } catch (e) {}
+  }
+  doc.__bioseqMentionBridgeHandler = handler;
+  doc.addEventListener('click', handler, true);
 })();
 </script>
 """
@@ -273,7 +332,7 @@ def _render_inline_object_summary(obj: dict) -> None:
         status_label = {
             "draft": "draft", "queued": "queued", "classifying": "classifying",
             "searching": "searching…", "ready": "ready", "not_searched": "not searched",
-            "error": "error",
+            "search_failed": "search failed", "error": "error",
         }.get(status, status)
         matches = obj.get("matches") or []
         best_html = ""
@@ -454,62 +513,143 @@ def _stage_submission(text: str, files: list) -> bool:
         }
     )
 
+    sequence_object_ids = [
+        oid for oid in all_object_ids
+        if (obj := session_objects.get_object(oid)) is not None
+        and obj.get("kind") == "sequence"
+    ]
+
     st.session_state["pending_run"] = {
         "raw_text": text or "",
         "display_text": display_text,
         "message_id": message_id,
+        "batch_object_ids": sequence_object_ids,
     }
     return True
+
+
+_PENDING_SEQUENCE_STATUSES = frozenset({"queued", "searching", "classifying"})
+
+
+def _next_pending_sequence_id(batch_ids: list[str]) -> str | None:
+    """First batch sequence still awaiting retrieval (insertion order)."""
+    for object_id in batch_ids:
+        obj = session_objects.get_object(object_id)
+        if not obj or obj.get("kind") != "sequence":
+            continue
+        if obj.get("status") in _PENDING_SEQUENCE_STATUSES:
+            return object_id
+    return None
+
+
+def _capture_sequence_result(object_id: str) -> dict[str, Any]:
+    obj = session_objects.get_object(object_id) or {}
+    matches = obj.get("matches") or []
+    top_accession = ""
+    top_gene = ""
+    if matches:
+        top = matches[0]
+        protein = top.get("protein") or {}
+        top_accession = protein.get("accession") or top.get("accession") or ""
+        top_gene = protein.get("gene") or ""
+    return {
+        "object_id": object_id,
+        "label": obj.get("label") or "?",
+        "status": obj.get("status") or "",
+        "accession": top_accession,
+        "gene": top_gene,
+    }
+
+
+def _build_batch_summary(results: list[dict[str, Any]]) -> str:
+    """Compact recap rendered after a multi-sequence batch finishes."""
+    lines = [f"Processed {len(results)} sequences:"]
+    for entry in results:
+        label = entry.get("label") or "?"
+        status = entry.get("status") or ""
+        accession = entry.get("accession") or ""
+        if status == "ready" and accession:
+            gene = entry.get("gene") or ""
+            tail = f" ({gene})" if gene else ""
+            lines.append(f"- @{label} → `{accession}`{tail}")
+        elif status == "search_failed":
+            lines.append(f"- @{label} — search failed")
+        else:
+            lines.append(f"- @{label} — {status or 'no match'}")
+    return "\n".join(lines)
 
 
 def _run_pending(on_submit: SubmitHandler | None) -> None:
     """Phase-2: execute the queued backend call and render the reply.
 
-    Renders an assistant chat bubble directly below the user message
-    with a live "working…" status that swaps to the final reply when
-    the backend returns. The reply is rendered via
-    ``_render_assistant_text`` — the same function the main loop uses
-    for historical messages — so the DOM produced here matches the DOM
-    produced on the next rerun. This used to be ``st.write_stream`` +
-    a forced ``st.rerun`` afterwards, but that combination emitted a
-    different DOM in the streaming pass than in the post-rerun pass and
-    Streamlit's reconciler crashed React with
-    ``Failed to execute 'removeChild' on 'Node'`` on the transition.
+    When the user pasted multiple sequences, this function only runs ONE
+    backend turn per render — the backend resolves the first sequence in
+    the registry that is still ``queued``/``searching``. If more sequences
+    remain after the turn, we reschedule a continuation (with empty prompt)
+    and rerun; each continuation processes the next sequence, with the
+    progress spinner reflecting which one. The assistant bubble is emitted
+    only on the FINAL run, as a single summary for the whole batch — that
+    way the chat doesn't fill up with five "I classified…" lines.
+
+    Single-sequence turns keep the per-turn reply verbatim, so non-batch
+    behaviour is unchanged.
+
+    The bubble's DOM shape must match what the main history loop produces
+    for the same message on subsequent renders — otherwise Streamlit's
+    reconciler crashes React with ``removeChild`` when the bubble's
+    children change shape between first paint and the next rerun.
+    Previously we wrapped the bubble around an ``st.empty()`` placeholder
+    for a "Thinking…" indicator, which made the first-render structure
+    ``chat_message > placeholder + markdown`` while later renders produced
+    ``chat_message > markdown``.
+
+    No spinner is opened here — the real backend already shows one from
+    inside ``_handle_vector_db_submission`` via ``st.spinner``. Adding
+    another at this layer rendered the indicator twice.
     """
     pending = st.session_state.pop("pending_run", None)
     if not pending:
         return
 
-    # Run the backend FIRST and only emit the chat_message bubble after
-    # we have the final reply. The bubble's DOM shape must match what
-    # the main history loop produces for the same message on subsequent
-    # renders — otherwise Streamlit's reconciler crashes React with
-    # ``removeChild`` when the bubble's children change shape between
-    # first paint and the next rerun. Previously we wrapped the bubble
-    # around an ``st.empty()`` placeholder for a "Thinking…" indicator,
-    # which made the first-render structure
-    # ``chat_message > placeholder + markdown`` while later renders
-    # produced ``chat_message > markdown``.
-    #
-    # No spinner is opened here — the real backend already shows one
-    # from inside ``_handle_vector_db_submission`` via ``st.spinner``.
-    # Adding another at this layer rendered the indicator twice.
+    batch_ids: list[str] = list(pending.get("batch_object_ids") or [])
+    results: list[dict[str, Any]] = list(pending.get("batch_results") or [])
+    is_continuation = bool(pending.get("continuation"))
+
+    next_target_id = _next_pending_sequence_id(batch_ids)
+    # Total searches the batch will perform (so the spinner says "(2/5)").
+    total_searches = sum(
+        1 for oid in batch_ids
+        if (obj := session_objects.get_object(oid)) is not None
+        and obj.get("kind") == "sequence"
+    )
+
+    # Surface "@Seq_B (2/5)" above the spinner's stage label, but only when
+    # there is more than one sequence in this batch — single-sequence turns
+    # keep their unprefixed label.
+    if next_target_id and total_searches > 1:
+        target_obj = session_objects.get_object(next_target_id) or {}
+        target_label = target_obj.get("label") or "?"
+        position = len(results) + 1
+        st.session_state["batch_progress_label"] = (
+            f"@{target_label} ({position}/{total_searches})"
+        )
+    else:
+        st.session_state.pop("batch_progress_label", None)
+
     try:
         if on_submit is None:
             reply, reveals = conversation.route(
                 pending["raw_text"], st.session_state.conv_state
             )
         else:
-            reply, reveals = on_submit(
+            prompt = "" if is_continuation else (
                 pending["display_text"] or pending["raw_text"]
             )
+            reply, reveals = on_submit(prompt)
     except Exception as exc:  # surface the failure inline rather than crashing the app
         reply = f"**Backend error:** {exc}"
         reveals = set()
     reply = _sanitize_mentions_html(reply)
-
-    with st.chat_message("assistant", avatar=BOT_AVATAR):
-        _render_assistant_text(reply)
 
     st.session_state.card_sections_revealed.update(reveals)
     if on_submit is None and (
@@ -518,37 +658,65 @@ def _run_pending(on_submit: SubmitHandler | None) -> None:
         and st.session_state.on_first_search is not None
     ):
         st.session_state.on_first_search()
-    st.session_state.messages.append({"role": "assistant", "content": reply})
-    # No ``st.rerun`` here. The right column is rendered *after*
-    # ``chat.render`` in ``main()`` and will pick up the session_state
-    # mutations the backend just applied in the same script run.
 
+    # Capture the per-sequence outcome before deciding whether to continue.
+    # If the backend didn't flip the target's status (e.g. it routed to
+    # chat-LLM or hit an error), force the chip to ``search_failed`` so we
+    # don't spin forever on the same id.
+    if next_target_id and on_submit is not None:
+        obj_after = session_objects.get_object(next_target_id) or {}
+        if obj_after.get("status") in _PENDING_SEQUENCE_STATUSES:
+            session_objects.set_sequence_status(next_target_id, "search_failed")
+        results.append(_capture_sequence_result(next_target_id))
 
-def _reset_conversation() -> None:
-    """Reset = start a brand-new session.
+    # Anything still pending after this run?
+    remaining_id = _next_pending_sequence_id(batch_ids) if on_submit is not None else None
 
-    We deliberately keep ``user_id`` (cookie identity) so the sidebar history
-    survives. The previous ``session_id`` row in ``public.chat_sessions`` is
-    left intact as part of the user's history; we just mint a new one.
-    """
-    import session_identity  # noqa: WPS433  (avoid circular import at module load)
+    if remaining_id:
+        # Reschedule for the next sequence in the batch. No assistant
+        # bubble is rendered for this intermediate turn — the spinner
+        # provides feedback, and the summary at the end of the batch
+        # consolidates all the per-sequence outcomes.
+        #
+        # IMPORTANT: do NOT ``st.rerun()`` here. ``_run_pending`` is called
+        # from inside ``chat.render`` (left column), which runs BEFORE the
+        # right column. A rerun raised here aborts the script before
+        # ``object_bar.render()`` ever runs, so the Session Objects panel
+        # only commits its updated chip statuses on the *final* run —
+        # making all five sequences appear as "ready" simultaneously at the
+        # very end. Instead, leave the next continuation queued and let the
+        # script finish naturally; ``main()`` will pick up ``pending_run``
+        # at the end and trigger the rerun once the right column has been
+        # rendered with the current sequence's freshly-flipped status.
+        st.session_state["pending_run"] = {
+            "raw_text": "",
+            "display_text": "",
+            "message_id": pending["message_id"],
+            "batch_object_ids": batch_ids,
+            "batch_results": results,
+            "continuation": True,
+        }
+        return
 
-    for k in (
-        "messages",
-        "conv_state",
-        "candidates",
-        "selected_candidate_idx",
-        "card_sections_revealed",
-        "pending_assistant",
-        "vector_db_result",
-        "query_protein_sequence",
-        "objects",
-        "object_order",
-        "selected_object_id",
-        "_seq_label_counter",
-    ):
-        st.session_state.pop(k, None)
-    session_identity.start_new_session(reason="chat_reset_button")
+    # Batch finished (or this was a non-batch turn) — emit the final
+    # assistant message.
+    st.session_state.pop("batch_progress_label", None)
+
+    if len(results) > 1:
+        final_text = _sanitize_mentions_html(_build_batch_summary(results))
+    else:
+        final_text = reply
+
+    with st.chat_message("assistant", avatar=BOT_AVATAR):
+        _render_assistant_text(final_text)
+    st.session_state.messages.append({"role": "assistant", "content": final_text})
+    # Request one more rerun so the user message's attachment chip picks up
+    # the new sequence status (``searching…`` → ``ready``). Without this
+    # the chip rendered in the for-loop above stays stale until the next
+    # user interaction triggers a rerun. The actual ``st.rerun()`` is
+    # deferred to ``main()`` (after the right column commits) for the same
+    # reason as the intermediate-continuation case above.
+    st.session_state["_chat_force_rerun"] = True
 
 
 # ---------------------------------------------------------------------------
@@ -560,19 +728,6 @@ def render(on_first_search, on_submit: SubmitHandler | None = None) -> None:
     """Render the chat column."""
     st.session_state.on_first_search = on_first_search
     session_objects.init_state()
-
-    with st.container(key="chat_toolbar"):
-        head_col, reset_col = st.columns([5, 1], vertical_alignment="center")
-        with head_col:
-            st.markdown("<div class='chat-title'>Conversation</div>", unsafe_allow_html=True)
-        with reset_col:
-            if st.button(
-                "Reset",
-                help="Clear the conversation and start over",
-                key="chat_reset_btn",
-            ):
-                _reset_conversation()
-                st.rerun()
 
     has_user_message = any(m["role"] == "user" for m in st.session_state.messages)
     # IMPORTANT: keep the chat_area widget *identical* across reruns.
@@ -635,6 +790,11 @@ def render(on_first_search, on_submit: SubmitHandler | None = None) -> None:
 
     _render_composer(on_submit)
 
+    # Stretch the (fixed-height) chat_area to fill the actual viewport so
+    # the composer sits near the bottom of the window instead of mid-page.
+    # See ``_CHAT_RESIZER_JS`` for the full reasoning.
+    _inject_chat_resizer()
+
 
 def _render_composer(on_submit: SubmitHandler | None) -> None:
     """Composer with a live sequence-detection preview above the input.
@@ -646,12 +806,6 @@ def _render_composer(on_submit: SubmitHandler | None) -> None:
     input. The preview slot has a reserved height so the layout never
     jumps between "no preview" and "PROTEIN detected" states.
     """
-    # Autocomplete dropdown — populated by JS when the input contains an
-    # unfinished ``@token`` pattern. Hidden via ``:empty`` CSS otherwise.
-    st.markdown(
-        '<div id="bioseq-autocomplete" class="bioseq-autocomplete-slot"></div>',
-        unsafe_allow_html=True,
-    )
     # Reserved-height preview slot above the composer. Content is
     # populated by the JS injected below — server-side this stays as a
     # neutral hint until the first keystroke.
@@ -661,6 +815,14 @@ def _render_composer(on_submit: SubmitHandler | None) -> None:
         "Type or paste a sequence / UniProt accession to see a live preview here."
         "</span>"
         "</div>",
+        unsafe_allow_html=True,
+    )
+    # Autocomplete dropdown — populated by JS when the input contains an
+    # unfinished ``@token`` pattern. Hidden via ``:empty`` CSS otherwise.
+    # Rendered AFTER the preview so the "Mention: …" chips sit directly
+    # above the chat input (closer to where the cursor is typing the @).
+    st.markdown(
+        '<div id="bioseq-autocomplete" class="bioseq-autocomplete-slot"></div>',
         unsafe_allow_html=True,
     )
 
@@ -1149,20 +1311,23 @@ _LIVE_PREVIEW_JS = r"""
     try { win.clearInterval(win.__bioseqLivePreviewIntervalId); } catch (e) {}
   }
   let lastValue = null;
-  let lastWidth = 0;
-  let lastHeight = 0;
+  let lastRect = { top: 0, left: 0, width: 0, height: 0 };
   function syncFromInput(value) {
     renderPreview(value);
     renderAutocomplete(value);
     renderInputHighlight(value);
   }
   // Cheaper sync that only re-positions the mirror over the textarea —
-  // used when the textarea resizes (e.g. Streamlit's autosize fires
-  // after a paste) but the *text* hasn't changed, so we don't need to
-  // re-tokenise the @mentions.
+  // used when the textarea moves or resizes (e.g. page scrolls, or
+  // Streamlit's autosize fires after a paste) but the *text* hasn't
+  // changed, so we don't need to re-tokenise the @mentions.
   function syncMirrorBoxOnly() {
     const ctx = ensureMirror();
     if (ctx) syncMirrorBox(ctx.input, ctx.mirror);
+  }
+  function rectsDiffer(a, b) {
+    return a.top !== b.top || a.left !== b.left
+        || a.width !== b.width || a.height !== b.height;
   }
   function pollTick() {
     try {
@@ -1170,20 +1335,16 @@ _LIVE_PREVIEW_JS = r"""
       if (!el) return;
       const value = readValue(el);
       const rect = el.getBoundingClientRect();
-      const sizeChanged = rect.width !== lastWidth || rect.height !== lastHeight;
       const textChanged = value !== lastValue;
+      const boxChanged = rectsDiffer(rect, lastRect);
       if (textChanged) {
         lastValue = value;
-        lastWidth = rect.width;
-        lastHeight = rect.height;
+        lastRect = { top: rect.top, left: rect.left, width: rect.width, height: rect.height };
         syncFromInput(value);
-      } else if (sizeChanged) {
-        // Common case: paste enlarged the textarea via Streamlit's
-        // autosize, but our paste handler already pushed lastValue ahead
-        // of the resize. Without this branch the mirror would stay
-        // clipped to the pre-paste height until the next keystroke.
-        lastWidth = rect.width;
-        lastHeight = rect.height;
+      } else if (boxChanged) {
+        // The textarea moved (page scroll) or resized (Streamlit
+        // autosize after paste). Either way the mirror must follow.
+        lastRect = { top: rect.top, left: rect.left, width: rect.width, height: rect.height };
         syncMirrorBoxOnly();
       }
     } catch (e) {
@@ -1191,6 +1352,22 @@ _LIVE_PREVIEW_JS = r"""
     }
   }
   win.__bioseqLivePreviewIntervalId = win.setInterval(pollTick, 120);
+
+  // Page scroll moves the textarea on screen, but the mirror (which is
+  // ``position: fixed`` at body level) only updates its top/left when
+  // we recompute the bounding rect. Listen at capture phase so we pick
+  // up scrolls inside any container, not just the window itself.
+  // Replace any previous handler from an older iframe load so we don't
+  // pile up duplicates across reruns.
+  if (win.__bioseqMirrorScrollHandler) {
+    try {
+      win.removeEventListener('scroll', win.__bioseqMirrorScrollHandler, true);
+    } catch (e) {}
+  }
+  win.__bioseqMirrorScrollHandler = function () {
+    syncMirrorBoxOnly();
+  };
+  win.addEventListener('scroll', win.__bioseqMirrorScrollHandler, { capture: true, passive: true });
 
   // Direct event listeners for instant feedback (poll is the backup).
   function attachDirectListeners() {
@@ -1249,86 +1426,124 @@ _LIVE_PREVIEW_JS = r"""
   // state would just look like a bare caret).
   renderInputHighlight(readValue(findChatInput()));
 
-  // ---- Install interaction handlers ONCE per page ----
-  if (!win.__bioseqInteractionsInstalled) {
-    win.__bioseqInteractionsInstalled = true;
+  // ---- Re-install interaction handlers on every iframe load ----
+  // Same zombie-closure problem as _MENTION_BRIDGE_JS / the resizer:
+  // ``components.html()`` lives in an iframe whose JS context dies on a
+  // Streamlit rerun. Handlers registered on ``window.parent.document``
+  // from the dead iframe stay attached but their closures (focusInput,
+  // insertAtCaret, replaceLastMention, findChatInput) point into the
+  // destroyed iframe and silently no-op. Previously this block was
+  // guarded by ``if (!win.__bioseqInteractionsInstalled)`` which made
+  // every chip/autocomplete/drag-and-drop interaction break after the
+  // first assistant response. Now we swap stored handler refs each
+  // iframe load so the live closures always win.
 
-    // Chip insert-button: paste @label into the chat input. Capture +
-    // stopImmediatePropagation so the click doesn't bubble up to the
-    // chip anchor (which would otherwise trigger object selection).
-    doc.addEventListener('click', function (event) {
-      const btn = event.target.closest && event.target.closest('.bioseq-chip-insert');
-      if (!btn) return;
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-      const label = btn.getAttribute('data-label');
-      if (!label) return;
-      focusInput();
-      insertAtCaret('@' + label + ' ');
-    }, true);
+  function isOverInput(target) {
+    if (!target || !target.closest) return false;
+    return !!target.closest('[data-testid="stChatInput"]');
+  }
 
-    // Autocomplete item click — replace the trailing partial mention.
-    doc.addEventListener('click', function (event) {
-      const item = event.target.closest && event.target.closest('.bioseq-autocomplete-item');
-      if (!item) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const label = item.getAttribute('data-label');
-      if (label) replaceLastMention(label);
-    }, true);
+  // Chip insert-button: paste @label into the chat input. Capture +
+  // stopImmediatePropagation so the click doesn't bubble up to the
+  // chip anchor (which would otherwise trigger object selection).
+  const onChipInsertClick = function (event) {
+    const btn = event.target.closest && event.target.closest('.bioseq-chip-insert');
+    if (!btn) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    const label = btn.getAttribute('data-label');
+    if (!label) return;
+    focusInput();
+    insertAtCaret('@' + label + ' ');
+  };
 
-    // Drag-and-drop: chips can be dropped onto the chat input.
-    doc.addEventListener('dragstart', function (event) {
-      const chip = event.target.closest && event.target.closest('a.bioseq-chip[data-object-id]');
-      if (!chip) return;
-      const label = (chip.getAttribute('data-label') || '').trim();
-      if (!label) return;
-      try {
-        event.dataTransfer.setData('text/plain', '@' + label + ' ');
-        event.dataTransfer.effectAllowed = 'copy';
-      } catch (e) {}
-      chip.classList.add('is-dragging');
+  // Autocomplete item click — replace the trailing partial mention.
+  const onAutocompleteClick = function (event) {
+    const item = event.target.closest && event.target.closest('.bioseq-autocomplete-item');
+    if (!item) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const label = item.getAttribute('data-label');
+    if (label) replaceLastMention(label);
+  };
+
+  // Drag source = either a chip in the Object Bar or a ``@`` mention
+  // anchor inside chat history. Both carry ``data-label``; mentions are
+  // ``<a href="#mention-...">`` so the browser's default dataTransfer
+  // would otherwise paste that URL into the input.
+  const onChipDragStart = function (event) {
+    const src = event.target.closest && event.target.closest(
+      'a.bioseq-chip[data-object-id],a.bioseq-mention[data-label]'
+    );
+    if (!src) return;
+    const label = (src.getAttribute('data-label') || '').trim();
+    if (!label) return;
+    try {
+      event.dataTransfer.setData('text/plain', '@' + label + ' ');
+      event.dataTransfer.effectAllowed = 'copy';
+    } catch (e) {}
+    src.classList.add('is-dragging');
+  };
+
+  const onChipDragEnd = function () {
+    doc.querySelectorAll(
+      'a.bioseq-chip.is-dragging,a.bioseq-mention.is-dragging'
+    ).forEach(function (c) {
+      c.classList.remove('is-dragging');
     });
+    const ta = findChatInput();
+    if (ta) ta.classList.remove('bioseq-drop-target');
+  };
 
-    doc.addEventListener('dragend', function () {
-      doc.querySelectorAll('a.bioseq-chip.is-dragging').forEach(function (c) {
-        c.classList.remove('is-dragging');
-      });
-      const ta = findChatInput();
-      if (ta) ta.classList.remove('bioseq-drop-target');
-    });
+  const onInputDragOver = function (event) {
+    if (!isOverInput(event.target)) return;
+    event.preventDefault();
+    try { event.dataTransfer.dropEffect = 'copy'; } catch (e) {}
+    const ta = findChatInput();
+    if (ta) ta.classList.add('bioseq-drop-target');
+  };
 
-    function isOverInput(target) {
-      if (!target || !target.closest) return false;
-      return !!target.closest('[data-testid="stChatInput"]');
+  const onInputDragLeave = function (event) {
+    if (isOverInput(event.target)) return;
+    const ta = findChatInput();
+    if (ta) ta.classList.remove('bioseq-drop-target');
+  };
+
+  const onInputDrop = function (event) {
+    if (!isOverInput(event.target)) return;
+    event.preventDefault();
+    const ta = findChatInput();
+    if (ta) ta.classList.remove('bioseq-drop-target');
+    let text = '';
+    try { text = event.dataTransfer.getData('text/plain') || ''; } catch (e) {}
+    if (!text) return;
+    focusInput();
+    insertAtCaret(text);
+  };
+
+  // Map of ``doc`` property name → [event name, handler, useCapture].
+  // Stored on ``doc`` so the next iframe load can find and remove the
+  // previous (now dead) handler before installing its own live one.
+  const interactionHandlers = [
+    ['__bioseqChipInsertHandler',    'click',     onChipInsertClick,   true],
+    ['__bioseqAutocompleteHandler',  'click',     onAutocompleteClick, true],
+    ['__bioseqChipDragStartHandler', 'dragstart', onChipDragStart,     false],
+    ['__bioseqChipDragEndHandler',   'dragend',   onChipDragEnd,       false],
+    ['__bioseqInputDragOverHandler', 'dragover',  onInputDragOver,     false],
+    ['__bioseqInputDragLeaveHandler','dragleave', onInputDragLeave,    false],
+    ['__bioseqInputDropHandler',     'drop',      onInputDrop,         false],
+  ];
+  for (let i = 0; i < interactionHandlers.length; i++) {
+    const key = interactionHandlers[i][0];
+    const evt = interactionHandlers[i][1];
+    const fn = interactionHandlers[i][2];
+    const cap = interactionHandlers[i][3];
+    if (doc[key]) {
+      try { doc.removeEventListener(evt, doc[key], cap); } catch (e) {}
     }
-
-    doc.addEventListener('dragover', function (event) {
-      if (!isOverInput(event.target)) return;
-      event.preventDefault();
-      try { event.dataTransfer.dropEffect = 'copy'; } catch (e) {}
-      const ta = findChatInput();
-      if (ta) ta.classList.add('bioseq-drop-target');
-    });
-
-    doc.addEventListener('dragleave', function (event) {
-      if (isOverInput(event.target)) return;
-      const ta = findChatInput();
-      if (ta) ta.classList.remove('bioseq-drop-target');
-    });
-
-    doc.addEventListener('drop', function (event) {
-      if (!isOverInput(event.target)) return;
-      event.preventDefault();
-      const ta = findChatInput();
-      if (ta) ta.classList.remove('bioseq-drop-target');
-      let text = '';
-      try { text = event.dataTransfer.getData('text/plain') || ''; } catch (e) {}
-      if (!text) return;
-      focusInput();
-      insertAtCaret(text);
-    });
+    doc[key] = fn;
+    doc.addEventListener(evt, fn, cap);
   }
 
   // Immediate render so the slot reflects current input even before the
@@ -1346,3 +1561,138 @@ def _inject_live_preview_js() -> None:
     import streamlit.components.v1 as components
 
     components.html(_LIVE_PREVIEW_JS, height=0, width=0)
+
+
+# Streamlit's ``st.container(height=N)`` only accepts a fixed pixel int,
+# so the chat scroll area is hard-coded to 540px (see ``chat_area``
+# above). On taller windows that leaves dead space between the composer
+# and the bottom of the viewport. This script runs after every render
+# and stretches the chat_area to fill (viewport - chat_top - composer -
+# preview - autocomplete - margin). Inline ``style.height`` beats the
+# emotion-generated class that carries the 540px rule, so we don't need
+# any ``!important`` CSS gymnastics. Resizes on window resize and on a
+# slow poll (so the chat tracks composer growth when the user pastes a
+# multi-line sequence into it).
+_CHAT_RESIZER_JS = r"""
+<script>
+(function () {
+  const win = window.parent;
+  const doc = win.document;
+
+  const MIN_HEIGHT = 220;
+  const BOTTOM_MARGIN = 16;
+
+  function getChatArea() {
+    // ``.st-key-chat_area`` is the inner stVerticalBlock with the
+    // scroll-to-bottom behavior; its parent stLayoutWrapper also
+    // carries the captured height and must resize in lockstep,
+    // otherwise the wrapper clips the inner block.
+    const inner = doc.querySelector('.st-key-chat_area');
+    if (!inner) return null;
+    const outer = inner.closest('[data-testid="stLayoutWrapper"]');
+    return { inner: inner, outer: outer };
+  }
+
+  function findComposer() {
+    return doc.querySelector('[data-testid="stChatInput"]');
+  }
+
+  function getBelowHeight(chatArea) {
+    // Total height taken by everything that lives between the bottom of
+    // chat_area and the bottom of the viewport: preview slot,
+    // autocomplete dropdown, mention_bridge container (collapses to 0
+    // via CSS but the wrapper still occupies some px), and the composer
+    // itself. Measuring live so a multi-line paste that grows the
+    // composer to several rows still keeps the chat area properly sized.
+    let total = 0;
+    const ids = ['bioseq-live-preview', 'bioseq-autocomplete'];
+    for (let i = 0; i < ids.length; i++) {
+      const el = doc.getElementById(ids[i]);
+      if (el) total += el.getBoundingClientRect().height;
+    }
+    const bridge = doc.querySelector('.st-key-mention_bridge');
+    if (bridge) total += bridge.getBoundingClientRect().height;
+    const composer = findComposer();
+    if (composer) total += composer.getBoundingClientRect().height;
+    return total;
+  }
+
+  function applyHeight(px) {
+    const ctx = getChatArea();
+    if (!ctx) return;
+    const value = Math.round(px) + 'px';
+    if (ctx.inner.style.height !== value) {
+      ctx.inner.style.height = value;
+      ctx.inner.style.maxHeight = value;
+    }
+    if (ctx.outer && ctx.outer.style.height !== value) {
+      ctx.outer.style.height = value;
+      ctx.outer.style.maxHeight = value;
+    }
+  }
+
+  function compute() {
+    const ctx = getChatArea();
+    if (!ctx) return null;
+    const ref = ctx.outer || ctx.inner;
+    const top = ref.getBoundingClientRect().top;
+    const below = getBelowHeight(ctx);
+    const target = win.innerHeight - top - below - BOTTOM_MARGIN;
+    return Math.max(MIN_HEIGHT, target);
+  }
+
+  let pending = false;
+  function schedule() {
+    if (pending) return;
+    pending = true;
+    win.requestAnimationFrame(function () {
+      pending = false;
+      const px = compute();
+      if (px != null) applyHeight(px);
+    });
+  }
+
+  // Re-install poller + listeners on every iframe load (same zombie-
+  // closure issue as the other components.html scripts in this file).
+  if (win.__bioseqChatResizerInterval) {
+    try { win.clearInterval(win.__bioseqChatResizerInterval); } catch (e) {}
+  }
+  // 250ms is slow enough to be cheap but fast enough to feel reactive
+  // when the composer grows after a multi-line paste (the composer's
+  // own ResizeObserver in _LIVE_PREVIEW_JS only repositions the mirror,
+  // it doesn't trigger this).
+  win.__bioseqChatResizerInterval = win.setInterval(schedule, 250);
+
+  if (win.__bioseqChatResizerResize) {
+    try { win.removeEventListener('resize', win.__bioseqChatResizerResize); } catch (e) {}
+  }
+  win.__bioseqChatResizerResize = schedule;
+  win.addEventListener('resize', schedule);
+
+  // ResizeObserver on the composer for instant feedback when the user
+  // pastes a multi-line sequence (Streamlit autosizes the textarea
+  // before the next 250ms tick fires).
+  if (win.__bioseqChatResizerComposerRO) {
+    try { win.__bioseqChatResizerComposerRO.disconnect(); } catch (e) {}
+  }
+  if (typeof win.ResizeObserver === 'function') {
+    try {
+      const composer = findComposer();
+      if (composer) {
+        const ro = new win.ResizeObserver(schedule);
+        ro.observe(composer);
+        win.__bioseqChatResizerComposerRO = ro;
+      }
+    } catch (e) {}
+  }
+
+  schedule();
+})();
+</script>
+"""
+
+
+def _inject_chat_resizer() -> None:
+    import streamlit.components.v1 as components
+
+    components.html(_CHAT_RESIZER_JS, height=0, width=0)

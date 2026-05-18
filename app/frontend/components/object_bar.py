@@ -9,11 +9,37 @@ shared JS handler) so a chip click ends up calling
 
 from __future__ import annotations
 
+import base64
 import html
+from pathlib import Path
 
 import streamlit as st
 
 import session_objects
+
+_PASTE_ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "paste.png"
+
+
+@st.cache_data(show_spinner=False)
+def _chip_insert_icon_css(icon_path: str) -> str:
+    """Inject the paste.png as a mask-image on the chip's insert button.
+
+    ``mask-image`` keeps the source PNG monochromatic so we can recolor
+    it via ``background-color`` (blue by default, white when the chip is
+    selected) without shipping two artwork variants.
+    """
+    path = Path(icon_path)
+    if not path.exists():
+        return ""
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    url = f"url('data:image/png;base64,{encoded}')"
+    return (
+        "<style>"
+        ".bioseq-chip-insert {"
+        f" -webkit-mask-image: {url};"
+        f" mask-image: {url}; }}"
+        "</style>"
+    )
 
 
 _STATUS_LABEL: dict[str, str] = {
@@ -23,6 +49,7 @@ _STATUS_LABEL: dict[str, str] = {
     "searching": "searching…",
     "ready": "ready",
     "not_searched": "not searched",
+    "search_failed": "search failed",
     "error": "error",
 }
 
@@ -83,8 +110,10 @@ def _chip_html(obj: dict, is_selected: bool) -> str:
     selected_class = " is-selected" if is_selected else ""
     insert_btn = (
         f'<button type="button" class="bioseq-chip-insert" '
-        f'data-label="{label}" title="Insert @{label} into the chat input">'
-        f"+</button>"
+        f'data-label="{label}" '
+        f'aria-label="Insert @{label} into the chat input" '
+        f'title="Insert @{label} into the chat input">'
+        f"</button>"
     )
     return (
         f'<a href="#chip-{html.escape(object_id)}" '
@@ -119,6 +148,10 @@ def render() -> None:
             return
 
         st.caption(f"{len(objects)} object(s) · click a chip to inspect it.")
+
+        icon_css = _chip_insert_icon_css(str(_PASTE_ICON_PATH))
+        if icon_css:
+            st.markdown(icon_css, unsafe_allow_html=True)
 
         # Render the chips as a grid of HTML cards. Streamlit-side this is
         # a single ``st.markdown`` so we don't pay rerun cost per chip;

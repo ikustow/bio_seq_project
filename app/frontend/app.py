@@ -80,13 +80,21 @@ def _render_topbar() -> None:
     if LOGO_PATH.exists():
         logo_b64 = base64.b64encode(LOGO_PATH.read_bytes()).decode("ascii")
         logo_src = f"data:image/png;base64,{logo_b64}"
-        logo_html = f'<img src="{logo_src}" class="bioseq-topbar-logo" alt="BioSeq logo">'
+        # Inline ``height``/``width`` attributes + style so the browser sizes
+        # the logo correctly during the brief window before style.css is
+        # applied (otherwise the raw PNG flashes at its natural ~1000px size
+        # on first paint and the whole topbar reflows). Same reason the
+        # topbar wrapper carries inline layout below.
+        logo_html = (
+            f'<img src="{logo_src}" class="bioseq-topbar-logo" alt="BioSeq logo" '
+            f'height="46" style="height:46px;width:auto;display:block;">'
+        )
     else:
         logo_html = ""
     st.markdown(
         f"""
-        <div class="bioseq-topbar">
-          <div class="bioseq-topbar-brand">
+        <div class="bioseq-topbar" style="height:68px;display:flex;align-items:center;gap:1.75rem;padding:0 1.5rem;box-sizing:border-box;overflow:hidden;">
+          <div class="bioseq-topbar-brand" style="display:flex;align-items:center;gap:0.8rem;flex-shrink:0;">
             {logo_html}
             <span class="bioseq-topbar-title">BioSeq Investigator</span>
           </div>
@@ -185,61 +193,81 @@ _RIGHT_PANEL_RESIZER_JS = """
         handle.style.height = rect.height + "px";
     }
 
-    // Install pointer handlers exactly once via document-level
-    // delegation, so the listeners survive any handle re-creation.
-    if (!doc.__bioseqResizerHandlersInstalled) {
-        doc.__bioseqResizerHandlersInstalled = true;
-        let dragging = false;
-        let startX = 0;
-        let startWidth = 0;
-        let activeHandle = null;
-        let activePointerId = null;
+    // Re-install pointer handlers on every iframe load. The previous
+    // "install exactly once" pattern broke after any Streamlit rerun
+    // that re-mounted this components.html iframe: the handler defined
+    // inside the dead iframe stayed registered on the parent document,
+    // but its closure was detached, so pointerdown silently no-ops
+    // (hover still works because that's pure CSS — matches the
+    // reported "handle hoverable but drag does nothing" symptom).
+    // Storing previous handler refs on ``doc`` lets us swap them out
+    // each time for fresh ones defined in THIS iframe's live context.
+    let dragging = false;
+    let startX = 0;
+    let startWidth = 0;
+    let activeHandle = null;
+    let activePointerId = null;
 
-        doc.addEventListener("pointerdown", function (event) {
-            const handle = event.target.closest(".right-resizer");
-            if (!handle) return;
-            const rightCol = findRightColumn();
-            if (!rightCol) return;
-            event.preventDefault();
-            dragging = true;
-            startX = event.clientX;
-            startWidth = rightCol.getBoundingClientRect().width;
-            activeHandle = handle;
-            activePointerId = event.pointerId;
-            handle.classList.add("is-dragging");
-            root.classList.add("is-resizing-right");
-            try { handle.setPointerCapture(event.pointerId); } catch (e) {}
-        }, true);
+    const onPointerDown = function (event) {
+        const handle = event.target.closest(".right-resizer");
+        if (!handle) return;
+        const rightCol = findRightColumn();
+        if (!rightCol) return;
+        event.preventDefault();
+        dragging = true;
+        startX = event.clientX;
+        startWidth = rightCol.getBoundingClientRect().width;
+        activeHandle = handle;
+        activePointerId = event.pointerId;
+        handle.classList.add("is-dragging");
+        root.classList.add("is-resizing-right");
+        try { handle.setPointerCapture(event.pointerId); } catch (e) {}
+    };
 
-        doc.addEventListener("pointermove", function (event) {
-            if (!dragging) return;
-            event.preventDefault();
-            const delta = startX - event.clientX;
-            applyWidth(startWidth + delta);
-        }, true);
+    const onPointerMove = function (event) {
+        if (!dragging) return;
+        event.preventDefault();
+        const delta = startX - event.clientX;
+        applyWidth(startWidth + delta);
+    };
 
-        function endDrag(event) {
-            if (!dragging) return;
-            dragging = false;
-            root.classList.remove("is-resizing-right");
-            if (activeHandle) {
-                activeHandle.classList.remove("is-dragging");
-                try {
-                    if (activePointerId !== null) {
-                        activeHandle.releasePointerCapture(activePointerId);
-                    }
-                } catch (e) {}
-            }
-            activeHandle = null;
-            activePointerId = null;
-            const cur = parseInt(root.style.getPropertyValue("--right-panel-width"), 10);
-            if (Number.isFinite(cur)) {
-                win.localStorage.setItem(STORAGE_KEY, String(cur));
-            }
+    const onPointerEnd = function (event) {
+        if (!dragging) return;
+        dragging = false;
+        root.classList.remove("is-resizing-right");
+        if (activeHandle) {
+            activeHandle.classList.remove("is-dragging");
+            try {
+                if (activePointerId !== null) {
+                    activeHandle.releasePointerCapture(activePointerId);
+                }
+            } catch (e) {}
         }
-        doc.addEventListener("pointerup", endDrag, true);
-        doc.addEventListener("pointercancel", endDrag, true);
+        activeHandle = null;
+        activePointerId = null;
+        const cur = parseInt(root.style.getPropertyValue("--right-panel-width"), 10);
+        if (Number.isFinite(cur)) {
+            win.localStorage.setItem(STORAGE_KEY, String(cur));
+        }
+    };
+
+    if (doc.__bioseqResizerPointerDown) {
+        try { doc.removeEventListener("pointerdown", doc.__bioseqResizerPointerDown, true); } catch (e) {}
     }
+    if (doc.__bioseqResizerPointerMove) {
+        try { doc.removeEventListener("pointermove", doc.__bioseqResizerPointerMove, true); } catch (e) {}
+    }
+    if (doc.__bioseqResizerPointerEnd) {
+        try { doc.removeEventListener("pointerup", doc.__bioseqResizerPointerEnd, true); } catch (e) {}
+        try { doc.removeEventListener("pointercancel", doc.__bioseqResizerPointerEnd, true); } catch (e) {}
+    }
+    doc.__bioseqResizerPointerDown = onPointerDown;
+    doc.__bioseqResizerPointerMove = onPointerMove;
+    doc.__bioseqResizerPointerEnd = onPointerEnd;
+    doc.addEventListener("pointerdown", onPointerDown, true);
+    doc.addEventListener("pointermove", onPointerMove, true);
+    doc.addEventListener("pointerup", onPointerEnd, true);
+    doc.addEventListener("pointercancel", onPointerEnd, true);
 
     // Position once now, then keep the handle aligned with the column.
     // Replace any prior rAF loop / MutationObserver from an earlier
@@ -278,9 +306,11 @@ _CANDIDATE_CLICK_FORWARDER_JS = """
 <script>
 (function () {
     const doc = window.parent.document;
-    if (doc.__bioseqCandidateForwarderInstalled) return;
-    doc.__bioseqCandidateForwarderInstalled = true;
-    doc.addEventListener("click", function (event) {
+    // Re-install on every iframe load — see _MENTION_BRIDGE_JS in
+    // chat.py for the full explanation of why the "install once"
+    // pattern silently breaks after Streamlit re-mounts this
+    // components.html iframe.
+    const handler = function (event) {
         const cell = event.target.closest('[class*="st-key-candidate_cell_"]');
         if (!cell) return;
         // If the user already clicked the real button (or a child of it),
@@ -288,7 +318,12 @@ _CANDIDATE_CLICK_FORWARDER_JS = """
         if (event.target.closest('button')) return;
         const btn = cell.querySelector('button[data-testid^="stBaseButton-"]');
         if (btn) btn.click();
-    }, true);
+    };
+    if (doc.__bioseqCandidateForwarderHandler) {
+        try { doc.removeEventListener("click", doc.__bioseqCandidateForwarderHandler, true); } catch (e) {}
+    }
+    doc.__bioseqCandidateForwarderHandler = handler;
+    doc.addEventListener("click", handler, true);
 })();
 </script>
 """
@@ -311,10 +346,12 @@ _TOPBAR_SCROLL_JS = """
 (function () {
     const doc = window.parent.document;
     const win = window.parent;
-    if (doc.__bioseqTopbarScrollInstalled) return;
-    doc.__bioseqTopbarScrollInstalled = true;
 
-    const HEIGHT = 90;
+    // Kept in sync with --topbar-height in assets/style.css. Effectively
+    // inert under the current "no global page scroll" layout (scrollY
+    // stays at 0), but updated for correctness in case the global
+    // overflow rule is ever relaxed.
+    const HEIGHT = 68;
 
     function topbar() { return doc.querySelector('.bioseq-topbar'); }
 
@@ -363,7 +400,15 @@ _TOPBAR_SCROLL_JS = """
     // Listen at capture-phase on the window so we pick up scrolls
     // regardless of which descendant container actually receives the
     // event. Wheel events too — some Streamlit scroll containers consume
-    // the scroll event before it bubbles.
+    // the scroll event before it bubbles. Re-install per iframe load
+    // (see _MENTION_BRIDGE_JS in chat.py) so a re-mounted iframe doesn't
+    // leave a zombie scroll handler from the old (detached) JS context.
+    if (win.__bioseqTopbarScrollHandler) {
+        ['scroll', 'wheel'].forEach(function (evt) {
+            try { win.removeEventListener(evt, win.__bioseqTopbarScrollHandler, { capture: true }); } catch (e) {}
+        });
+    }
+    win.__bioseqTopbarScrollHandler = schedule;
     ['scroll', 'wheel'].forEach(function (evt) {
         win.addEventListener(evt, schedule, { passive: true, capture: true });
     });
@@ -495,6 +540,68 @@ def _load_protein() -> None:
         st.session_state.selected_candidate_idx = 0
 
 
+_PROGRESS_STAGES: tuple[tuple[float, str], ...] = (
+    (0.0,  "Classifying sequence…"),
+    (3.0,  "Embedding & searching index…"),
+    (15.0, "Re-ranking top candidates…"),
+    (35.0, "Fetching UniProt details…"),
+    (55.0, "Finalizing results…"),
+)
+
+
+def _render_progress(placeholder, label: str) -> None:
+    # Multi-sequence batches push a ``@Seq_B (2/5)`` prefix into session
+    # state from ``chat._run_pending`` so each search in the batch tells the
+    # user which one is in flight — without it the spinner just cycles the
+    # same stage labels and the four still-``searching`` chips on the
+    # Session Objects bar look stuck.
+    prefix = st.session_state.get("batch_progress_label") or ""
+    full_label = f"{prefix} — {label}" if prefix else label
+    placeholder.markdown(
+        f'<div class="bioseq-progress">'
+        f'<span class="bioseq-progress-spinner"></span>'
+        f'<span class="bioseq-progress-label">{full_label}</span>'
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _start_progress_ticker(placeholder, stop_event):
+    """Advance the progress label on a fixed timetable until stopped.
+
+    The retriever runs in the main Streamlit script thread and blocks
+    until it returns, so we can't drive the label from per-stage callbacks
+    without plumbing one through several layers of the backend. A timed
+    ticker on a background thread gives the user a sense of which stage
+    we are likely in (matched to empirical timings of the pipeline) and
+    is good enough until proper callbacks land.
+    """
+    import threading
+    import time
+    from streamlit.runtime.scriptrunner import add_script_run_ctx
+
+    def _tick() -> None:
+        start = time.time()
+        for delay, label in _PROGRESS_STAGES[1:]:
+            wait = delay - (time.time() - start)
+            if wait > 0 and stop_event.wait(wait):
+                return
+            if stop_event.is_set():
+                return
+            try:
+                _render_progress(placeholder, label)
+            except Exception:
+                return
+
+    thread = threading.Thread(target=_tick, daemon=True)
+    # Streamlit elements require the script-run context to be attached
+    # to any thread that calls into them, otherwise the writes from this
+    # thread silently no-op (or warn) when targeting the parent script.
+    add_script_run_ctx(thread)
+    thread.start()
+    return thread
+
+
 def _handle_vector_db_submission(text: str) -> tuple[str, set[str]]:
     """Run one user turn through the active backend and persist it.
 
@@ -504,9 +611,18 @@ def _handle_vector_db_submission(text: str) -> tuple[str, set[str]]:
     state alone so the user's selected candidate doesn't jump.
     """
     import chat_pipeline  # noqa: WPS433  (lazy import; heavy backend deps)
+    import threading
 
-    with st.spinner("Working…"):
+    stop_event = threading.Event()
+    placeholder = st.empty()
+    _render_progress(placeholder, _PROGRESS_STAGES[0][1])
+    ticker = _start_progress_ticker(placeholder, stop_event)
+    try:
         outcome = chat_pipeline.run_turn(text)
+    finally:
+        stop_event.set()
+        ticker.join(timeout=1)
+        placeholder.empty()
 
     if outcome.get("update_card", True):
         st.session_state.candidates = outcome["candidates"]
@@ -560,6 +676,21 @@ def main() -> None:
     _inject_candidate_click_forwarder()
     _inject_topbar_scroll()
     debug_panel.render()
+
+    # Deferred rerun trigger. ``chat._run_pending`` is invoked from inside
+    # the left column, well before ``object_bar.render()`` gets a chance to
+    # commit the freshly-updated Session Objects chip statuses to the
+    # browser. If we rerun from there, every intermediate state is
+    # discarded and the user sees all sequences flip to ``ready`` in one
+    # batch at the very end. Instead, ``_run_pending`` parks either a
+    # follow-up ``pending_run`` (next sequence in a multi-paste batch) or
+    # a ``_chat_force_rerun`` flag (post-batch chip refresh) in session
+    # state and lets the script finish so the right column commits. Only
+    # *then* do we rerun — so each sequence's transition to ``ready``
+    # actually paints before the next search starts.
+    force_rerun = st.session_state.pop("_chat_force_rerun", False)
+    if st.session_state.get("pending_run") or force_rerun:
+        st.rerun()
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import plotly.graph_objects as go
+import streamlit as st
 
 from mock.protein_loader import DomainFeature
 
@@ -14,6 +15,7 @@ _COLORS = {
 _DOMAIN_PALETTE = ["#2563eb", "#14b8a6", "#a855f7", "#ef4444", "#0ea5e9", "#84cc16"]
 
 
+@st.cache_data(show_spinner=False)
 def build_figure(length: int, domains: list[DomainFeature]) -> go.Figure:
     fig = go.Figure()
 

@@ -70,6 +70,33 @@ class BioSeqChatService:
         if direct_identifier:
             return self._handle_direct_uniprot(request, context, direct_identifier, warnings)
 
+        # ---- Pure follow-up about objects that are already ``ready`` ----
+        # If no Sequence is awaiting retrieval AND the message just
+        # references one or more known @labels, the user is asking about
+        # objects we've already classified. Running the retriever on the
+        # chat text itself would re-classify natural language as a fresh
+        # sequence (the bug that produced
+        # "I classified the input as protein sequence and found accession
+        # P05787" for "Что общего у этих двух белков? @Seq_A и @Seq_B").
+        # Hand off straight to chat-LLM; it already knows how to render
+        # the workspace and per-mention UniProt context.
+        if (
+            self._chat_llm_service is not None
+            and not _has_pending_sequence(request)
+            and _references_existing_objects(request)
+        ):
+            return self._handle_follow_up(
+                request,
+                context,
+                BioSeqPipelineSnapshot(
+                    prompt=request.message,
+                    input_type="TEXT",
+                    context=request.message,
+                ),
+                selected_index,
+                warnings,
+            )
+
         # If the frontend already detected sequences and redacted them to
         # ``@Seq_A`` mentions, the retriever needs the actual sequence
         # body rather than the chat text. Look for the first pending
@@ -103,6 +130,9 @@ class BioSeqChatService:
 
             if pipeline.error or pipeline.controlled_miss:
                 assistant_message = _pipeline_miss_message(pipeline)
+                failure_patch = _build_retriever_failure_patch(
+                    request, pipeline, error_message=assistant_message
+                )
                 return ChatTurnResult(
                     session_id=request.session_id,
                     assistant_message=assistant_message,
@@ -112,6 +142,7 @@ class BioSeqChatService:
                     session=self._snapshot(context, state),
                     pipeline=pipeline,
                     warnings=warnings,
+                    objects_patch=failure_patch,
                 )
 
             if pipeline_candidates:
@@ -490,6 +521,45 @@ def _is_follow_up_turn(request: ChatTurnRequest) -> bool:
         return False
 
 
+_MENTION_TOKEN_RE = re.compile(r"@([A-Za-z0-9_]+)")
+
+
+def _has_pending_sequence(request: ChatTurnRequest) -> bool:
+    """True if any Sequence object is still awaiting retriever processing."""
+    interesting = {"queued", "searching", "classifying", "draft"}
+    for obj in (request.objects or {}).values():
+        if not isinstance(obj, dict):
+            continue
+        if obj.get("kind") != "sequence":
+            continue
+        if obj.get("status") in interesting:
+            return True
+    return False
+
+
+def _references_existing_objects(request: ChatTurnRequest) -> bool:
+    """True if ``request.message`` mentions at least one known @label.
+
+    Frontend currently doesn't forward ``object_mentions``, so resolve
+    ``@token`` against ``objects[].label`` / ``.accession`` ourselves.
+    """
+    message = request.message or ""
+    objects = request.objects or {}
+    if not message or not objects:
+        return False
+    tokens = {match.group(1) for match in _MENTION_TOKEN_RE.finditer(message)}
+    if not tokens:
+        return False
+    for obj in objects.values():
+        if not isinstance(obj, dict):
+            continue
+        label = str(obj.get("label") or "")
+        accession = str(obj.get("accession") or "")
+        if (label and label in tokens) or (accession and accession in tokens):
+            return True
+    return False
+
+
 def _history_from_ui_context(ui_context: dict[str, Any]) -> list[dict[str, Any]]:
     history = ui_context.get("messages")
     if not isinstance(history, list):
@@ -643,6 +713,40 @@ def _build_retriever_patch(
     upsert: dict[str, Any] = {target_id: sequence_status}
 
     return ObjectsPatch(upsert=upsert, set_selected=target_id)
+
+
+def _build_retriever_failure_patch(
+    request: ChatTurnRequest,
+    pipeline: BioSeqPipelineSnapshot,
+    *,
+    error_message: str,
+) -> ObjectsPatch | None:
+    """Flip the target Sequence to ``search_failed`` so the UI stops
+    showing an indefinite ``searching…`` chip when the retriever errors.
+
+    Only emits a patch when we can resolve the Sequence that was pending —
+    otherwise the frontend would target an arbitrary id. The new status
+    keeps the body / source intact so a ``Search again`` retry can flip
+    it back to ``queued`` and re-feed the pipeline.
+    """
+    target_id = _resolve_target_sequence_id(request, pipeline)
+    if not target_id or not target_id.startswith("seq_"):
+        return None
+    # Refuse to patch a Sequence id the frontend doesn't actually have —
+    # _resolve_target_sequence_id falls back to a synthesised hash when
+    # the request has nothing pending, and patching that would create a
+    # phantom object on the frontend.
+    if target_id not in (request.objects or {}):
+        return None
+    # Only touch the fields we actually want to change — the frontend's
+    # apply_objects_patch does a top-level merge, so unlisted fields
+    # (label, source, normalized_sequence, warnings, ...) are preserved.
+    del error_message  # not surfaced on the chip; the chat reply has it
+    sequence_patch: dict[str, Any] = {
+        "status": "search_failed",
+        "matches": [],
+    }
+    return ObjectsPatch(upsert={target_id: sequence_patch})
 
 
 def _resolve_target_sequence_id(

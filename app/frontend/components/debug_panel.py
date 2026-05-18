@@ -242,19 +242,13 @@ _PANEL_JS = """
         }
     }
 
-    function wireSelector(panel, sel) {
-        if (sel.__bioseqWired) return;
-        sel.__bioseqWired = true;
-        const body = panel.querySelector('[data-role="body"]');
-        sel.addEventListener('change', function () {
-            const entries = JSON.parse(panel.dataset.entries || '[]');
-            const idx = parseInt(sel.value, 10);
-            if (!Number.isFinite(idx) || idx < 0 || idx >= entries.length) return;
-            if (body) body.textContent = entries[idx].text;
-        });
-        sel.addEventListener('pointerdown', function (event) { event.stopPropagation(); });
-        sel.addEventListener('click',       function (event) { event.stopPropagation(); });
-    }
+    // wireSelector used to attach the selector's change/pointerdown
+    // listeners here, but those closures died together with the iframe
+    // that created them (Chromium silently no-ops listeners whose
+    // realm has been torn down). All selector wiring now happens in
+    // the per-rerun rewire block below via the ``on()`` helper so it
+    // gets torn down + recreated on every script run.
+    function wireSelector(panel, sel) { /* no-op; kept for call-site compat */ }
 
     function clampToViewport(panel) {
         const rect = panel.getBoundingClientRect();
@@ -282,7 +276,6 @@ _PANEL_JS = """
     // The panel lives in document.body — created here on first call,
     // reused on subsequent calls. Streamlit never sees it.
     let panel = doc.body.querySelector(':scope > #' + PANEL_ID);
-    const isNew = !panel;
     if (!panel) {
         panel = doc.createElement('div');
         panel.id = PANEL_ID;
@@ -293,16 +286,76 @@ _PANEL_JS = """
 
     applyEntries(panel, PAYLOAD.entries, PAYLOAD.emptyText);
 
-    if (!isNew) return;  // handlers already wired on the existing panel.
-    panel.__bioseqWired = true;
+    // Defensive cleanup on every iframe load: clear any stale drag/resize
+    // state classes and force interactivity. If a Streamlit rerun
+    // happened mid-drag, the corresponding ``pointerup`` may have been
+    // lost on the dying iframe and the panel was left with a stuck
+    // ``is-dragging`` / ``is-resizing`` class or — worse — an unrelased
+    // pointer capture (the symptom: panel becomes completely
+    // unclickable until a full page reload). Force everything back to a
+    // sane state here so the panel can never get permanently wedged.
+    panel.classList.remove("is-dragging", "is-resizing");
+    panel.style.pointerEvents = "auto";
+    try {
+        if (win.__bioseqDebugPointerId != null) {
+            panel.releasePointerCapture(win.__bioseqDebugPointerId);
+        }
+    } catch (e) { /* no-op */ }
+    win.__bioseqDebugPointerId = null;
+
+    // -- Always re-wire handlers on every iframe load. --
+    //
+    // The panel lives at parent-document body level, but every Streamlit
+    // rerun produces a fresh iframe that runs this script. Handlers
+    // defined inside the iframe close over local state (``dragging``,
+    // ``dragStartX``, ...). When the iframe is torn down on the next
+    // rerun, those closures point at a destroyed JS realm — in Chromium
+    // the handlers silently no-op and the panel goes completely
+    // unclickable. The previous build only wired handlers when
+    // ``isNew`` was true (i.e. the very first script run), so the bug
+    // surfaced reliably after the first rerun that mutated the panel
+    // (e.g. an LLM response landing and ``applyEntries`` running).
+    //
+    // The fix is to remove the old handlers before each rewire so the
+    // panel always carries listeners that close over *this* iframe's
+    // (alive) scope. We stash the teardown callback on the panel so the
+    // next iframe load can reach it.
+    if (panel.__bioseqTeardown) {
+        try { panel.__bioseqTeardown(); } catch (e) { /* no-op */ }
+    }
+    const cleanups = [];
+    const on = function (target, evt, fn, opts) {
+        target.addEventListener(evt, fn, opts);
+        cleanups.push(function () {
+            try { target.removeEventListener(evt, fn, opts); } catch (e) {}
+        });
+    };
+    panel.__bioseqTeardown = function () {
+        for (let i = 0; i < cleanups.length; i++) {
+            try { cleanups[i](); } catch (e) {}
+        }
+    };
 
     const bodyEl   = panel.querySelector("[data-role='body']");
     const copyBtn  = panel.querySelector("[data-role='copy']");
     const resetBtn = panel.querySelector("[data-role='reset']");
     const header   = panel.querySelector(".lldp-header");
     const grip     = panel.querySelector("[data-role='resize']");
-    const initialSel = panel.querySelector("[data-role='selector']");
-    if (initialSel) wireSelector(panel, initialSel);
+    const sel      = panel.querySelector("[data-role='selector']");
+    if (sel && bodyEl) {
+        on(sel, "change", function () {
+            const entries = JSON.parse(panel.dataset.entries || '[]');
+            const idx = parseInt(sel.value, 10);
+            if (!Number.isFinite(idx) || idx < 0 || idx >= entries.length) return;
+            bodyEl.textContent = entries[idx].text;
+        });
+        // Keep the dropdown click from bubbling into our panel-wide drag
+        // listener. ``isInteractiveTarget`` already covers ``select``,
+        // but stopPropagation here is cheap belt-and-braces in case the
+        // browser fires pointerdown on an internal option element whose
+        // tagName isn't ``SELECT``.
+        on(sel, "pointerdown", function (event) { event.stopPropagation(); });
+    }
 
     if (copyBtn && bodyEl) {
         const doCopy = function (event) {
@@ -334,8 +387,8 @@ _PANEL_JS = """
                 fallback();
             }
         };
-        copyBtn.addEventListener("pointerdown", doCopy);
-        copyBtn.addEventListener("click", doCopy);
+        on(copyBtn, "pointerdown", doCopy);
+        on(copyBtn, "click", doCopy);
     }
 
     if (resetBtn) {
@@ -347,60 +400,61 @@ _PANEL_JS = """
             resetBtn.textContent = "✓";
             setTimeout(function () { resetBtn.textContent = original; }, 600);
         };
-        resetBtn.addEventListener("pointerdown", doReset);
-        resetBtn.addEventListener("click", doReset);
+        on(resetBtn, "pointerdown", doReset);
+        on(resetBtn, "click", doReset);
     }
 
-    // Drag the panel by its header. Ignore drags that start on the
-    // interactive children so they keep working normally.
+    // Drag from anywhere on the panel chrome that isn't body text or an
+    // interactive control. The body's JSON stays selectable for copy.
     let dragging = false;
     let dragStartX = 0, dragStartY = 0;
     let panelStartLeft = 0, panelStartTop = 0;
-    if (header) {
-        header.addEventListener("pointerdown", function (event) {
-            if (event.target.closest(
-                "[data-role='copy'], [data-role='reset'], [data-role='selector'], "
-                + "[data-role='resize'], select, option, button"
-            )) return;
-            event.preventDefault();
-            dragging = true;
-            const rect = panel.getBoundingClientRect();
-            panelStartLeft = rect.left;
-            panelStartTop  = rect.top;
-            dragStartX = event.clientX;
-            dragStartY = event.clientY;
-            panel.classList.add("is-dragging");
-            try { header.setPointerCapture(event.pointerId); } catch (e) {}
-        });
-        header.addEventListener("pointermove", function (event) {
-            if (!dragging) return;
-            event.preventDefault();
-            const dx = event.clientX - dragStartX;
-            const dy = event.clientY - dragStartY;
-            panel.style.left   = (panelStartLeft + dx) + "px";
-            panel.style.top    = (panelStartTop  + dy) + "px";
-            panel.style.right  = "auto";
-            panel.style.bottom = "auto";
-        });
-        const endDrag = function (event) {
-            if (!dragging) return;
-            dragging = false;
-            panel.classList.remove("is-dragging");
-            try { header.releasePointerCapture(event.pointerId); } catch (e) {}
-            clampToViewport(panel);
-        };
-        header.addEventListener("pointerup", endDrag);
-        header.addEventListener("pointercancel", endDrag);
-    }
+    const isInteractiveTarget = function (target) {
+        if (!target || !target.closest) return false;
+        return !!target.closest(
+            "[data-role='copy'], [data-role='reset'], [data-role='selector'], "
+            + "[data-role='resize'], [data-role='body'], select, option, button, "
+            + "input, textarea, a"
+        );
+    };
+    on(panel, "pointerdown", function (event) {
+        if (event.button !== 0) return;
+        if (isInteractiveTarget(event.target)) return;
+        event.preventDefault();
+        dragging = true;
+        const rect = panel.getBoundingClientRect();
+        panelStartLeft = rect.left;
+        panelStartTop  = rect.top;
+        dragStartX = event.clientX;
+        dragStartY = event.clientY;
+        panel.classList.add("is-dragging");
+    });
+    on(doc, "pointermove", function (event) {
+        if (!dragging) return;
+        event.preventDefault();
+        const dx = event.clientX - dragStartX;
+        const dy = event.clientY - dragStartY;
+        panel.style.left   = (panelStartLeft + dx) + "px";
+        panel.style.top    = (panelStartTop  + dy) + "px";
+        panel.style.right  = "auto";
+        panel.style.bottom = "auto";
+    });
+    const endDrag = function () {
+        if (!dragging) return;
+        dragging = false;
+        panel.classList.remove("is-dragging");
+        clampToViewport(panel);
+    };
+    on(doc, "pointerup", endDrag);
+    on(doc, "pointercancel", endDrag);
+    on(win, "blur", endDrag);
 
-    // Custom resize grip in the bottom-right corner. Sits above the
-    // body's scrollbar so grabbing the corner can never be hijacked by
-    // an accidental scroll-thumb drag.
+    // Custom resize grip in the bottom-right corner.
     let resizing = false;
     let resizeStartX = 0, resizeStartY = 0;
     let panelStartW = 0, panelStartH = 0;
     if (grip) {
-        grip.addEventListener("pointerdown", function (event) {
+        on(grip, "pointerdown", function (event) {
             event.preventDefault();
             event.stopPropagation();
             resizing = true;
@@ -410,28 +464,27 @@ _PANEL_JS = """
             resizeStartX = event.clientX;
             resizeStartY = event.clientY;
             panel.classList.add("is-resizing");
-            try { grip.setPointerCapture(event.pointerId); } catch (e) {}
         });
-        grip.addEventListener("pointermove", function (event) {
+        on(doc, "pointermove", function (event) {
             if (!resizing) return;
             event.preventDefault();
             const dx = event.clientX - resizeStartX;
             const dy = event.clientY - resizeStartY;
-            panel.style.width  = Math.max(90, panelStartW + dx) + "px";
-            panel.style.height = Math.max(22, panelStartH + dy) + "px";
+            panel.style.width  = Math.max(140, panelStartW + dx) + "px";
+            panel.style.height = Math.max(30, panelStartH + dy) + "px";
         });
-        const endResize = function (event) {
+        const endResize = function () {
             if (!resizing) return;
             resizing = false;
             panel.classList.remove("is-resizing");
-            try { grip.releasePointerCapture(event.pointerId); } catch (e) {}
             clampToViewport(panel);
         };
-        grip.addEventListener("pointerup", endResize);
-        grip.addEventListener("pointercancel", endResize);
+        on(doc, "pointerup", endResize);
+        on(doc, "pointercancel", endResize);
+        on(win, "blur", endResize);
     }
 
-    win.addEventListener("resize", function () { clampToViewport(panel); });
+    on(win, "resize", function () { clampToViewport(panel); });
 })();
 </script>
 """
