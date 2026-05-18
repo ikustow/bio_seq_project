@@ -4,29 +4,23 @@ This project provides a high-throughput, production-grade pipeline to generate D
 
 ## Workflow
 
-1.  **Protein Data Input**: Reads protein UniProt accessions and sequences from `swissprot.tsv`.
-2.  **Prioritized Lookup**: Checks `refseq_swissprot_cds.csv` for existing DNA sequences.
-3.  **Taxonomy-Informed Synthesis**: For proteins without RefSeq mappings, the pipeline uses **ProGen2** to infer taxonomic origin and **CodonTransformer** to generate plausible synthetic DNA sequences based on host-specific codon bias.
+1.  **RefSeq Mapping Pipeline (`refseq_to_swissprot.py`)**:
+    *   **Phase 1 (Bulk Scan)**: Scans NCBI GenBank for existing `UniProtKB/Swiss-Prot` cross-references.
+    *   **Phase 2 (Targeted Search)**: For remaining proteins, performs targeted metadata searches using SwissProt `Gene Name` and `Organism` to find high-quality RefSeq curated records (`NG_`, `NM_`).
+    *   **Standardization**: Automatically converts all RNA sequences to DNA by replacing Uracil (U) with Thymine (T).
+2.  **Protein Data Input**: Reads protein UniProt accessions and sequences from `swissprot.tsv`.
+3.  **Taxonomy-Informed Synthesis**: For proteins without RefSeq mappings, the pipeline (`backtranslate_and_embed.py`) uses **CodonTransformer** to generate plausible synthetic DNA sequences based on host-specific codon bias.
 4.  **Genomic Embedding**: Sequences are embedded using the **HyenaDNA** model for high-throughput inference.
 5.  **HDF5 Output**: Embeddings are stored in a high-performance HDF5 file (`per-gene.h5`), ensuring strict compatibility with downstream FAISS retrieval systems.
+6.  **Compatibility Utility (`convert_h5_layout.py`)**: A post-processing script used to convert HDF5 file layouts for maximum backward compatibility with older retrieval services.
 
-## Prerequisites
-
--   Python 3.10+
--   [PyTorch](https://pytorch.org/)
--   [Hugging Face Transformers](https://huggingface.co/docs/transformers/index)
--   [h5py](https://www.h5py.org/)
--   [Polars](https://pola.rs/)
--   [CodonTransformer](https://github.com/adibvafa/CodonTransformer)
--   [Multimolecule](https://github.com/salesforce/multimolecule)
-
-## Setup
+## Environment Setup
 
 1.  **Create Conda Environment**:
     ```bash
-    conda create -n bioprep-env -c conda-forge python=3.10 numpy pytorch transformers polars h5py -y
+    conda create -n bioprep-env -c conda-forge python=3.10 numpy pytorch transformers biopython pandas polars h5py -y
     conda activate bioprep-env
-    pip install CodonTransformer multimolecule
+    pip install CodonTransformer
     ```
 
 2.  **Configuration**:
@@ -37,10 +31,18 @@ This project provides a high-throughput, production-grade pipeline to generate D
 
 ## Usage
 
-Run the production-grade script:
+1.  **Generate Mappings**:
+    ```bash
+    python refseq_to_swissprot.py
+    ```
 
-```bash
-python backtranslate_and_embed.py
-```
+2.  **Run Pipeline**:
+    ```bash
+    python backtranslate_and_embed.py
+    ```
 
-The script will process the input file, prioritize existing sequences, generate synthetic variants for unknowns, compute batch embeddings, and incrementally save results to `per-gene.h5`.
+3.  **Optimize Layout (Optional)**:
+    If required for legacy service compatibility, run:
+    ```bash
+    python convert_h5_layout.py
+    ```
