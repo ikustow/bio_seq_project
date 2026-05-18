@@ -31,16 +31,16 @@ L2 (`llm_eval.py`) and L3 (`e2e_eval.py`) harnesses are wired and ready to run. 
 - Python 3.9+ with the BioSeq runtime installed (i.e. `pip install -r requirements.txt` has run successfully — same set HF Spaces uses).
 - `pyyaml` (likely already present transitively; install with `pip install pyyaml` if not).
 - `python-dotenv` (already in `requirements.txt`) — only used by the eval harness to read a local `.env`, see below.
-- **`fastapi` and `uvicorn`** — required to run `bioseq_retriever/services/search_service.py` (the unified retriever service). Not in `requirements.txt` because HF Spaces production uses `app/frontend/embeddings_pipeline.py` instead, which doesn't need a service. Install locally with `pip install fastapi uvicorn`.
+- **`fastapi` and `uvicorn`** — required to run `app/backend/bioseq_retriever/services/search_service.py` (the unified retriever service). Not in `requirements.txt` because HF Spaces production uses `app/frontend/embeddings_pipeline.py` instead, which doesn't need a service. Install locally with `pip install fastapi uvicorn`.
 
 ### Retriever runtime mode
 
-The May-2026 retriever rewrite removed local in-process mode — `bioseq_retriever.src.pipeline`
+The May-2026 retriever rewrite removed local in-process mode — `app.backend.bioseq_retriever.src.pipeline`
 now always calls the **unified search service** over HTTP. Before running
 L1 or L3, start the service in its own terminal and leave it running:
 
 ```powershell
-python bioseq_retriever/services/search_service.py
+python app/backend/bioseq_retriever/services/search_service.py
 # listens on http://localhost:8002 by default
 ```
 
@@ -50,11 +50,11 @@ service).
 
 `per-protein.h5` is still required (the service reads it on startup). If you
 already use this laptop for local Streamlit tests, the file is in
-`bioseq_retriever/data/`. If not — run `python -m bioseq_retriever.src.bootstrap`
+`app/backend/bioseq_retriever/data/`. If not — run `python -m app.backend.bioseq_retriever.src.bootstrap`
 once, or copy the file from an existing setup.
 
 The harness calls `run_bioseq_pipeline` (now `async def`) via `asyncio.run`
-per test case — same pattern `bioseq_retriever/pipeline_interface.py` uses.
+per test case — same pattern `app/backend/bioseq_retriever/pipeline_interface.py` uses.
 
 ### Required env vars
 
@@ -131,9 +131,9 @@ validated manually in the same session.
 | `validate_data` complains about a placeholder | Someone re-introduced `<FILL` / `__GENERATE__` in YAML — see the failing path. |
 | `Top-50 recall < 0.95` on V0 | FAISS index or ProtT5 embedding is broken — fix this first, top-K means nothing without recall. |
 | Top-50 recall fine, Top-1 fails after rerank | Reranker / context prompt issue (see plan §2.5). |
-| DNA test cases fail end-to-end | DNA→protein translation step regressed (`bioseq_retriever/src/utils.translate_dna_to_protein`). |
+| DNA test cases fail end-to-end | DNA→protein translation step regressed (`app/backend/bioseq_retriever/src/utils.translate_dna_to_protein`). |
 | `ModuleNotFoundError: src.pipeline` | Running from somewhere other than the repo root. Use `python -m tests.eval.run_all` from `BioSeq investigator/`. |
-| `WinError 10061 ... target machine actively refused` | The unified retriever service isn't running. Start `python bioseq_retriever/services/search_service.py` in another terminal first (see "Retriever runtime mode" above). |
+| `WinError 10061 ... target machine actively refused` | The unified retriever service isn't running. Start `python app/backend/bioseq_retriever/services/search_service.py` in another terminal first (see "Retriever runtime mode" above). |
 | `OMP: Error #15: Initializing libomp140 ... already initialized` | Windows-only PyTorch/FAISS OpenMP collision. Harness already sets `KMP_DUPLICATE_LIB_OK=TRUE` automatically in `_common/env.py` — if you still see this, you're running the service or some other entry point that doesn't import our env module. Set the env var manually in that shell. |
 | Gemini 429 with body mentioning `daily limit` | Free-tier daily quota exhausted (~1500 req/day on gemini-2.0-flash). Resets at midnight Pacific Time. Either wait, or enable billing in Google AI Studio. |
 | Judge 404 from `openrouter.ai/api/v1/chat/completions` | The configured model id was removed from OpenRouter's catalog. Check `tests/eval/data/llm_scenarios.yaml::judge.model` against the live catalog at `https://openrouter.ai/models`. |

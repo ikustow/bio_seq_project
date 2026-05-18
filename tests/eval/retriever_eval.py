@@ -4,12 +4,13 @@ Usage:
     python -m tests.eval.retriever_eval [--out runs/<dir>/]
 
 Reads `tests/eval/data/proteins.yaml`, runs each test case through
-`bioseq_retriever.src.pipeline.run_bioseq_pipeline`, and writes a CSV per
-VALIDATION_PLAN.md §2 metrics.
+`app.backend.bioseq_retriever.src.pipeline.run_bioseq_pipeline`, and writes
+a CSV per VALIDATION_PLAN.md §2 metrics.
 
-Imports the retriever by inserting `bioseq_retriever/` onto sys.path — the
-production package uses `from src.pipeline import ...` rather than a fully-
-qualified module path, so we mirror what `pipeline_interface.py` does.
+Imports the retriever by inserting `app/backend/bioseq_retriever/` onto
+sys.path — the production package uses `from src.pipeline import ...`
+rather than a fully-qualified module path, so we mirror what
+`pipeline_interface.py` does.
 """
 
 from __future__ import annotations
@@ -27,8 +28,8 @@ from tests.eval._common.loader import clean_sequence, load_proteins
 from tests.eval._common.run_dir import REPO_ROOT, make_run_dir
 
 
-# Add bioseq_retriever/ to sys.path so `from src.pipeline import ...` resolves.
-_RETRIEVER_ROOT = REPO_ROOT / "bioseq_retriever"
+# Add app/backend/bioseq_retriever/ to sys.path so `from src.pipeline import ...` resolves.
+_RETRIEVER_ROOT = REPO_ROOT / "app" / "backend" / "bioseq_retriever"
 if str(_RETRIEVER_ROOT) not in sys.path:
     sys.path.insert(0, str(_RETRIEVER_ROOT))
 
