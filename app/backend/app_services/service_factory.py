@@ -8,6 +8,7 @@ from backend.agents_core.shared.config import DEFAULT_ENV_PATH, load_env_file
 from .bioseq_chat import BioSeqChatService, MockBioSeqChatService
 from .chat_llm import ChatLLMService
 from .retriever_pipeline import BioSeqRetrieverPipeline
+from .suggested_questions import SuggestedQuestionsService
 
 
 def create_bioseq_chat_service() -> BioSeqChatService | MockBioSeqChatService:
@@ -28,10 +29,12 @@ def create_bioseq_chat_service() -> BioSeqChatService | MockBioSeqChatService:
     agent = BioSeqRuntimeSessionAgent(persistence=persistence)
     retriever_pipeline = BioSeqRetrieverPipeline(enable_runtime_retriever=True)
     chat_llm_service = ChatLLMService()
+    suggested_questions_service = SuggestedQuestionsService()
     service = BioSeqChatService(
         agent=agent,
         retriever_pipeline=retriever_pipeline,
         chat_llm_service=chat_llm_service,
+        suggested_questions_service=suggested_questions_service,
     )
     service._exit_stack = exit_stack  # Keep persistence contexts alive while Streamlit caches the service.
     return service

@@ -21,7 +21,7 @@ import sequence_detection
 import session_objects
 from mock import conversation
 
-SubmitHandler = Callable[[str], tuple[str, Iterable[str]]]
+SubmitHandler = Callable[[str], tuple[str, Iterable[str], list[str]]]
 
 _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 _USER_AVATAR_PATH = _ASSETS_DIR / "UserAvatar.png"
@@ -167,6 +167,97 @@ def _render_assistant_text(text: str) -> None:
 
     rendered = _sub_mentions_outside_code(text, replace)
     st.markdown(rendered, unsafe_allow_html=True)
+
+
+def _render_assistant_message(
+    message: dict[str, Any],
+    message_index: int,
+) -> None:
+    with st.chat_message("assistant", avatar=BOT_AVATAR):
+        _render_assistant_text(str(message.get("content") or ""))
+        _render_suggested_questions(
+            _message_suggested_questions(message),
+            message_index,
+            _language_context_for_message(message_index, str(message.get("content") or "")),
+        )
+
+
+def _render_suggested_questions(
+    questions: list[str],
+    message_index: int,
+    language_context: str,
+) -> None:
+    if not questions:
+        return
+    heading = (
+        "Может вам будет интересно"
+        if _looks_like_russian(language_context)
+        else "You might also be interested"
+    )
+    with st.container(key=f"suggested_questions_{message_index}"):
+        st.markdown(
+            "<div class='suggested-questions'>"
+            f"<div class='suggested-questions-heading'>{html.escape(heading)}</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        for question_index, question in enumerate(questions[:3]):
+            with st.container(
+                key=f"suggested_question_row_{message_index}_{question_index}"
+            ):
+                st.markdown(
+                    f"<span class='suggested-question-text'>{html.escape(question)}</span>",
+                    unsafe_allow_html=True,
+                )
+                if st.button(
+                    "↪",
+                    key=f"suggested_question_insert_{message_index}_{question_index}",
+                    help="Insert this question into the chat input",
+                ):
+                    _prefill_chat_input(question)
+                    st.rerun()
+
+
+def _message_suggested_questions(message: dict[str, Any]) -> list[str]:
+    questions = message.get("suggested_questions")
+    if not isinstance(questions, list):
+        metadata = message.get("metadata")
+        questions = metadata.get("suggested_questions") if isinstance(metadata, dict) else []
+    return [str(question) for question in (questions or []) if question]
+
+
+def _language_context_for_message(message_index: int, assistant_content: str) -> str:
+    previous_messages = st.session_state.get("messages", [])[:message_index]
+    previous_user_messages = [
+        str(message.get("content") or "")
+        for message in previous_messages
+        if message.get("role") == "user"
+    ]
+    latest_user_message = previous_user_messages[-1] if previous_user_messages else ""
+    return f"{latest_user_message}\n{assistant_content}"
+
+
+def _language_context_for_pending(assistant_content: str) -> str:
+    previous_user_messages = [
+        str(message.get("content") or "")
+        for message in st.session_state.get("messages", [])
+        if message.get("role") == "user"
+    ]
+    latest_user_message = previous_user_messages[-1] if previous_user_messages else ""
+    return f"{latest_user_message}\n{assistant_content}"
+
+
+def _looks_like_russian(text: str) -> bool:
+    cyrillic_count = sum("\u0400" <= char <= "\u04ff" for char in text)
+    return cyrillic_count >= 3
+
+
+def _prefill_chat_input(question: str) -> None:
+    draft = str(question).strip()
+    if not draft:
+        return
+    current = str(st.session_state.get("chat_prompt") or "").strip()
+    st.session_state["chat_prompt"] = f"{current} {draft}".strip() if current else draft
 
 
 def _mention_click(object_id: str) -> None:
@@ -636,6 +727,7 @@ def _run_pending(on_submit: SubmitHandler | None) -> None:
     else:
         st.session_state.pop("batch_progress_label", None)
 
+    suggested_questions: list[str] = []
     try:
         if on_submit is None:
             reply, reveals = conversation.route(
@@ -645,10 +737,11 @@ def _run_pending(on_submit: SubmitHandler | None) -> None:
             prompt = "" if is_continuation else (
                 pending["display_text"] or pending["raw_text"]
             )
-            reply, reveals = on_submit(prompt)
+            reply, reveals, suggested_questions = on_submit(prompt)
     except Exception as exc:  # surface the failure inline rather than crashing the app
         reply = f"**Backend error:** {exc}"
         reveals = set()
+        suggested_questions = []
     reply = _sanitize_mentions_html(reply)
 
     st.session_state.card_sections_revealed.update(reveals)
@@ -707,9 +800,22 @@ def _run_pending(on_submit: SubmitHandler | None) -> None:
     else:
         final_text = reply
 
+    final_questions = [] if len(results) > 1 else suggested_questions
+
     with st.chat_message("assistant", avatar=BOT_AVATAR):
         _render_assistant_text(final_text)
-    st.session_state.messages.append({"role": "assistant", "content": final_text})
+        _render_suggested_questions(
+            final_questions,
+            len(st.session_state.messages),
+            _language_context_for_pending(final_text),
+        )
+    st.session_state.messages.append(
+        {
+            "role": "assistant",
+            "content": final_text,
+            "suggested_questions": final_questions,
+        }
+    )
     # Request one more rerun so the user message's attachment chip picks up
     # the new sequence status (``searching…`` → ``ready``). Without this
     # the chip rendered in the for-loop above stays stale until the next
@@ -745,12 +851,14 @@ def render(on_first_search, on_submit: SubmitHandler | None = None) -> None:
     chat_area = st.container(height=540, border=False, key="chat_area")
 
     with chat_area:
-        for msg in st.session_state.messages:
+        for message_index, msg in enumerate(st.session_state.messages):
             if msg["role"] == "user":
                 _render_user_message(msg)
             else:
-                with st.chat_message("assistant", avatar=BOT_AVATAR):
-                    _render_assistant_text(msg["content"])
+                _render_assistant_message(
+                    msg,
+                    message_index,
+                )
 
         # If a submission is pending (user message already in history),
         # render the assistant bubble inline below it with a live status
@@ -762,9 +870,30 @@ def render(on_first_search, on_submit: SubmitHandler | None = None) -> None:
         # ``pending_assistant`` directly (e.g. the demo chip).
         pending = st.session_state.pop("pending_assistant", None)
         if pending:
+            if isinstance(pending, dict):
+                pending_content = str(pending.get("content") or "")
+                pending_questions = [
+                    str(question)
+                    for question in (pending.get("suggested_questions") or [])
+                    if question
+                ]
+            else:
+                pending_content = str(pending)
+                pending_questions = []
             with st.chat_message("assistant", avatar=BOT_AVATAR):
-                st.write_stream(_stream_tokens(pending))
-            st.session_state.messages.append({"role": "assistant", "content": pending})
+                st.write_stream(_stream_tokens(pending_content))
+                _render_suggested_questions(
+                    pending_questions,
+                    len(st.session_state.messages),
+                    _language_context_for_pending(pending_content),
+                )
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": pending_content,
+                    "suggested_questions": pending_questions,
+                }
+            )
 
         # Demo chip lives inside chat_area so its appearance/disappearance
         # only mutates *children* of the chat_area container, never the
@@ -828,6 +957,7 @@ def _render_composer(on_submit: SubmitHandler | None) -> None:
 
     user_input = st.chat_input(
         "Paste a sequence, ask a question, or attach a FASTA file…",
+        key="chat_prompt",
         accept_file="multiple",
         file_type=["fa", "fasta", "faa", "txt"],
     )

@@ -92,6 +92,7 @@ def _run_turn_backend(prompt: str) -> dict[str, Any]:
                 workspace_id=st.session_state.get("workspace_id"),
                 user_role=st.session_state.get("user_role"),
                 search_algorithm=st.session_state.get("search_algorithm"),
+                think_mode=bool(st.session_state.get("think_mode_enabled")),
                 ui_context=ui_context,
                 objects=objects_payload,
                 selected_object_id=selected_object_id,
@@ -116,6 +117,8 @@ def _run_turn_backend(prompt: str) -> dict[str, Any]:
     warnings.extend(response.warnings)
     update_card = response.update_card
     reply = response.assistant_message
+    suggested_questions = list(response.suggested_questions or [])
+    suggested_questions_metadata = _suggested_questions_metadata(response.metadata)
 
     # Apply objects_patch to the local registry. This is independent of the
     # legacy ``update_card`` flag: both retriever turns and direct UniProt
@@ -147,6 +150,8 @@ def _run_turn_backend(prompt: str) -> dict[str, Any]:
             query_protein_sequence,
             current_mode=response.current_mode or "bioseq_runtime_retriever",
             update_candidates=True,
+            suggested_questions=suggested_questions,
+            suggested_questions_metadata=suggested_questions_metadata,
         )
     else:
         # Follow-up turn: keep the existing card untouched. We still surface
@@ -167,6 +172,8 @@ def _run_turn_backend(prompt: str) -> dict[str, Any]:
             None,
             current_mode=response.current_mode or "chat_llm",
             update_candidates=False,
+            suggested_questions=suggested_questions,
+            suggested_questions_metadata=suggested_questions_metadata,
         )
 
     return {
@@ -179,6 +186,7 @@ def _run_turn_backend(prompt: str) -> dict[str, Any]:
         "persisted": session_db_adapter.is_persistent(),
         "query_protein_sequence": query_protein_sequence,
         "update_card": update_card,
+        "suggested_questions": suggested_questions,
         "backend": response.current_mode or backend_choice.BACKEND_RUNTIME,
     }
 
@@ -246,9 +254,7 @@ def restore_session_state(session_id: str) -> dict[str, Any]:
     if workspace_snapshot:
         session_objects.apply_persisted(workspace_snapshot)
     if messages:
-        st.session_state.messages = [
-            {"role": m["role"], "content": m["content"]} for m in messages
-        ]
+        st.session_state.messages = [_message_for_session_state(m) for m in messages]
 
     return {
         "loaded": True,
@@ -298,6 +304,8 @@ def _safe_save_turn(
     *,
     current_mode: str = "bioseq_runtime_retriever",
     update_candidates: bool = True,
+    suggested_questions: list[str] | None = None,
+    suggested_questions_metadata: dict[str, Any] | None = None,
 ) -> None:
     try:
         session_db_adapter.save_turn(
@@ -310,6 +318,9 @@ def _safe_save_turn(
             update_candidates=update_candidates,
             query_protein_sequence=query_protein_sequence,
             workspace_snapshot=session_objects.serialize_for_persistence(),
+            suggested_questions=suggested_questions,
+            think_mode=bool(st.session_state.get("think_mode_enabled")),
+            suggested_questions_metadata=suggested_questions_metadata,
         )
     except Exception as exc:
         warnings.append(f"Could not save session turn: {exc}")
@@ -349,6 +360,34 @@ def _build_ui_context(session_id: str) -> dict[str, Any]:
             except Exception:
                 pass
     return ctx
+
+
+def _suggested_questions_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(metadata, dict):
+        return {}
+    return {
+        key: metadata[key]
+        for key in (
+            "suggested_questions_provider",
+            "suggested_questions_model",
+            "suggested_questions_raw",
+        )
+        if key in metadata
+    }
+
+
+def _message_for_session_state(message: dict[str, Any]) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "role": message["role"],
+        "content": message["content"],
+    }
+    questions = message.get("suggested_questions")
+    if isinstance(questions, list):
+        item["suggested_questions"] = [str(q) for q in questions if q]
+    metadata = message.get("metadata")
+    if isinstance(metadata, dict):
+        item["metadata"] = metadata
+    return item
 
 
 def _read_turn_count(session_id: str) -> int:

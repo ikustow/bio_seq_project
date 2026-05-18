@@ -5,6 +5,7 @@ from typing import Any
 from backend.app_contracts import BioSeqPipelineSnapshot, ChatTurnRequest
 from backend.app_services.bioseq_chat import BioSeqChatService
 from backend.app_services.chat_llm import ChatLLMResponse
+from backend.app_services.suggested_questions import SuggestedQuestionsResponse
 
 
 class FakeAgent:
@@ -60,6 +61,23 @@ class FakeChatLLM:
         )
 
 
+class FakeSuggestedQuestions:
+    def __init__(self, *, raises: Exception | None = None) -> None:
+        self.raises = raises
+        self.requests = []
+
+    def generate(self, request):
+        self.requests.append(request)
+        if self.raises:
+            raise self.raises
+        return SuggestedQuestionsResponse(
+            questions=["What domains matter most?", "How strong is the evidence?", "Which pathway is relevant?"],
+            provider="fake_think",
+            model="fake-think-model",
+            raw={"trace": "think"},
+        )
+
+
 def test_sequence_turn_updates_agent_and_returns_candidates(candidate_view) -> None:
     snapshot = BioSeqPipelineSnapshot(
         prompt="seq",
@@ -80,6 +98,36 @@ def test_sequence_turn_updates_agent_and_returns_candidates(candidate_view) -> N
     patch = agent.patches[0]
     assert patch["active_accession"] == "O95185"
     assert patch["working_memory"]["last_candidates"][0]["protein"]["accession"] == "O95185"
+
+
+def test_sequence_turn_with_think_mode_returns_suggested_questions(candidate_view) -> None:
+    snapshot = BioSeqPipelineSnapshot(
+        prompt="seq",
+        input_type="SEQUENCE",
+        sequence="MALWMRLLPLLALLALWGPGPGAG",
+        sequence_type="PROTEIN",
+        protein_sequence="MALWMRLLPLLALLALWGPGPGAG",
+        active_accession="O95185",
+    )
+    suggested = FakeSuggestedQuestions()
+    service = BioSeqChatService(
+        FakeAgent(),
+        FakeRetriever(snapshot, [candidate_view]),
+        FakeChatLLM(),
+        suggested,
+    )
+
+    result = service.submit_turn(
+        ChatTurnRequest(message="seq", session_id="s1", user_id="u1", think_mode=True)
+    )
+
+    assert result.suggested_questions == [
+        "What domains matter most?",
+        "How strong is the evidence?",
+        "Which pathway is relevant?",
+    ]
+    assert result.metadata["suggested_questions_provider"] == "fake_think"
+    assert suggested.requests[0].selected_candidate["protein"]["accession"] == "O95185"
 
 
 def test_follow_up_routes_to_chat_llm_without_card_update(candidate_view, candidate_dict) -> None:
@@ -110,6 +158,33 @@ def test_follow_up_routes_to_chat_llm_without_card_update(candidate_view, candid
     assert not agent.invoked
 
 
+def test_follow_up_with_think_mode_returns_suggested_questions(candidate_view, candidate_dict) -> None:
+    snapshot = BioSeqPipelineSnapshot(prompt="tell me more", input_type="TEXT", context="tell me more")
+    agent = FakeAgent({"working_memory": {"last_candidates": [candidate_view.model_dump()]}})
+    suggested = FakeSuggestedQuestions()
+    service = BioSeqChatService(agent, FakeRetriever(snapshot, []), FakeChatLLM(), suggested)
+
+    result = service.submit_turn(
+        ChatTurnRequest(
+            message="tell me more",
+            session_id="s1",
+            user_id="u1",
+            think_mode=True,
+            ui_context={
+                "turn_count": 1,
+                "messages": [{"role": "user", "content": "tell me more"}],
+                "selected_candidate": candidate_dict,
+                "selected_candidate_index": 0,
+            },
+        )
+    )
+
+    assert result.update_card is False
+    assert result.suggested_questions[0] == "What domains matter most?"
+    assert result.metadata["suggested_questions_model"] == "fake-think-model"
+    assert suggested.requests[0].assistant_message == "follow-up answer"
+
+
 def test_follow_up_error_still_preserves_card(candidate_view) -> None:
     snapshot = BioSeqPipelineSnapshot(prompt="q", input_type="TEXT")
     agent = FakeAgent({"working_memory": {"last_candidates": [candidate_view.model_dump()]}})
@@ -123,3 +198,28 @@ def test_follow_up_error_still_preserves_card(candidate_view) -> None:
     assert result.current_mode == "chat_llm_error"
     assert result.assistant_message.startswith("**Chat LLM error:**")
     assert "boom" in result.warnings
+
+
+def test_think_mode_error_does_not_replace_follow_up_answer(candidate_view, candidate_dict) -> None:
+    snapshot = BioSeqPipelineSnapshot(prompt="q", input_type="TEXT")
+    agent = FakeAgent({"working_memory": {"last_candidates": [candidate_view.model_dump()]}})
+
+    class ErrorSuggested:
+        def generate(self, request):
+            return SuggestedQuestionsResponse(warnings=["think failed"])
+
+    service = BioSeqChatService(agent, FakeRetriever(snapshot, []), FakeChatLLM(), ErrorSuggested())
+
+    result = service.submit_turn(
+        ChatTurnRequest(
+            message="q",
+            session_id="s1",
+            user_id="u1",
+            think_mode=True,
+            ui_context={"turn_count": 1, "selected_candidate": candidate_dict},
+        )
+    )
+
+    assert result.assistant_message == "follow-up answer"
+    assert result.suggested_questions == []
+    assert "think failed" in result.warnings

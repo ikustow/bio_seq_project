@@ -11,6 +11,8 @@ py3Dmol==2.5.4
 requests==2.33.1
 
 # Pipeline orchestration
+langchain==1.2.14
+langchain-openai>=1.1.0
 langchain-mistralai==1.1.2
 langgraph==1.1.10
 pydantic==2.13.3

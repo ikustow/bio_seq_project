@@ -18,6 +18,7 @@ from backend.app_contracts import (
 
 from .chat_llm import ChatLLMRequest, ChatLLMService
 from .retriever_pipeline import BioSeqRetrieverPipeline
+from .suggested_questions import SuggestedQuestionsRequest, SuggestedQuestionsService
 from .uniprot_lookup import lookup_protein_view
 
 class SessionAgent(Protocol):
@@ -37,6 +38,7 @@ class BioSeqChatService:
         agent: "SessionAgent",
         retriever_pipeline: BioSeqRetrieverPipeline | None = None,
         chat_llm_service: ChatLLMService | None = None,
+        suggested_questions_service: SuggestedQuestionsService | None = None,
     ) -> None:
         self._agent = agent
         self._retriever_pipeline = retriever_pipeline or BioSeqRetrieverPipeline()
@@ -44,6 +46,7 @@ class BioSeqChatService:
         # text turns (legacy behaviour). Frontend signals follow-up turns via
         # ``ui_context.turn_count`` so the backend can route to chat-LLM.
         self._chat_llm_service = chat_llm_service
+        self._suggested_questions_service = suggested_questions_service
 
     def submit_turn(self, request: ChatTurnRequest) -> ChatTurnResult:
         context = _context_from_request(request)
@@ -147,9 +150,17 @@ class BioSeqChatService:
 
             if pipeline_candidates:
                 patch = _build_retriever_patch(request, pipeline, pipeline_candidates)
+                assistant_message = _pipeline_hit_message(pipeline)
+                suggested_questions, suggested_metadata = self._maybe_generate_suggested_questions(
+                    request=request,
+                    assistant_message=assistant_message,
+                    selected_candidate=pipeline_candidates[0].model_dump(),
+                    history=_history_from_ui_context(request.ui_context or {}),
+                    warnings=warnings,
+                )
                 return ChatTurnResult(
                     session_id=request.session_id,
-                    assistant_message=_pipeline_hit_message(pipeline),
+                    assistant_message=assistant_message,
                     candidates=pipeline_candidates,
                     selected_candidate_index=selected_index,
                     revealed_sections=_revealed_sections(pipeline_candidates),
@@ -158,6 +169,8 @@ class BioSeqChatService:
                     warnings=warnings,
                     objects_patch=patch,
                     selected_object_id=patch.set_selected,
+                    suggested_questions=suggested_questions,
+                    metadata=suggested_metadata,
                 )
 
         # Follow-up turn: TEXT input within an existing session. Frontend
@@ -188,6 +201,34 @@ class BioSeqChatService:
             pipeline=pipeline,
             warnings=warnings,
         )
+
+    def _maybe_generate_suggested_questions(
+        self,
+        *,
+        request: ChatTurnRequest,
+        assistant_message: str,
+        selected_candidate: dict[str, Any] | None,
+        history: list[dict[str, Any]],
+        warnings: list[str],
+    ) -> tuple[list[str], dict[str, Any]]:
+        if not request.think_mode or self._suggested_questions_service is None:
+            return [], {}
+        response = self._suggested_questions_service.generate(
+            SuggestedQuestionsRequest(
+                user_message=request.message,
+                assistant_message=assistant_message,
+                history=history,
+                selected_candidate=selected_candidate,
+            )
+        )
+        warnings.extend(response.warnings)
+        metadata = {
+            "think_mode": True,
+            "suggested_questions_provider": response.provider,
+            "suggested_questions_model": response.model,
+            "suggested_questions_raw": response.raw,
+        }
+        return response.questions, metadata
 
     def _handle_follow_up(
         self,
@@ -226,6 +267,18 @@ class BioSeqChatService:
             metadata = {"error": str(exc)}
             warnings.append(str(exc))
 
+        suggested_questions: list[str] = []
+        suggested_metadata: dict[str, Any] = {}
+        if current_mode != "chat_llm_error":
+            suggested_questions, suggested_metadata = self._maybe_generate_suggested_questions(
+                request=request,
+                assistant_message=assistant_message,
+                selected_candidate=selected_candidate,
+                history=history,
+                warnings=warnings,
+            )
+            metadata = {**metadata, **suggested_metadata}
+
         # Reuse the existing candidate cards from agent state so the snapshot
         # we return reflects what the user is still looking at. Frontend will
         # ignore ``candidates`` because ``update_card=False``.
@@ -245,6 +298,7 @@ class BioSeqChatService:
             current_mode=current_mode,
             provider=provider,
             provider_model=provider_model,
+            suggested_questions=suggested_questions,
             metadata=metadata,
         )
 

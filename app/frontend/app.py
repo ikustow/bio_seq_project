@@ -602,7 +602,7 @@ def _start_progress_ticker(placeholder, stop_event):
     return thread
 
 
-def _handle_vector_db_submission(text: str) -> tuple[str, set[str]]:
+def _handle_vector_db_submission(text: str) -> tuple[str, set[str], list[str]]:
     """Run one user turn through the active backend and persist it.
 
     On retriever turns (``update_card=True``) we replace the protein card
@@ -632,7 +632,7 @@ def _handle_vector_db_submission(text: str) -> tuple[str, set[str]]:
     st.session_state.vector_db_result = outcome["result"]
     st.session_state.backend_warnings = outcome["warnings"]
     debug_panel.capture(text, outcome)
-    return outcome["reply"], outcome["reveals"]
+    return outcome["reply"], outcome["reveals"], list(outcome.get("suggested_questions") or [])
 
 
 def main() -> None:

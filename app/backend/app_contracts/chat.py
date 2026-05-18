@@ -61,6 +61,7 @@ class ChatTurnRequest(BaseModel):
     object_mentions: list[ObjectMention] = Field(default_factory=list)
     uploaded_files: list[UploadedFile] = Field(default_factory=list)
     search_algorithm: str | None = None
+    think_mode: bool = False
     ui_context: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -78,6 +79,7 @@ class ChatTurnResult(BaseModel):
     current_mode: str | None = None
     provider: str | None = None
     provider_model: str | None = None
+    suggested_questions: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
     # Object registry contract.
     objects_patch: ObjectsPatch = Field(default_factory=ObjectsPatch)

@@ -73,6 +73,12 @@ def render() -> None:
         )
         st.session_state["search_algorithm"] = picked
 
+        st.toggle(
+            "Assistant Mode 🧠",
+            key="think_mode_enabled",
+            help="Suggest three follow-up questions after each answer",
+        )
+
         css = _new_chat_button_css(str(_PLUS_ICON_PATH))
         if css:
             st.markdown(css, unsafe_allow_html=True)

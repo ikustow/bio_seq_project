@@ -100,7 +100,7 @@ def extract_candidates(row: dict[str, Any] | None) -> list[dict[str, Any]]:
     return [card for card in cards if isinstance(card, dict)]
 
 
-def extract_messages(row: dict[str, Any] | None) -> list[dict[str, str]]:
+def extract_messages(row: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Recover the chat transcript from ``working_memory.messages``."""
     if not row:
         return []
@@ -110,11 +110,22 @@ def extract_messages(row: dict[str, Any] | None) -> list[dict[str, str]]:
     msgs = working_memory.get("messages")
     if not isinstance(msgs, list):
         return []
-    return [
-        {"role": str(m.get("role", "")), "content": str(m.get("content", ""))}
-        for m in msgs
-        if isinstance(m, dict) and m.get("role") and m.get("content") is not None
-    ]
+    output: list[dict[str, Any]] = []
+    for m in msgs:
+        if not isinstance(m, dict) or not m.get("role") or m.get("content") is None:
+            continue
+        item: dict[str, Any] = {
+            "role": str(m.get("role", "")),
+            "content": str(m.get("content", "")),
+        }
+        metadata = m.get("metadata")
+        if isinstance(metadata, dict):
+            item["metadata"] = dict(metadata)
+            questions = metadata.get("suggested_questions")
+            if isinstance(questions, list):
+                item["suggested_questions"] = [str(q) for q in questions if q]
+        output.append(item)
+    return output
 
 
 def save_turn(
@@ -128,6 +139,9 @@ def save_turn(
     update_candidates: bool = True,
     query_protein_sequence: str | None = None,
     workspace_snapshot: dict[str, Any] | None = None,
+    suggested_questions: list[str] | None = None,
+    think_mode: bool = False,
+    suggested_questions_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Append the current turn to ``public.chat_sessions``.
 
@@ -186,7 +200,19 @@ def save_turn(
     if user_message:
         messages.append({"role": "user", "content": user_message, "ts": now_iso})
     if assistant_message:
-        messages.append({"role": "assistant", "content": assistant_message, "ts": now_iso})
+        assistant_entry: dict[str, Any] = {
+            "role": "assistant",
+            "content": assistant_message,
+            "ts": now_iso,
+        }
+        normalized_questions = _normalize_suggested_questions(suggested_questions or [])
+        if normalized_questions or think_mode:
+            assistant_entry["metadata"] = {
+                **(suggested_questions_metadata or {}),
+                "suggested_questions": normalized_questions,
+                "think_mode": bool(think_mode),
+            }
+        messages.append(assistant_entry)
 
     turn_count = int(saved_wm.get("turn_count") or 0) + 1
 
@@ -199,6 +225,8 @@ def save_turn(
         else saved_wm.get("last_query_protein_sequence"),
         "last_user_message": user_message,
         "last_assistant_message": assistant_message,
+        "last_suggested_questions": _normalize_suggested_questions(suggested_questions or []),
+        "think_mode_last_enabled": bool(think_mode),
         "last_revealed_sections": revealed_list,
         "last_turn_at": now_iso,
         "turn_count": turn_count,
@@ -293,3 +321,20 @@ def _merge_working_set(existing: list[Any], incoming: list[Any], limit: int = 40
         if text not in seen:
             seen.append(text)
     return seen[-limit:]
+
+
+def _normalize_suggested_questions(questions: list[Any], limit: int = 3) -> list[str]:
+    output: list[str] = []
+    seen: set[str] = set()
+    for question in questions or []:
+        text = " ".join(str(question or "").split())
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(text[:180])
+        if len(output) >= limit:
+            break
+    return output
