@@ -13,7 +13,7 @@ from src.data_fetcher import get_uniprot_records
 from src.search import search_protein_top_k, search_dna_top_k, blast_search
 from src.reranking import LocalReranker
 
-from src.config import ALLOWED_DATA_DIR, SEARCH_SERVICE_URL
+from src.config import ALLOWED_DATA_DIR, SEARCH_SERVICE_URL, RETRIEVAL_TOP_K, RERANK_TOP_N
 
 
 def _rerank_service_alive(url: str = SEARCH_SERVICE_URL, timeout: float = 0.5) -> bool:
@@ -328,7 +328,7 @@ def rank_dna_node(state: GraphState) -> Dict[str, Any]:
     if state.get('error'): return {}
     try:
         # Uses raw DNA sequence for search
-        matches = search_dna_top_k(state['sequence'], k=50)
+        matches = search_dna_top_k(state['sequence'], k=RETRIEVAL_TOP_K)
         # matches is List[Tuple[accession, score]]
         records = get_uniprot_records([m[0] for m in matches])
         
@@ -352,7 +352,7 @@ def rank_protein_node(state: GraphState) -> Dict[str, Any]:
             # query was supplied. Hardcoded to SwissProt for speed/quality.
             matches = blast_search(state['sequence'], k=10)
         else:
-            matches = search_protein_top_k(state['sequence'], k=50)
+            matches = search_protein_top_k(state['sequence'], k=RETRIEVAL_TOP_K)
             
         records = get_uniprot_records([m[0] for m in matches])
 
@@ -373,7 +373,7 @@ def rank_protein_node(state: GraphState) -> Dict[str, Any]:
         return {"error": f"Protein Ranking failed: {str(e)}"}
 
 def rerank_node(state: GraphState) -> Dict[str, Any]:
-    """Performs contextual reranking (Top 5)."""
+    """Performs contextual reranking."""
     if state.get('error'): return {}
     ranked = state.get('ranked_results') or []
     algorithm = (state.get("search_algorithm") or "embeddings").lower()
@@ -388,8 +388,8 @@ def rerank_node(state: GraphState) -> Dict[str, Any]:
 
     try:
         reranker = LocalReranker()
-        # Takes top 50 matches (DNA or Protein) and reranks them
-        final_records = reranker.rerank_by_context(ranked, state['context'], top_n=5)
+        # Takes matches and reranks them
+        final_records = reranker.rerank_by_context(ranked, state['context'], top_n=RERANK_TOP_N)
         return {"final_results": final_records}
     except Exception as e:
         print(f"Rerank skipped ({e}); falling back to top-5 of initial results.")

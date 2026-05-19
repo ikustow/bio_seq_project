@@ -21,5 +21,9 @@ BACKOFF_FACTOR = float(os.getenv("BIOSEQ_BACKOFF_FACTOR", "2.0"))
 # All retrieval and reranking are now handled by a single unified gateway on port 8002
 SEARCH_SERVICE_URL = os.getenv("BIOSEQ_SEARCH_SERVICE_URL", "http://localhost:8002")
 
+# --- Retrieval Settings ---
+RETRIEVAL_TOP_K = 20
+RERANK_TOP_N = 5
+
 # Toggle to use services instead of local loading
 USE_SERVICES = os.getenv("BIOSEQ_USE_SERVICES", "true").lower() == "true"

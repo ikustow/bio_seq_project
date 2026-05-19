@@ -35,7 +35,8 @@ RERANK_MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
 # Internal sensitivity constant for the rerank signal (Maximum reranker authority)
 RERANK_LAMBDA = 0.5
 
-# Sequence length limits
+# Length limits
+RERANK_MAX_LENGTH = 2048
 DNA_MAX_LENGTH = 60_000
 
 # --- Default FAISS Threads ---

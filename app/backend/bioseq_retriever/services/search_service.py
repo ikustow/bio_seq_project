@@ -23,7 +23,7 @@ from services.config import (
     SEARCH_SERVICE_HOST, SEARCH_SERVICE_PORT,
     PROTEIN_MODEL_NAME, DNA_MODEL_NAME, RERANK_MODEL_NAME,
     DNA_MAX_LENGTH, DEFAULT_FAISS_THREADS, H5_BATCH_SIZE,
-    RERANK_LAMBDA
+    RERANK_LAMBDA, RERANK_MAX_LENGTH
 )
 
 app = FastAPI(title="Unified BioSeq Gateway Service")
@@ -172,7 +172,7 @@ def _embed_dna(sequence: str) -> np.ndarray:
         mean_pooled = outputs.last_hidden_state.mean(dim=1).squeeze()
     return mean_pooled.cpu().numpy().astype(np.float32)
 
-def _embed_rerank_texts(texts: List[str], is_query: bool = False, max_length: int = 2048) -> np.ndarray:
+def _embed_rerank_texts(texts: List[str], is_query: bool = False) -> np.ndarray:
     """
     Generates semantic embeddings using Qwen3-Embedding.
     1. Uses last-token pooling (standard for decoder-based embeddings).
@@ -196,7 +196,7 @@ def _embed_rerank_texts(texts: List[str], is_query: bool = False, max_length: in
         processed_texts, 
         padding=True, 
         truncation=True, 
-        max_length=max_length, 
+        max_length=RERANK_MAX_LENGTH, 
         return_tensors="pt"
     ).to(device)
 
