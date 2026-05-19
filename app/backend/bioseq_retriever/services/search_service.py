@@ -183,9 +183,9 @@ def _embed_rerank_texts(texts: List[str], is_query: bool = False) -> np.ndarray:
         # Instruction-aware path for queries
         instruction = (
             "Given a bioinformatics context or sequence retrieval prompt, identify relevant biological "
-            "entities, molecular functions, biological processes, subcellular localizations, "
-            "taxonomic constraints (including species exclusions), and structural relationships "
-            "to retrieve matching entries from the Swiss-Prot database."
+            "entities, molecular functions, biological processes, protein families and domains, "
+            "subcellular localizations, taxonomic and evolutionary constraints, ontology-related terms, "
+            "and structural or functional relationships to retrieve matching entries from the Swiss-Prot database."
         )
         processed_texts = [f"{instruction}\nQuery: {t}" for t in texts]
     else:

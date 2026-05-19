@@ -48,18 +48,18 @@ class AnalysisFailure(BaseModel):
 # --- Success Outcome Schemas ---
 
 class SequenceSuccess(BaseModel):
-    """Final state for a successfully classified and expanded biological sequence."""
+    """Final state for a successfully classified biological sequence with identified entities."""
     kind: Literal["sequence_success"]
     sequence_type: Literal["DNA", "PROTEIN"] = Field(description="The finalized molecular nature.")
     raw_sequence: str = Field(description="The extracted raw sequence string.")
-    expanded_context: str = Field(description="Richly expanded biological context including synonyms, metabolic pathways, and GO terms.")
+    context: str = Field(description="Extract the broadest possible biologically relevant semantic context from the query, including biological entities, genes, proteins, domains, functions, pathways, processes, molecular interactions, structural features, localization, taxonomy, evolutionary relationships, diseases, phenotypes, experimental evidence, ontology terms, regulatory relationships, host-pathogen context, biochemical activities, cellular context, and inferred biological associations. Preserve broad contextual and relational information with high semantic recall, including weakly implied or partially related concepts, without aggressive filtering or compression, since downstream instruction-aware embedding will refine and prioritize the signal.")
 
 class FilePathSuccess(BaseModel):
-    """Final state for a successfully classified and expanded filesystem path."""
+    """Final state for a successfully classified filesystem path with identified entities."""
     kind: Literal["filepath_success"]
     sequence_type: Literal["DNA", "PROTEIN"] = Field(description="The finalized molecular nature.")
     path: str = Field(description="The extracted filesystem path.")
-    expanded_context: str = Field(description="Richly expanded biological context including synonyms, metabolic pathways, and GO terms.")
+    context: str = Field(description="Extract the broadest possible biologically relevant semantic context from the query, including biological entities, genes, proteins, domains, functions, pathways, processes, molecular interactions, structural features, localization, taxonomy, evolutionary relationships, diseases, phenotypes, experimental evidence, ontology terms, regulatory relationships, host-pathogen context, biochemical activities, cellular context, and inferred biological associations. Preserve broad contextual and relational information with high semantic recall, including weakly implied or partially related concepts, without aggressive filtering or compression, since downstream instruction-aware embedding will refine and prioritize the signal.")
 
 # --- Reasoning Cascade Branches ---
 
@@ -232,9 +232,7 @@ def extract_and_classify_node(state: GraphState) -> Dict[str, Any]:
         "   - **FOR SEQUENCES**: Analyze character distributions (e.g. searching for 'M' or 'W' for proteins) and match with functional context.\n"
         "   - **FOR PATHS**: Analyze extensions (.faa, .fna, .fasta) and verify against user instructions.\n"
         "4. **VALIDATION & ERROR ROUTING**: If, during your reasoning steps, you find the classification uncertain or the data invalid, "
-        "you MUST route the `final_outcome` field to an `AnalysisFailure` object. Uncertainty is unacceptable.\n"
-        "5. **QUERY EXPANSION**: If (and only if) you reach a success state, expand the biological intent into a dense field of synonyms, "
-        "relevant GO (Gene Ontology) processes, and metabolic pathways to maximize search precision.\n\n"
+        "you MUST route the `final_outcome` field to an `AnalysisFailure` object. Uncertainty is unacceptable.\n\n"
         
         "Your reasoning must be generous, elaborate, and demonstrate a profound mastery of molecular biology signals."
     )
@@ -265,7 +263,7 @@ def extract_and_classify_node(state: GraphState) -> Dict[str, Any]:
             return {
                 "sequence_or_path": terminal.raw_sequence,
                 "input_type": "SEQUENCE",
-                "context": terminal.expanded_context,
+                "context": terminal.context,
                 "sequence_type": terminal.sequence_type,
                 "error": None,
                 "extraction_used_fallback": None,
@@ -274,7 +272,7 @@ def extract_and_classify_node(state: GraphState) -> Dict[str, Any]:
             return {
                 "sequence_or_path": terminal.path,
                 "input_type": "FILEPATH",
-                "context": terminal.expanded_context,
+                "context": terminal.context,
                 "sequence_type": terminal.sequence_type,
                 "error": None,
                 "extraction_used_fallback": None,
