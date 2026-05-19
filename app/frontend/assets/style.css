@@ -191,15 +191,27 @@ button[data-testid="stExpandSidebarButton"] {
    app.py updates the variable + persists to localStorage). The left
    column flexes to fill the remaining space.
 
-   We identify the two columns by the keyed containers we placed inside
-   each — using :has() — instead of by structural position, so nested
-   columns elsewhere in the tree aren't affected. */
+   We identify the two columns via ``.st-key-main_left`` ONLY — left is
+   the column that ``:has`` it, right is the column that ``:not(:has)``
+   it (negative match on the same marker). Using ``.st-key-main_right``
+   for the right column USED to work but silently broke whenever
+   ``chat.render()`` blocked the script thread on a synchronous
+   retriever call: until ``with st.container(key="main_right"):`` starts
+   streaming actual content, Streamlit doesn't materialise the
+   ``<div class="st-key-main_right">`` in the DOM, so the
+   ``:has(.st-key-main_right)`` selector failed to match — and the
+   right column fell back to Streamlit's default ratio sizing,
+   collapsing the layout to ~50/50 and squeezing the chat narrow until
+   the retriever returned. ``.st-key-main_left`` materialises as soon
+   as chat.render() begins (its container wraps the chat output, which
+   streams immediately), so the negative-match identification is
+   stable throughout the entire script run, blocking call and all. */
 .st-key-main_layout [data-testid="stColumn"]:has(.st-key-main_left) {
     flex: 1 1 0 !important;
     width: auto !important;
     min-width: 0 !important;
 }
-.st-key-main_layout [data-testid="stColumn"]:has(.st-key-main_right) {
+.st-key-main_layout [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] .st-key-main_left) > [data-testid="stColumn"]:not(:has(.st-key-main_left)) {
     flex: 0 0 var(--right-panel-width) !important;
     width: var(--right-panel-width) !important;
     min-width: var(--right-panel-min-width) !important;
@@ -249,6 +261,75 @@ button[data-testid="stExpandSidebarButton"] {
     box-sizing: border-box;
 }
 
+/* Script-only ``components.html()`` injections (stale-layout sweeper,
+   click-shield wheel forwarder, mention bridge, etc.) get wrapped in
+   a ``stElementContainer`` that still participates in the parent
+   ``stVerticalBlock``'s flex ``gap: 1rem`` layout, even though the
+   iframe inside is 0×0 and invisible. Each such wrapper costs ~16px
+   of vertical space above it, and with several injections at the top
+   of ``main()`` the stack adds up to a visible empty band between
+   the topbar and the chat content. Pulling these wrappers out of
+   flow with ``position: absolute`` removes their gap contribution
+   without affecting the iframe's script execution.
+
+   ``:has(> iframe)`` scopes the rule to iframe wrappers ONLY — guards
+   against accidentally matching a non-iframe wrapper that happens to
+   carry ``width="0px" height="0px"`` attributes in some transient
+   state (e.g. an empty chat-input wrapper during early render),
+   which would otherwise turn it into a 0×0 absolutely-positioned
+   ghost and make the chat input vanish. */
+[data-testid="stElementContainer"][width="0px"][height="0px"]:has(> iframe) {
+    position: absolute !important;
+    width: 0 !important;
+    height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    pointer-events: none !important;
+}
+
+/* Halve the flex gap on the outermost ``stVerticalBlock`` (the one
+   directly inside ``stMainBlockContainer``). Streamlit's default is
+   ``gap: 1rem`` (16px) between every direct child — topbar markdown,
+   main_layout, and any other top-level block. At 16px × 2 gaps that
+   shows up in DevTools as two violet bands above the columns, which
+   reads as a meaningless empty stripe between the topbar and the
+   chat content. 8px feels tight without looking cramped. */
+[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] {
+    gap: 0.5rem !important;
+}
+
+/* Streamlit's ``stSkeleton`` — animated shimmer placeholder shown
+   while a custom-component iframe loads. The only such component
+   in this app is ``streamlit_cookies_controller``, which is UI-less
+   (just sets HTTP-only cookies via JS and reports back with
+   ``height=0``). Streamlit doesn't auto-remove the skeleton when
+   the component reports zero size, so the 44px shimmer bar sits
+   permanently between the topbar and the main columns. Hide it
+   globally — we never surface Streamlit's loading states to the
+   user anyway. */
+[data-testid="stSkeleton"] {
+    display: none !important;
+}
+
+/* The wrapper around a 0-height custom component (cookies
+   controller) carries a min-height for the skeleton placeholder
+   above. With the skeleton hidden, this wrapper still reserves
+   ~44px of empty space. Take it out of flex flow so it contributes
+   zero vertical space — the iframe inside keeps running (cookies
+   continue to load/persist), only the visual slot disappears. */
+[data-testid="stElementContainer"]:has(
+    > div > iframe[data-testid="stCustomComponentV1"][height="0"]
+) {
+    position: absolute !important;
+    width: 0 !important;
+    height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    pointer-events: none !important;
+}
+
 /* ---------- Disable global page scroll ----------
    Both columns manage their own vertical scroll (chat_area on the left
    via the JS resizer in components/chat.py; the right column via the
@@ -286,8 +367,10 @@ body,
 /* Only the outer horizontal block (the one whose direct child columns
    wrap the keyed left/right containers) gets position:relative so the
    drag handle anchors to it. Also halve the gap between the chat and
-   the protein card. */
-.st-key-main_layout [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] .st-key-main_right) {
+   the protein card. Keyed off ``.st-key-main_left`` for the same
+   "main_right not in DOM during a blocking script run" reason
+   documented on the column rules above. */
+.st-key-main_layout [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] .st-key-main_left) {
     position: relative;
     flex-wrap: nowrap;
     align-items: stretch;
@@ -435,87 +518,86 @@ div.stButton > button:hover {
 }
 
 /* ---------- Think Mode suggested questions ---------- */
-.suggested-questions {
-    margin: 0.35rem 0 0.15rem;
-    padding-left: 0.1rem;
+.bioseq-suggested-questions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    margin: 0.5rem 0 0.2rem;
+    padding: 0.75rem 0.85rem 0.6rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    background: #ffffff;
     color: #334155;
 }
-.suggested-questions-heading {
-    margin: 0 0 0.3rem;
-    color: #64748b;
-    font-size: 0.88rem;
-    font-weight: 650;
+.bioseq-suggested-questions-heading {
+    margin: 0 0 0.15rem;
+    color: #1e293b;
+    font-size: 0.92rem;
+    font-weight: 600;
     line-height: 1.35;
 }
-[class*="st-key-suggested_question_row_"] {
-    display: flex !important;
-    flex-direction: row !important;
-    align-items: baseline !important;
-    gap: 0.45rem !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    margin: 0.18rem 0 !important;
+.bioseq-suggested-questions-heading::before {
+    content: "";
+    display: inline-block;
+    width: 0.45rem;
+    height: 0.45rem;
+    margin-right: 0.5rem;
+    border-radius: 999px;
+    background: #b59f3b;
+    vertical-align: middle;
+    transform: translateY(-1px);
 }
-[class*="st-key-suggested_question_row_"] [data-testid="stElementContainer"] {
-    flex: 0 0 auto !important;
-    width: auto !important;
-    min-width: 0 !important;
-    max-width: calc(100% - 2rem) !important;
-    margin: 0 !important;
-}
-.suggested-question-text {
-    display: inline;
+.bioseq-suggested-question {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 2.6rem;
+    padding: 0.6rem 2.5rem 0.6rem 0.85rem;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: #f6f7f9;
     color: #1e293b;
+    font: inherit;
     font-size: 0.94rem;
-    line-height: 1.42;
-    white-space: nowrap;
-    text-decoration: underline;
-    text-underline-offset: 3px;
-    text-decoration-thickness: 1px;
+    font-weight: 500;
+    line-height: 1.4;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease;
 }
-[class*="st-key-suggested_question_insert_"] {
-    align-self: baseline !important;
+.bioseq-suggested-question:hover {
+    border-color: #cbd5e1;
+    background: #eef0f3;
+    color: #0f172a;
 }
-[class*="st-key-suggested_question_insert_"] div.stButton,
-[class*="st-key-suggested_question_insert_"] [data-testid="stTooltipHoverTarget"] {
-    display: inline-flex !important;
-    align-items: center !important;
-    margin: 0 !important;
-    padding: 0 !important;
+.bioseq-suggested-question:focus,
+.bioseq-suggested-question:focus-visible {
+    outline: none;
+    border-color: #94a3b8;
 }
-[class*="st-key-suggested_question_insert_"] div.stButton button {
-    display: inline-flex !important;
+.bioseq-suggested-question-text {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.bioseq-suggested-question-badge {
+    position: absolute;
+    top: 50%;
+    right: 0.6rem;
+    transform: translateY(-50%);
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 1.2rem !important;
-    min-width: 1.2rem !important;
-    height: 1.2rem !important;
-    min-height: 1.2rem !important;
-    transform: translateY(0.12rem);
-    padding: 0 !important;
-    border: 0 !important;
-    border-radius: 999px;
-    background: #e5e7eb !important;
-    box-shadow: none !important;
-    color: #64748b !important;
+    min-width: 1.4rem;
+    height: 1.4rem;
+    padding: 0 0.4rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    background: #ffffff;
+    color: #64748b;
     font-size: 0.78rem;
+    font-weight: 500;
     line-height: 1;
-}
-[class*="st-key-suggested_question_insert_"] div.stButton button:hover {
-    border: 0 !important;
-    background: #d1d5db !important;
-    color: #334155 !important;
-}
-[class*="st-key-suggested_question_insert_"] div.stButton button:focus,
-[class*="st-key-suggested_question_insert_"] div.stButton button:active {
-    border: 0 !important;
-    box-shadow: none !important;
-}
-[class*="st-key-suggested_question_insert_"] div.stButton button p,
-[class*="st-key-suggested_question_insert_"] div.stButton button [data-testid="stMarkdownContainer"] {
-    margin: 0 !important;
-    line-height: 1 !important;
-    text-align: center;
 }
 
 /* ---------- Sidebar session history ---------- */

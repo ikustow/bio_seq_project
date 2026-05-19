@@ -318,7 +318,7 @@ _STALE_LAYOUT_SWEEPER_JS = """
 
     function sweep() {
         const layouts = doc.querySelectorAll(".st-key-main_layout");
-        if (layouts.length < 2) return;
+        if (layouts.length === 0) return;
         const fresh = [];
         const stale = [];
         layouts.forEach(function (node) {
@@ -335,12 +335,27 @@ _STALE_LAYOUT_SWEEPER_JS = """
             }
             (anyFresh ? fresh : stale).push(node);
         });
-        // Only remove orphans when at least one live ``main_layout``
-        // exists — never strip the page bare during a transient state
-        // where every layout happens to be marked stale for one frame.
+        // ALWAYS unhide fresh layouts first, regardless of how many
+        // total layouts exist. A previously-hidden layout (because it
+        // was stale in a prior 2-layout race) can become the live
+        // one in a subsequent rerun — if we don't restore display
+        // here, it stays hidden forever and the chat input + content
+        // inside it look like they vanished.
+        //
+        // Hide via inline ``display: none`` instead of ``node.remove()``.
+        // Removing the node fights React for ownership of a DOM subtree
+        // it still expects to manage — on the next reconciliation pass
+        // React can re-attach the orphan, undoing our sweep. React
+        // doesn't compete over inline styles, so display:none sticks.
+        fresh.forEach(function (node) {
+            if (node.style.display === "none") node.style.display = "";
+        });
+        // Hide stale layouts only when at least one fresh exists, so
+        // we never strip the page bare during a transient state where
+        // every layout happens to be marked stale for one frame.
         if (!fresh.length) return;
         stale.forEach(function (node) {
-            try { node.remove(); } catch (e) {}
+            if (node.style.display !== "none") node.style.display = "none";
         });
     }
 
@@ -540,15 +555,20 @@ def _inject_topbar_scroll() -> None:
 # event so widget clicks can't trigger a rerun mid-search (see the CSS
 # comment in style.css). That also kills wheel scroll, so this script
 # manually forwards the wheel delta to the topmost scrollable ancestor
-# under the cursor. The listener is installed once per page, gates on
-# the shield's presence each time, and otherwise stays a no-op so it
-# never affects normal interactions.
+# under the cursor. The listener gates on the shield's presence each
+# time, and otherwise stays a no-op so it never affects normal
+# interactions.
+#
+# Re-install on every iframe load (same zombie-closure protection
+# used by the mention bridge, topbar scroll, and right-panel resizer
+# — see their comments for the full explanation). The previous "guard
+# with __bioseqShieldWheelInstalled" pattern left a dead handler
+# pointing into a destroyed iframe context after the first rerun, and
+# wheel events stopped scrolling silently from that point on.
 _CLICK_SHIELD_WHEEL_FORWARDER_JS = """
 <script>
 (function () {
     const doc = window.parent.document;
-    if (doc.__bioseqShieldWheelInstalled) return;
-    doc.__bioseqShieldWheelInstalled = true;
 
     function shield() {
         return doc.querySelector('.bioseq-click-shield');
@@ -575,7 +595,7 @@ _CLICK_SHIELD_WHEEL_FORWARDER_JS = """
         return doc.scrollingElement || doc.documentElement;
     }
 
-    doc.addEventListener('wheel', function (e) {
+    const handler = function (e) {
         const sh = shield();
         if (!sh) return;
         e.preventDefault();
@@ -588,7 +608,17 @@ _CLICK_SHIELD_WHEEL_FORWARDER_JS = """
                 behavior: 'auto',
             });
         }
-    }, { capture: true, passive: false });
+    };
+
+    if (doc.__bioseqShieldWheelHandler) {
+        try {
+            doc.removeEventListener(
+                'wheel', doc.__bioseqShieldWheelHandler, { capture: true }
+            );
+        } catch (e) {}
+    }
+    doc.__bioseqShieldWheelHandler = handler;
+    doc.addEventListener('wheel', handler, { capture: true, passive: false });
 })();
 </script>
 """
@@ -838,6 +868,21 @@ def main() -> None:
     )
     _inject_styles()
     _render_topbar()
+    # Install the wheel forwarder early too — the click shield it
+    # complements gets rendered inside chat.render() (above the
+    # spinner) at the moment the retriever starts, so the wheel
+    # listener has to already be live by then or scroll stays dead
+    # for the entire blocking call.
+    _inject_click_shield_wheel_forwarder()
+    # Install the stale-layout sweeper as early as possible so its
+    # MutationObserver is alive BEFORE chat.render() blocks on
+    # ``run_turn``. If we leave the inject at the bottom of main()
+    # (where it used to live), the observer only comes online after
+    # the retrieval has already finished — meaning Streamlit's late
+    # ``data-stale="true"`` marks land while no observer is watching,
+    # the orphaned previous layout stays in the DOM, and the chat
+    # gets squeezed narrow while the right panel falls below it.
+    _inject_stale_layout_sweeper()
     _require_password()
     _bootstrap_session()
     session_sidebar.render()
@@ -851,12 +896,21 @@ def main() -> None:
         # the final ~73/27 split on a typical viewport that the eye
         # doesn't catch the adjustment.
         left, right = st.columns([3, 1], gap="large")
-        with left:
-            with st.container(key="main_left"):
-                chat.render(
-                    on_first_search=_load_protein,
-                    on_submit=_handle_vector_db_submission if config.USE_VECTOR_DB_MODE else None,
-                )
+        # Render the right column BEFORE the left. ``chat.render()`` in
+        # the left column blocks the script thread on the synchronous
+        # retriever call inside ``run_turn``, so anything declared
+        # AFTER chat.render only paints once the search returns. With
+        # the right rendered first, the Session Objects bar and Object
+        # Inspector stay visible (and even reflect the in-flight
+        # ``searching`` chip status) throughout the entire search.
+        #
+        # The visual order doesn't change — ``st.columns`` controls
+        # left/right placement via CSS flex, not by Python render
+        # order. Streamlit's submit flow (chat_input → stage → rerun →
+        # block → rerun) means the new object's "searching" status is
+        # already in session_state by the time the right column
+        # re-renders for the blocking pass, so this swap actually
+        # improves the in-flight UX rather than showing stale state.
         with right:
             with st.container(key="main_right"):
                 object_bar.render()
@@ -873,12 +927,16 @@ def main() -> None:
                         st.session_state.card_sections_revealed,
                         query_sequence=st.session_state.query_protein_sequence,
                     )
+        with left:
+            with st.container(key="main_left"):
+                chat.render(
+                    on_first_search=_load_protein,
+                    on_submit=_handle_vector_db_submission if config.USE_VECTOR_DB_MODE else None,
+                )
 
     _inject_right_panel_resizer()
     _inject_candidate_click_forwarder()
     _inject_topbar_scroll()
-    _inject_click_shield_wheel_forwarder()
-    _inject_stale_layout_sweeper()
     debug_panel.render()
 
     # Deferred rerun trigger. ``chat._run_pending`` is invoked from inside

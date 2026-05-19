@@ -238,28 +238,24 @@ def _render_suggested_questions(
         if _looks_like_russian(language_context)
         else "You might also be interested"
     )
-    with st.container(key=f"suggested_questions_{message_index}"):
-        st.markdown(
-            "<div class='suggested-questions'>"
-            f"<div class='suggested-questions-heading'>{html.escape(heading)}</div>"
-            "</div>",
-            unsafe_allow_html=True,
+    items_html = "".join(
+        (
+            '<button type="button" class="bioseq-suggested-question" '
+            f'data-bioseq-suggested-question="{html.escape(question, quote=True)}" '
+            f'title="Insert this question into the chat input">'
+            f'<span class="bioseq-suggested-question-text">{html.escape(question)}</span>'
+            f'<span class="bioseq-suggested-question-badge">{idx + 1}</span>'
+            "</button>"
         )
-        for question_index, question in enumerate(questions[:3]):
-            with st.container(
-                key=f"suggested_question_row_{message_index}_{question_index}"
-            ):
-                st.markdown(
-                    f"<span class='suggested-question-text'>{html.escape(question)}</span>",
-                    unsafe_allow_html=True,
-                )
-                if st.button(
-                    "↪",
-                    key=f"suggested_question_insert_{message_index}_{question_index}",
-                    help="Insert this question into the chat input",
-                ):
-                    _prefill_chat_input(question)
-                    st.rerun()
+        for idx, question in enumerate(questions[:3])
+    )
+    st.markdown(
+        f"<div class='bioseq-suggested-questions' data-message-index='{message_index}'>"
+        f"<div class='bioseq-suggested-questions-heading'>{html.escape(heading)}</div>"
+        f"{items_html}"
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _message_suggested_questions(message: dict[str, Any]) -> list[str]:
@@ -294,14 +290,6 @@ def _language_context_for_pending(assistant_content: str) -> str:
 def _looks_like_russian(text: str) -> bool:
     cyrillic_count = sum("\u0400" <= char <= "\u04ff" for char in text)
     return cyrillic_count >= 3
-
-
-def _prefill_chat_input(question: str) -> None:
-    draft = str(question).strip()
-    if not draft:
-        return
-    current = str(st.session_state.get("chat_prompt") or "").strip()
-    st.session_state["chat_prompt"] = f"{current} {draft}".strip() if current else draft
 
 
 def _mention_click(object_id: str) -> None:
@@ -715,7 +703,7 @@ def _build_batch_summary(results: list[dict[str, Any]]) -> str:
 
 
 def _run_pending(on_submit: SubmitHandler | None) -> None:
-    """Phase-2: execute the queued backend call and render the reply.
+    """Phase-2: execute the queued backend call and append the reply.
 
     When the user pasted multiple sequences, this function only runs ONE
     backend turn per render — the backend resolves the first sequence in
@@ -729,14 +717,12 @@ def _run_pending(on_submit: SubmitHandler | None) -> None:
     Single-sequence turns keep the per-turn reply verbatim, so non-batch
     behaviour is unchanged.
 
-    The bubble's DOM shape must match what the main history loop produces
-    for the same message on subsequent renders — otherwise Streamlit's
-    reconciler crashes React with ``removeChild`` when the bubble's
-    children change shape between first paint and the next rerun.
-    Previously we wrapped the bubble around an ``st.empty()`` placeholder
-    for a "Thinking…" indicator, which made the first-render structure
-    ``chat_message > placeholder + markdown`` while later renders produced
-    ``chat_message > markdown``.
+    Important: assistant bubbles are appended to ``st.session_state.messages``
+    and a rerun is requested via ``_chat_force_rerun``. The actual paint
+    happens on the next render, from the history loop in ``render``.
+    Earlier versions also drew the bubble inline here in addition to
+    appending, which produced a brief duplicate flicker during the
+    reconciliation between the inline frame and the history-loop frame.
 
     No spinner is opened here — the real backend already shows one from
     inside ``_handle_vector_db_submission`` via ``st.spinner``. Adding
@@ -854,13 +840,12 @@ def _run_pending(on_submit: SubmitHandler | None) -> None:
     # summary, so a per-iteration Gemini follow-up would be confusing.
     final_secondary_reply = secondary_reply if len(results) <= 1 else None
 
-    with st.chat_message("assistant", avatar=BOT_AVATAR):
-        _render_assistant_text(final_text)
-        _render_suggested_questions(
-            final_questions,
-            len(st.session_state.messages),
-            _language_context_for_pending(final_text),
-        )
+    # Append-only: do NOT render the bubble inline here. The forced rerun
+    # below repaints the chat from ``st.session_state.messages`` via the
+    # history loop in ``render``, which is the single source of truth for
+    # assistant bubbles. Rendering inline too caused a brief duplicate
+    # flicker — the inline bubble from frame N and the history-loop bubble
+    # from frame N+1 overlapped during reconciliation.
     st.session_state.messages.append(
         {
             "role": "assistant",
@@ -870,8 +855,6 @@ def _run_pending(on_submit: SubmitHandler | None) -> None:
     )
 
     if final_secondary_reply:
-        with st.chat_message("assistant", avatar=BOT_AVATAR):
-            _render_assistant_text(final_secondary_reply)
         st.session_state.messages.append(
             {
                 "role": "assistant",
@@ -880,11 +863,11 @@ def _run_pending(on_submit: SubmitHandler | None) -> None:
             }
         )
     # Request one more rerun so the user message's attachment chip picks up
-    # the new sequence status (``searching…`` → ``ready``). Without this
-    # the chip rendered in the for-loop above stays stale until the next
-    # user interaction triggers a rerun. The actual ``st.rerun()`` is
-    # deferred to ``main()`` (after the right column commits) for the same
-    # reason as the intermediate-continuation case above.
+    # the new sequence status (``searching…`` → ``ready``) AND so the new
+    # assistant bubble(s) appear from the history loop. The actual
+    # ``st.rerun()`` is deferred to ``main()`` (after the right column
+    # commits) for the same reason as the intermediate-continuation case
+    # above.
     st.session_state["_chat_force_rerun"] = True
 
 
@@ -1803,6 +1786,27 @@ _LIVE_PREVIEW_JS = r"""
     if (label) replaceLastMention(label);
   };
 
+  // Suggested-question button: insert the question's text into the chat
+  // input at the caret. Previously this round-tripped through Streamlit
+  // via session_state + st.rerun, which (a) caused two full reruns and
+  // (b) auto-submitted the question because st.chat_input treats
+  // session_state[key] as the last *submitted* value.
+  const onSuggestedQuestionClick = function (event) {
+    const btn = event.target.closest && event.target.closest(
+      '.bioseq-suggested-question[data-bioseq-suggested-question]'
+    );
+    if (!btn) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const text = btn.getAttribute('data-bioseq-suggested-question') || '';
+    if (!text) return;
+    const input = focusInput();
+    if (!input) return;
+    const current = readValue(input);
+    const needsSpace = current.length && !/\s$/.test(current);
+    insertAtCaret((needsSpace ? ' ' : '') + text);
+  };
+
   // Drag source = either a chip in the Object Bar or a ``@`` mention
   // anchor inside chat history. Both carry ``data-label``; mentions are
   // ``<a href="#mention-...">`` so the browser's default dataTransfer
@@ -1879,14 +1883,15 @@ _LIVE_PREVIEW_JS = r"""
   // Stored on ``doc`` so the next iframe load can find and remove the
   // previous (now dead) handler before installing its own live one.
   const interactionHandlers = [
-    ['__bioseqChipInsertHandler',    'click',     onChipInsertClick,   true],
-    ['__bioseqAutocompleteHandler',  'click',     onAutocompleteClick, true],
-    ['__bioseqChipDragStartHandler', 'dragstart', onChipDragStart,     false],
-    ['__bioseqChipDragEndHandler',   'dragend',   onChipDragEnd,       false],
-    ['__bioseqInputDragOverHandler', 'dragover',  onInputDragOver,     false],
-    ['__bioseqInputDragLeaveHandler','dragleave', onInputDragLeave,    false],
-    ['__bioseqInputDropHandler',     'drop',      onInputDrop,         false],
-    ['__bioseqMentionHoverHandler',  'mouseover', onMentionHover,      true],
+    ['__bioseqChipInsertHandler',    'click',     onChipInsertClick,        true],
+    ['__bioseqAutocompleteHandler',  'click',     onAutocompleteClick,      true],
+    ['__bioseqSuggestedQHandler',    'click',     onSuggestedQuestionClick, true],
+    ['__bioseqChipDragStartHandler', 'dragstart', onChipDragStart,          false],
+    ['__bioseqChipDragEndHandler',   'dragend',   onChipDragEnd,            false],
+    ['__bioseqInputDragOverHandler', 'dragover',  onInputDragOver,          false],
+    ['__bioseqInputDragLeaveHandler','dragleave', onInputDragLeave,         false],
+    ['__bioseqInputDropHandler',     'drop',      onInputDrop,              false],
+    ['__bioseqMentionHoverHandler',  'mouseover', onMentionHover,           true],
   ];
   for (let i = 0; i < interactionHandlers.length; i++) {
     const key = interactionHandlers[i][0];
