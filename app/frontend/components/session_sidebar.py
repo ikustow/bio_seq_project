@@ -13,6 +13,7 @@ import streamlit as st
 import chat_pipeline
 import session_db_adapter
 import session_identity
+import session_objects
 
 _PLUS_ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "Plus.png"
 
@@ -145,30 +146,38 @@ def _render_session_list(sessions: list[dict[str, Any]], *, current_id: str) -> 
         for row in sessions:
             sid = str(row.get("session_id"))
             is_current = sid == current_id
-            title = _format_session_title(row)
+            title = _format_session_title(row, is_current=is_current)
             when = _format_when(row.get("updated_at"))
             if is_current:
                 _render_current_session_item(title, when)
                 continue
-            if st.button(title, key=f"sidebar_session_{sid}", width="stretch"):
-                _switch_to_session(sid)
-                st.rerun()
-            _render_session_date(when)
+            with st.container(key=f"sidebar_session_item_{sid}"):
+                if st.button(title, key=f"sidebar_session_{sid}", width="stretch"):
+                    _switch_to_session(sid)
+                    st.rerun()
+                _render_session_date(when)
 
 
 def _render_current_session_item(title: str, when: str) -> None:
-    date_html = (
-        f"<div class='sidebar-session-current-date'>{html.escape(when)}</div>"
-        if when
-        else ""
-    )
-    st.markdown(
-        "<div class='sidebar-session-current'>"
-        f"<div class='sidebar-session-current-title'>{html.escape(title)}</div>"
-        f"{date_html}"
-        "</div>",
-        unsafe_allow_html=True,
-    )
+    # Wrap the active block in st.container so its DOM structure mirrors
+    # non-active items (stLayoutWrapper > stVerticalBlock > ...). Without
+    # this, the bare st.markdown lets the stMarkdown chain miscompute
+    # height — the dark .sidebar-session-current ends up 16px taller
+    # than its wrapping stElementContainer and visibly overflows onto
+    # the next item below.
+    with st.container(key="sidebar_session_item_current"):
+        date_html = (
+            f"<div class='sidebar-session-current-date'>{html.escape(when)}</div>"
+            if when
+            else ""
+        )
+        st.markdown(
+            "<div class='sidebar-session-current'>"
+            f"<div class='sidebar-session-current-title'>{html.escape(title)}</div>"
+            f"{date_html}"
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
 
 def _render_session_date(when: str) -> None:
@@ -180,13 +189,33 @@ def _render_session_date(when: str) -> None:
     )
 
 
-def _format_session_title(row: dict[str, Any]) -> str:
-    summary = (row.get("session_summary") or row.get("last_analysis_summary") or "").strip()
-    if not summary:
+def _format_session_title(row: dict[str, Any], *, is_current: bool = False) -> str:
+    first_user = (row.get("first_user_message") or "").strip()
+    if first_user:
+        text = " ".join(first_user.split())
+        # Rewrite ``@<token>`` mentions to the workspace's current label so
+        # ``@Seq_A`` becomes ``@HBE_HUMAN`` once the sequence has been
+        # resolved. The active session uses live ``st.session_state.objects``
+        # (most up-to-date, including unsaved selection changes); older rows
+        # use the persisted ``bioseq_workspace.objects`` snapshot.
+        if is_current:
+            workspace_objects = session_objects.get_objects()
+        else:
+            workspace_objects = row.get("workspace_objects")
+            if isinstance(workspace_objects, str):
+                # Some psycopg / driver combinations surface jsonb as text.
+                try:
+                    import json
+                    workspace_objects = json.loads(workspace_objects)
+                except Exception:
+                    workspace_objects = None
+            if not isinstance(workspace_objects, dict):
+                workspace_objects = None
+        text = session_objects.rewrite_mentions(text, workspace_objects)
+    else:
         accession = row.get("active_accession")
-        summary = f"Session on {accession}" if accession else "(no summary yet)"
-    head = summary[:60] + ("…" if len(summary) > 60 else "")
-    return head
+        text = f"New chat on {accession}" if accession else "New chat"
+    return text[:60] + ("…" if len(text) > 60 else "")
 
 
 def _format_when(value: Any) -> str:

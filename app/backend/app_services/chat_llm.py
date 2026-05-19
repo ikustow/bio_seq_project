@@ -109,10 +109,11 @@ class GeminiProxyChatProvider:
         if not proxy_token:
             raise RuntimeError(f"{PROXY_TOKEN_ENV} is not set.")
 
+        full_system_prompt = _build_system_instruction(request, system_prompt)
         payload = {
             "contents": _build_gemini_contents(request),
             "generationConfig": {"temperature": 0.2, "maxOutputTokens": 4096},
-            "systemInstruction": {"parts": [{"text": system_prompt}]},
+            "systemInstruction": {"parts": [{"text": full_system_prompt}]},
         }
         headers = {
             "Content-Type": "application/json",
@@ -123,7 +124,7 @@ class GeminiProxyChatProvider:
             "method": "POST",
             "url": proxy_url,
             "headers": headers,
-            "system_prompt": system_prompt,
+            "system_prompt": full_system_prompt,
             "payload": payload,
             "timeout_seconds": REQUEST_TIMEOUT_SECONDS,
         }
@@ -170,12 +171,15 @@ class OpenAIChatProvider:
         ).strip()
         llm = ChatOpenAI(model=model, temperature=0.2, timeout=REQUEST_TIMEOUT_SECONDS)
         messages = _build_openai_messages(request, system_prompt)
+        full_system_prompt = (
+            messages[0].content if messages and hasattr(messages[0], "content") else system_prompt
+        )
         debug_request = {
             "provider": self.name,
             "model": model,
             "temperature": 0.2,
             "timeout_seconds": REQUEST_TIMEOUT_SECONDS,
-            "system_prompt": system_prompt,
+            "system_prompt": full_system_prompt,
             "messages": [_serialize_openai_message(message) for message in messages],
         }
         response = llm.invoke(messages)
@@ -197,20 +201,23 @@ def system_prompt() -> str:
         "You are an expert assistant for protein sequence analysis. "
         "Your primary goal is to answer the user's question accurately and helpfully. "
         "\n\n"
-        "The user works in a chat with a workspace of objects: each `Sequence` "
-        "(labelled `Seq_A`, `Seq_B`, ...) is a biological sequence they pasted "
-        "or uploaded, and each `Protein` (labelled by UniProt accession like "
-        "`O95185`) is a card from UniProt. Tokens like `@Seq_A` or `@O95185` "
-        "in user messages are references to these objects. "
+        "The user works in a chat with a workspace of objects. A `Sequence` is "
+        "a biological sequence the user pasted or uploaded; once resolved against "
+        "UniProt it is addressed by the entry name of its top match (e.g. "
+        "`@HBD_HUMAN`), or by `@Seq_A`, `@Seq_B`, ... before resolution. "
+        "A `Protein` card is addressed by its UniProt accession (e.g. `@P02042`) "
+        "or gene symbol (e.g. `@HBD`). All these forms can refer to the same "
+        "underlying object — treat them as equivalent. "
         "\n\n"
-        "You have been provided with database information about the protein the user is asking about. "
-        "Use this data to ground your answers: explain what the protein does, where it's found, how it interacts, "
-        "and why it matters clinically or biologically. "
+        "Below this paragraph you will find the current workspace state and the "
+        "UniProt details for the object(s) under discussion. Use that data to "
+        "ground your answer — explain what the protein does, where it's found, "
+        "how it interacts, and why it matters clinically or biologically. "
         "\n\n"
         "Guidelines: "
         "- Answer the user's question directly and concisely "
         "- When the user references an object, echo it in your reply (e.g. "
-        "'For `@Seq_A`: ...') so they can see how you resolved the reference "
+        "'For `@HBD_HUMAN`: ...') so they can see how you resolved the reference "
         "- If a contextual reference like 'the second one' or 'the previous "
         "protein' is ambiguous, ask a short clarifying question instead of guessing "
         "- Connect relevant data points (function, location, interactions, disease links) to build a coherent explanation "
@@ -220,12 +227,81 @@ def system_prompt() -> str:
     )
 
 
-def build_protein_context(candidate: dict[str, Any] | None) -> str | None:
+def _resolved_label(obj: dict[str, Any] | None) -> str:
+    """Backend mirror of frontend ``display_label``: entry_name > original label.
+
+    For a Sequence with a chosen match, returns the match's ``entry_name``
+    (e.g. ``HBD_HUMAN``). Otherwise returns the stored ``label`` (``Seq_A``)
+    or the accession for Protein objects. Used so the LLM sees the same
+    ``@HBD_HUMAN`` chip the user sees in the UI.
+    """
+    if not isinstance(obj, dict):
+        return ""
+    fallback = str(obj.get("label") or obj.get("id") or "")
+    if obj.get("kind") != "sequence":
+        return fallback
+    matches = obj.get("matches") or []
+    try:
+        idx = int(obj.get("selected_match_index") or 0)
+    except (TypeError, ValueError):
+        idx = 0
+    if 0 <= idx < len(matches):
+        protein = (matches[idx] or {}).get("protein") or {}
+        entry = str(protein.get("entry_name") or "").strip()
+        if entry:
+            return entry
+    return fallback
+
+
+def _label_tokens(obj: dict[str, Any]) -> set[str]:
+    """All @-tokens by which the user can address ``obj``.
+
+    Covers original label, accession, entry_name and gene so the mention
+    parser resolves ``@Seq_A``, ``@HBD_HUMAN``, ``@P02042`` and ``@HBD``
+    all to the same object.
+    """
+    tokens: set[str] = set()
+    if not isinstance(obj, dict):
+        return tokens
+    for key in ("label", "accession"):
+        value = str(obj.get(key) or "").strip()
+        if value:
+            tokens.add(value)
+    if obj.get("kind") == "sequence":
+        matches = obj.get("matches") or []
+        try:
+            idx = int(obj.get("selected_match_index") or 0)
+        except (TypeError, ValueError):
+            idx = 0
+        if 0 <= idx < len(matches):
+            protein = (matches[idx] or {}).get("protein") or {}
+            for key in ("entry_name", "gene", "accession"):
+                value = str(protein.get(key) or "").strip()
+                if value:
+                    tokens.add(value)
+    elif obj.get("kind") == "protein":
+        card = obj.get("card") or {}
+        if isinstance(card, dict):
+            for key in ("entry_name", "gene"):
+                value = str(card.get(key) or "").strip()
+                if value:
+                    tokens.add(value)
+    return tokens
+
+
+def build_protein_context(
+    candidate: dict[str, Any] | None,
+    *,
+    label: str | None = None,
+) -> str | None:
     """Render the selected candidate's protein metadata as a context string.
 
     Accepts the same dict shape the frontend uses for ``st.session_state.candidates``
-    (i.e. ``{"protein": {...}, "match_score": float}``). Returns ``None`` if
-    there is no usable candidate so callers can skip the context turn.
+    (i.e. ``{"protein": {...}, "match_score": float}``). When ``label`` is
+    given, the header reads ``**Context for @LABEL:**`` so the LLM can wire
+    the protein details back to the workspace object the user sees in the UI.
+    Returns ``None`` if there is no usable candidate so callers can skip
+    the context block.
     """
     if not candidate or not isinstance(candidate, dict):
         return None
@@ -234,8 +310,9 @@ def build_protein_context(candidate: dict[str, Any] | None) -> str | None:
         return None
     match_score = candidate.get("match_score", 0) or 0
 
+    header = f"**Context for `@{label}`:**" if label else "**Current protein context:**"
     lines = [
-        "**Current protein context:**",
+        header,
         f"Accession: {protein.get('accession', 'N/A')}",
         f"Name: {protein.get('name', 'Unknown')}",
         f"Gene: {protein.get('gene', 'N/A')}",
@@ -333,6 +410,7 @@ def build_mentioned_protein_contexts(
         return []
     skip = {a.upper() for a in (skip_accessions or set()) if a}
     out: list[tuple[str, str]] = []
+    seen_object_ids: set[str] = set()
     seen_tokens: set[str] = set()
     for match in _MENTION_TOKEN_RE.finditer(prompt):
         token = match.group(1)
@@ -344,13 +422,16 @@ def build_mentioned_protein_contexts(
         for obj in objects.values():
             if not isinstance(obj, dict):
                 continue
-            label = str(obj.get("label") or "")
-            accession = str(obj.get("accession") or "")
-            if token == label or token == accession:
+            if token in _label_tokens(obj):
                 target = obj
                 break
         if target is None:
             continue
+        target_id = str(target.get("id") or "")
+        if target_id and target_id in seen_object_ids:
+            continue
+        if target_id:
+            seen_object_ids.add(target_id)
 
         protein: dict[str, Any] | None = None
         match_score: Any = None
@@ -381,10 +462,14 @@ def build_mentioned_protein_contexts(
         if accession and accession in skip:
             continue
 
-        rendered = build_protein_context({"protein": protein, "match_score": match_score or 0})
+        echo_label = _resolved_label(target) or token
+        rendered = build_protein_context(
+            {"protein": protein, "match_score": match_score or 0},
+            label=echo_label,
+        )
         if not rendered:
             continue
-        out.append((token, f"**Context for `@{token}`:**\n{rendered}"))
+        out.append((echo_label, rendered))
         if accession:
             skip.add(accession)
     return out
@@ -416,7 +501,7 @@ def build_objects_context(
     if sequences:
         lines.append("\n**Sequences:**")
         for seq in sequences:
-            label = seq.get("label") or seq.get("id")
+            label = _resolved_label(seq) or seq.get("id")
             seq_type = seq.get("sequence_type") or "UNKNOWN"
             length = seq.get("length") or 0
             status = seq.get("status") or "draft"
@@ -435,7 +520,7 @@ def build_objects_context(
                     f"{score:.0f}%" if isinstance(score, (int, float)) else "n/a"
                 )
                 line += (
-                    f"; user-selected match: `{acc}` ({gene} — {name}, score {score_str})"
+                    f"; resolved to `{acc}` ({gene} — {name}, score {score_str})"
                 )
             lines.append(line)
 
@@ -454,47 +539,76 @@ def build_objects_context(
     if selected_object_id:
         obj = objects.get(selected_object_id)
         if isinstance(obj, dict):
-            label = obj.get("label") or selected_object_id
+            label = _resolved_label(obj) or selected_object_id
             lines.append(f"\n**Currently selected:** `@{label}`")
 
     return "\n".join(lines)
 
 
-def _build_gemini_contents(request: ChatLLMRequest) -> list[dict[str, Any]]:
-    contents: list[dict[str, Any]] = []
+def _label_for_selected_candidate(request: ChatLLMRequest) -> str | None:
+    """Find which workspace label the ``selected_candidate`` belongs to.
+
+    Tries, in order: the explicitly-selected object, then any sequence whose
+    chosen match shares the candidate's accession, then the candidate's own
+    entry_name/accession. Used to print ``**Context for @LABEL:**`` so the
+    LLM knows which workspace chip these protein details describe.
+    """
+    candidate = request.selected_candidate
+    if not isinstance(candidate, dict):
+        return None
+    objects = request.objects or {}
+    if request.selected_object_id and isinstance(objects, dict):
+        obj = objects.get(request.selected_object_id)
+        if isinstance(obj, dict):
+            label = _resolved_label(obj)
+            if label:
+                return label
+    sel_protein = candidate.get("protein") or {}
+    acc = (
+        str(sel_protein.get("accession") or "").upper()
+        if isinstance(sel_protein, dict)
+        else ""
+    )
+    if acc and isinstance(objects, dict):
+        for obj in objects.values():
+            if not isinstance(obj, dict) or obj.get("kind") != "sequence":
+                continue
+            matches = obj.get("matches") or []
+            try:
+                idx = int(obj.get("selected_match_index") or 0)
+            except (TypeError, ValueError):
+                idx = 0
+            if 0 <= idx < len(matches):
+                mprot = (matches[idx] or {}).get("protein") or {}
+                if str(mprot.get("accession") or "").upper() == acc:
+                    return _resolved_label(obj)
+    if isinstance(sel_protein, dict):
+        for key in ("entry_name", "accession"):
+            value = str(sel_protein.get(key) or "").strip()
+            if value:
+                return value
+    return None
+
+
+def _build_system_instruction(request: ChatLLMRequest, base_system_prompt: str) -> str:
+    """Concatenate the base system prompt with workspace + protein context.
+
+    Putting workspace state into ``systemInstruction`` (instead of faking
+    user/model turns inside ``contents``) means the LLM sees the context
+    as situational background rather than as something the user just typed,
+    and the real chat history stays clean — strictly alternating user/model.
+    """
+    pieces: list[str] = [base_system_prompt]
+
     workspace_context = build_objects_context(request.objects, request.selected_object_id)
     if workspace_context:
-        contents.append({"role": "user", "parts": [{"text": workspace_context}]})
-        contents.append(
-            {
-                "role": "model",
-                "parts": [
-                    {
-                        "text": (
-                            "Thanks — I have the workspace context. I'll reference "
-                            "objects by their `@<label>` ids in my answers."
-                        )
-                    }
-                ],
-            }
-        )
+        pieces.append(workspace_context)
+
     injected_accessions: set[str] = set()
-    protein_context = build_protein_context(request.selected_candidate)
+    selected_label = _label_for_selected_candidate(request)
+    protein_context = build_protein_context(request.selected_candidate, label=selected_label)
     if protein_context:
-        contents.append({"role": "user", "parts": [{"text": protein_context}]})
-        contents.append(
-            {
-                "role": "model",
-                "parts": [
-                    {
-                        "text": (
-                            "I understand. I have the context about the current protein. "
-                            "I'll use this information to answer your questions."
-                        )
-                    }
-                ],
-            }
-        )
+        pieces.append(protein_context)
         if isinstance(request.selected_candidate, dict):
             sel_protein = request.selected_candidate.get("protein") or {}
             if isinstance(sel_protein, dict):
@@ -502,25 +616,35 @@ def _build_gemini_contents(request: ChatLLMRequest) -> list[dict[str, Any]]:
                 if acc:
                     injected_accessions.add(acc)
 
-    for label, mention_context in build_mentioned_protein_contexts(
+    for _label, mention_context in build_mentioned_protein_contexts(
         request.prompt, request.objects, skip_accessions=injected_accessions
     ):
-        contents.append({"role": "user", "parts": [{"text": mention_context}]})
-        contents.append(
-            {
-                "role": "model",
-                "parts": [
-                    {
-                        "text": (
-                            f"Got it — I now have the full UniProt context for `@{label}`."
-                        )
-                    }
-                ],
-            }
-        )
+        pieces.append(mention_context)
+
+    return "\n\n---\n\n".join(pieces)
+
+
+def _strip_leading_assistant(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop welcome / pre-conversation assistant messages.
+
+    A real dialog must start with a user turn; anything the assistant said
+    before the first user message (typically the BioSeq welcome) is UI
+    chatter that shouldn't leak into the LLM context.
+    """
+    trimmed = list(history)
+    while trimmed and (
+        not isinstance(trimmed[0], dict) or trimmed[0].get("role") != "user"
+    ):
+        trimmed.pop(0)
+    return trimmed
+
+
+def _build_gemini_contents(request: ChatLLMRequest) -> list[dict[str, Any]]:
+    contents: list[dict[str, Any]] = []
+    history = _strip_leading_assistant(list(request.history or [])[-20:])
 
     seen_current_prompt = False
-    for message in (request.history or [])[-20:]:
+    for message in history:
         if not isinstance(message, dict):
             continue
         role = message.get("role")
@@ -541,49 +665,12 @@ def _build_gemini_contents(request: ChatLLMRequest) -> list[dict[str, Any]]:
 def _build_openai_messages(request: ChatLLMRequest, system_prompt_text: str) -> list[Any]:
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-    messages: list[Any] = [SystemMessage(content=system_prompt_text)]
-    workspace_context = build_objects_context(request.objects, request.selected_object_id)
-    if workspace_context:
-        messages.append(HumanMessage(content=workspace_context))
-        messages.append(
-            AIMessage(
-                content=(
-                    "Thanks — I have the workspace context. I'll reference objects "
-                    "by their `@<label>` ids in my answers."
-                )
-            )
-        )
-    injected_accessions: set[str] = set()
-    protein_context = build_protein_context(request.selected_candidate)
-    if protein_context:
-        messages.append(HumanMessage(content=protein_context))
-        messages.append(
-            AIMessage(
-                content=(
-                    "I understand. I have the context about the current protein. "
-                    "I'll use this information to answer your questions."
-                )
-            )
-        )
-        if isinstance(request.selected_candidate, dict):
-            sel_protein = request.selected_candidate.get("protein") or {}
-            if isinstance(sel_protein, dict):
-                acc = str(sel_protein.get("accession") or "").upper()
-                if acc:
-                    injected_accessions.add(acc)
-
-    for label, mention_context in build_mentioned_protein_contexts(
-        request.prompt, request.objects, skip_accessions=injected_accessions
-    ):
-        messages.append(HumanMessage(content=mention_context))
-        messages.append(
-            AIMessage(
-                content=f"Got it — I now have the full UniProt context for `@{label}`."
-            )
-        )
+    full_system_prompt = _build_system_instruction(request, system_prompt_text)
+    messages: list[Any] = [SystemMessage(content=full_system_prompt)]
+    history = _strip_leading_assistant(list(request.history or [])[-20:])
 
     seen_current_prompt = False
-    for message in (request.history or [])[-20:]:
+    for message in history:
         if not isinstance(message, dict):
             continue
         role = message.get("role")

@@ -519,6 +519,37 @@ div.stButton > button:hover {
 }
 
 /* ---------- Sidebar session history ---------- */
+/* Streamlit wraps each session item in a stLayoutWrapper inside the
+   sidebar_session_list vertical block. The vertical block applies its
+   default ~1rem gap between those wrappers, so spacing between session
+   buttons is dominated by that gap — not by margin on the inner item.
+   Override the gap here to tighten the list. */
+.st-key-sidebar_session_list {
+    gap: 0.5rem !important;
+}
+/* The active session is wrapped in st.container(key="sidebar_session_item_current")
+   so its DOM mirrors non-active items. Cancel the light background and
+   hover state for it — the inner .sidebar-session-current paints its
+   own dark slate. */
+.st-key-sidebar_session_item_current {
+    background: transparent !important;
+}
+.st-key-sidebar_session_item_current:hover {
+    background: transparent !important;
+}
+/* Collapse the Streamlit wrapper chain (stElementContainer → stMarkdown
+   → emotion-cache div → stMarkdownContainer) into nothing via
+   display: contents, so .sidebar-session-current becomes a direct flex
+   child of the st-key-sidebar_session_item_current vertical block.
+   Without this, the inner emotion-cache wrapper has a line-clamp-style
+   height constraint that clips at ~57px, and our 73px dark block
+   overflows visibly downward onto the next session item. */
+.st-key-sidebar_session_item_current [data-testid="stElementContainer"],
+.st-key-sidebar_session_item_current [data-testid="stMarkdown"],
+.st-key-sidebar_session_item_current [data-testid="stMarkdown"] > div,
+.st-key-sidebar_session_item_current [data-testid="stMarkdownContainer"] {
+    display: contents !important;
+}
 .st-key-sidebar_session_list div.stButton > button {
     min-height: 54px;
     justify-content: flex-start;
@@ -532,7 +563,50 @@ div.stButton > button:hover {
 }
 .st-key-sidebar_session_list div.stButton > button:hover {
     border: 0 !important;
+    background: transparent;
+}
+[class*="st-key-sidebar_session_item_"] {
+    position: relative;
+    border-radius: 8px;
+}
+/* Apply the subtle background only once the button has streamed in
+   WITH its text content (`button p`). Checking just `:has(button)` is
+   not enough — Streamlit creates an empty <button> tag a few frames
+   before the text arrives, and the empty button-shaped placeholder
+   (with our min-height: 54px) ends up painted in the light bg. */
+[class*="st-key-sidebar_session_item_"]:has(button p:not(:empty)) {
+    background: #e6ecf3;
+}
+[class*="st-key-sidebar_session_item_"]:has(button p:not(:empty)):hover {
     background: #cbd5e1;
+}
+/* Hide the entire session-item slot — both Streamlit's outer
+   stLayoutWrapper AND the inner st-key wrapper — until the button
+   has actual text (or the active .sidebar-session-current is present).
+   During a rerun Streamlit pre-creates wrappers AND an empty <button>
+   tag a few frames before the text streams in, which otherwise shows
+   as a button-shaped empty placeholder right next to the click. */
+.st-key-sidebar_session_list > [data-testid="stLayoutWrapper"]:not(:has(button p, .sidebar-session-current)),
+[class*="st-key-sidebar_session_item_"]:not(:has(button p, .sidebar-session-current)) {
+    display: none !important;
+}
+[class*="st-key-sidebar_session_item_"]:hover .sidebar-session-date {
+    color: #475569;
+}
+/* Pull every Streamlit element wrapper after the button out of flow.
+   During a rerun click, Streamlit inserts the wrapper for the date
+   BEFORE the markdown content streams in. While the wrapper is empty
+   it still takes ~60px of flow (gap + reserved height), making the
+   container's hover background briefly expand. Targeting the wrapper
+   by position (not by its content) keeps it out of flow even when
+   empty, so the container stays the height of the button alone. */
+[class*="st-key-sidebar_session_item_"] [data-testid="stElementContainer"]
+  ~ [data-testid="stElementContainer"] {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
 }
 .st-key-sidebar_session_list div.stButton > button:active {
     border: 0 !important;
@@ -541,6 +615,12 @@ div.stButton > button:hover {
 .st-key-sidebar_session_list div.stButton > button:focus {
     border: 0 !important;
     box-shadow: none !important;
+}
+.st-key-sidebar_session_list div.stButton > button > div,
+.st-key-sidebar_session_list div.stButton > button > div > span,
+.st-key-sidebar_session_list div.stButton > button [data-testid="stMarkdownContainer"] {
+    width: 100%;
+    text-align: left;
 }
 .st-key-sidebar_session_list div.stButton > button p {
     width: 100%;
@@ -554,9 +634,10 @@ div.stButton > button:hover {
     line-height: 1.25;
 }
 .sidebar-session-date {
-    position: relative;
+    position: absolute;
+    right: 10px;
+    bottom: 8px;
     z-index: 2;
-    margin: -25px 10px 8px 0;
     color: #64748b;
     font-size: 0.72rem;
     line-height: 1;
@@ -564,9 +645,9 @@ div.stButton > button:hover {
     pointer-events: none;
 }
 .sidebar-session-current {
+    width: 100%;
     min-height: 54px;
     box-sizing: border-box;
-    margin-bottom: 8px;
     padding: 8px 10px 7px;
     border-radius: 8px;
     background: #94a3b8;
@@ -666,7 +747,6 @@ div.stButton > button:hover {
        min-height tall enough for one row of chips/badges, so nothing
        gets clipped. The input naturally shifts down by exactly the
        slot's rendered height. */
-.bioseq-autocomplete-slot,
 .bioseq-preview-slot {
     margin: 0 !important;
     padding: 0 !important;
@@ -677,8 +757,14 @@ div.stButton > button:hover {
    to leave a small visual buffer so the chip never grazes the slot
    edge. margin-bottom adds a real gap between the slot and the chat
    input below (main_left's flex gap is 0, so without this margin the
-   green input box visually kissed/overlapped the chip's bottom). */
-.bioseq-autocomplete-slot:not(:empty) {
+   green input box visually kissed/overlapped the chip's bottom).
+
+   The autocomplete slot ALWAYS reserves this vertical space — even when
+   no suggestion is currently shown — so the chat input doesn't jump
+   up/down when the caret moves over an ``@`` (e.g. during a Select-All
+   sweep across the line, where the caret would otherwise pop the
+   suggestions on/off every keystroke). */
+.bioseq-autocomplete-slot {
     padding: 0.4rem 0.25rem !important;
     min-height: 44px !important;
     margin-bottom: 0.75rem !important;
@@ -703,25 +789,29 @@ div.stButton > button:hover {
 [class*="st-key-candidate_cell_"] {
     container-type: inline-size;
     min-width: 0;
-    border: 1px solid #d1d5db;
+    border: 0;
     border-radius: 8px;
     overflow: hidden;
     cursor: pointer;
     background: #ffffff;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-    transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+    box-shadow: 0 -1px 3px rgba(15, 23, 42, 0.08),
+                0 1px 3px rgba(15, 23, 42, 0.14),
+                0 6px 16px rgba(15, 23, 42, 0.20);
+    transition: box-shadow 120ms ease, background 120ms ease, transform 60ms ease;
 }
 [class*="st-key-candidate_cell_"]:hover {
-    border-color: #94a3b8;
+    box-shadow: 0 -1px 3px rgba(15, 23, 42, 0.10),
+                0 2px 5px rgba(15, 23, 42, 0.18),
+                0 10px 22px rgba(15, 23, 42, 0.26);
 }
 /* Active = the cell that contains a primary-typed button (Streamlit
-   adds that data-testid to the chosen row). Show one continuous indigo
-   ring around the whole cell, no internal seams. */
+   adds that data-testid to the chosen row). Lifted blue shadow instead
+   of a ring — keeps the card seam-free. */
 [class*="st-key-candidate_cell_"]:has(button[data-testid="stBaseButton-primary"]) {
-    border-color: #1862B5;
-    box-shadow: 0 2px 8px rgba(24, 98, 181, 0.30),
-                inset 0 0 0 1px #1862B5;
     background: #2079D6;
+    box-shadow: 0 -1px 3px rgba(24, 98, 181, 0.30),
+                0 3px 6px rgba(24, 98, 181, 0.38),
+                0 12px 24px rgba(24, 98, 181, 0.42);
 }
 /* Selected cell: flip the accession text to white so it's legible on
    the solid-blue button area. The base rule on
@@ -1242,7 +1332,7 @@ div.stButton > button:hover {
    (cards never grow past 180 even if there's room). */
 .bioseq-chip-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 180px));
+    grid-template-columns: repeat(auto-fill, minmax(128px, 144px));
     gap: 0.5rem;
     margin: 0.15rem 0 0 0;
     justify-content: start;
@@ -1251,23 +1341,28 @@ div.stButton > button:hover {
 .bioseq-chip {
     display: flex !important;
     flex-direction: column;
-    gap: 0.22rem;
-    padding: 0.5rem 0.7rem 0.55rem;
+    gap: 0.4rem;
+    padding: 0.55rem 0.7rem 0.6rem;
     background: #ffffff;
-    border: 1px solid #cbd5e1;
+    border: 0;
     border-radius: 10px;
+    box-shadow: 0 -1px 3px rgba(15, 23, 42, 0.08),
+                0 1px 3px rgba(15, 23, 42, 0.14),
+                0 6px 16px rgba(15, 23, 42, 0.20);
     text-decoration: none !important;
     color: #1f2937 !important;
-    transition: border-color 0.12s ease, background-color 0.12s ease,
+    transition: background-color 0.12s ease,
                 box-shadow 0.12s ease, transform 0.05s ease;
     cursor: pointer;
-    min-height: 78px;
+    min-height: 80px;
+    position: relative;
 }
 
 .bioseq-chip:hover {
-    border-color: #2079D6;
     background: #EDF3FB;
-    box-shadow: 0 2px 6px rgba(32, 121, 214, 0.15);
+    box-shadow: 0 -1px 3px rgba(32, 121, 214, 0.14),
+                0 2px 5px rgba(32, 121, 214, 0.22),
+                0 10px 22px rgba(32, 121, 214, 0.28);
     text-decoration: none !important;
 }
 
@@ -1277,18 +1372,17 @@ div.stButton > button:hover {
 
 .bioseq-chip.is-selected,
 .bioseq-chip.is-selected:hover {
-    border-color: #1862B5;
     background: #2079D6;
     color: #ffffff !important;
-    box-shadow: 0 2px 8px rgba(24, 98, 181, 0.35),
-                inset 0 0 0 1px #1862B5;
+    box-shadow: 0 -1px 3px rgba(24, 98, 181, 0.30),
+                0 3px 6px rgba(24, 98, 181, 0.38),
+                0 12px 24px rgba(24, 98, 181, 0.42);
 }
 
 .bioseq-chip-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 0.35rem;
+    gap: 0.3rem;
 }
 
 .bioseq-chip-label {
@@ -1300,47 +1394,108 @@ div.stButton > button:hover {
     text-overflow: ellipsis;
     line-height: 1.2;
     flex: 1 1 auto;
+    min-width: 0;
 }
 
-/* Paste-icon button on each chip: inserts ``@<label>`` into the chat
-   input. The PNG is supplied as a mask-image (injected per-render by
+.bioseq-chip-header .bioseq-chip-status {
+    flex: 0 0 auto;
+    padding: 0.1rem 0.5rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+/* "ready" status: collapse the text into a tiny green check-circle so the
+   header has room for the longer entry-name label (HBE1_HUMAN). The
+   accessible label "ready" stays in the DOM — only visually hidden. */
+.bioseq-chip-header .bioseq-chip-status-ready {
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border-radius: 50%;
+    background: #16a34a;
+    color: transparent;
+    font-size: 0;
+    line-height: 1;
+    justify-content: center;
+}
+.bioseq-chip-header .bioseq-chip-status-ready::before {
+    content: "\2713";
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+}
+.bioseq-chip.is-selected .bioseq-chip-header .bioseq-chip-status-ready {
+    background: #16a34a;
+}
+.bioseq-chip.is-selected .bioseq-chip-header .bioseq-chip-status-ready::before {
+    color: #ffffff;
+}
+
+/* Paste-icon button on each chip: floats over the chip's bottom edge,
+   centered horizontally, only on hover. Absolutely positioned so it
+   never changes the chip's size and the status badge stays put.
+   The PNG is supplied as a mask-image (injected per-render by
    object_bar.py) so we can recolor it with ``background-color`` —
    blue on white chips, white when the chip is selected. */
 .bioseq-chip-insert {
-    flex-shrink: 0;
-    width: 22px;
-    height: 22px;
+    display: none;
+    position: absolute;
+    left: 50%;
+    bottom: -13px;
+    transform: translateX(-50%);
+    width: 26px;
+    height: 26px;
     padding: 0;
     margin: 0;
-    border: none;
-    border-radius: 6px;
+    border: 1.5px solid #ffffff;
+    border-radius: 50%;
     background-color: #2079D6;
-    -webkit-mask-size: 14px 14px;
-            mask-size: 14px 14px;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.28);
+    cursor: pointer;
+    transition: background-color 0.12s ease, transform 0.08s ease;
+    z-index: 2;
+}
+
+.bioseq-chip-insert::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-color: #ffffff;
+    -webkit-mask-size: 15px 15px;
+            mask-size: 15px 15px;
     -webkit-mask-repeat: no-repeat;
             mask-repeat: no-repeat;
     -webkit-mask-position: center;
             mask-position: center;
-    cursor: pointer;
-    transition: background-color 0.12s ease, transform 0.05s ease;
+}
+
+.bioseq-chip:hover .bioseq-chip-insert {
+    display: inline-block;
 }
 
 .bioseq-chip-insert:hover {
     background-color: #1862B5;
-    transform: scale(1.08);
+    transform: translateX(-50%) scale(1.08);
 }
 
 .bioseq-chip-insert:active {
     background-color: #134A8A;
-    transform: scale(0.96);
+    transform: translateX(-50%) scale(0.96);
 }
 
 .bioseq-chip.is-selected .bioseq-chip-insert {
     background-color: #ffffff;
+    border-color: #1862B5;
+}
+
+.bioseq-chip.is-selected .bioseq-chip-insert::before {
+    background-color: #2079D6;
 }
 
 .bioseq-chip.is-selected .bioseq-chip-insert:hover {
-    background-color: rgba(255, 255, 255, 0.82);
+    background-color: #f1f5f9;
 }
 
 /* Drag preview: dim the chip while it's being dragged. */
@@ -1408,13 +1563,65 @@ div.stButton > button:hover {
     font-size: 0.78rem;
     color: #6b7280;
     line-height: 1.3;
-    /* Wrap to at most two lines so a long "→ P69905 · HBA1" doesn't
-       force the chip to grow horizontally past its 180px cap. */
+    display: flex;
+    flex-direction: column;
+    gap: 0.32rem;
+    overflow: hidden;
+}
+
+/* First caption row: ``<len> aa`` on the left, accession pill on the right. */
+.bioseq-chip-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem;
+}
+
+.bioseq-chip-len {
+    color: #6b7280;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.bioseq-chip.is-selected .bioseq-chip-len {
+    color: rgba(255, 255, 255, 0.92);
+}
+
+/* Accession pill — visually mirrors the @mention chip in chat history
+   so the link between this card and its inline mentions is obvious. */
+.bioseq-chip-acc {
+    background: #EDF3FB;
+    color: #1862B5;
+    border: 1px solid #C7D8F0;
+    border-radius: 6px;
+    padding: 1px 7px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-weight: 600;
+    font-size: 0.72rem;
+    line-height: 1.35;
+    white-space: nowrap;
+}
+
+.bioseq-chip.is-selected .bioseq-chip-acc {
+    background: rgba(255, 255, 255, 0.2);
+    color: #ffffff;
+    border-color: rgba(255, 255, 255, 0.55);
+}
+
+.bioseq-chip-name {
+    color: #0f172a;
+    font-weight: 700;
+    font-size: 0.84rem;
+    line-height: 1.25;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
     word-break: break-word;
+}
+
+.bioseq-chip.is-selected .bioseq-chip-name {
+    color: #ffffff;
 }
 
 .bioseq-chip.is-selected .bioseq-chip-caption {
@@ -1530,8 +1737,10 @@ div.stButton > button:hover {
     min-height: 0;
 }
 
+/* Keep the slot in flow even when it has no suggestions — its outer
+   sizing is reserved by the rule near the top of this file. */
 .bioseq-autocomplete-slot:empty {
-    display: none;
+    display: flex;
 }
 
 .bioseq-autocomplete-hint {
@@ -1542,6 +1751,7 @@ div.stButton > button:hover {
 }
 
 .bioseq-autocomplete-item {
+    position: relative;
     background: #EDF3FB;
     color: #1862B5;
     border: 1px solid #C7D8F0;
@@ -1561,6 +1771,41 @@ div.stButton > button:hover {
 
 .bioseq-autocomplete-item:active {
     background: #A8C0E5;
+}
+
+/* Tooltip on the autocomplete pill — same visual as the chat-mention
+   tooltip. The autocomplete strip sits just above the chat input, so
+   there's usually room above each pill for the tooltip. */
+.bioseq-autocomplete-item[data-tooltip]:hover::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 5px 9px;
+    background: #1f2937;
+    color: #f8fafc;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-weight: 500;
+    font-size: 0.78rem;
+    line-height: 1.3;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+    white-space: nowrap;
+    max-width: 320px;
+    pointer-events: none;
+    z-index: 1000;
+}
+.bioseq-autocomplete-item[data-tooltip]:hover::before {
+    content: "";
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 4px solid transparent;
+    border-top-color: #1f2937;
+    pointer-events: none;
+    z-index: 1000;
 }
 
 /* ---------- Live composer preview ---------- */
@@ -1842,6 +2087,7 @@ div.stButton > button:hover {
 /* ---------- Clickable @mentions inside chat history ---------- */
 
 .bioseq-mention {
+    position: relative;
     display: inline-flex;
     align-items: center;
     padding: 0 0.4rem;
@@ -1856,6 +2102,56 @@ div.stButton > button:hover {
     cursor: pointer;
     border: 1px solid #C7D8F0;
     transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+/* Tooltip above the @mention — protein name (e.g. "Hemoglobin subunit
+   epsilon"). Rendered only when ``data-tooltip`` is present and the
+   chip is hovered. CSS-only so it appears without the ~1s native
+   ``title`` delay. */
+.bioseq-mention[data-tooltip]:hover::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 5px 9px;
+    background: #1f2937;
+    color: #f8fafc;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-weight: 500;
+    font-size: 0.78rem;
+    line-height: 1.3;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+    white-space: nowrap;
+    max-width: 320px;
+    pointer-events: none;
+    z-index: 1000;
+}
+.bioseq-mention[data-tooltip]:hover::before {
+    content: "";
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 4px solid transparent;
+    border-top-color: #1f2937;
+    pointer-events: none;
+    z-index: 1000;
+}
+
+/* JS toggles ``bioseq-mention--tip-below`` when the chip is too close to
+   the top of the viewport — the tooltip then drops *under* the chip so
+   it doesn't get clipped by sticky headers or scroll-overflow ancestors. */
+.bioseq-mention.bioseq-mention--tip-below[data-tooltip]:hover::after {
+    bottom: auto;
+    top: calc(100% + 6px);
+}
+.bioseq-mention.bioseq-mention--tip-below[data-tooltip]:hover::before {
+    bottom: auto;
+    top: 100%;
+    border-top-color: transparent;
+    border-bottom-color: #1f2937;
 }
 
 .bioseq-mention:hover {
@@ -1905,6 +2201,36 @@ div.stButton > button:hover {
     background: transparent !important;
     border: none !important;
     box-shadow: none !important;
+}
+
+/* Click-shield: full-viewport overlay that physically absorbs every
+   pointer event while the retriever runs synchronously. Streamlit
+   reruns the script on every widget interaction, which aborts the
+   in-flight search, so we need a hard DOM barrier — pure-CSS
+   ``pointer-events: none`` on individual widgets isn't enough because
+   custom-rendered HTML in the right panel (protein card, object
+   inspector) and iframe components stay clickable through it.
+
+   Scrolling stays alive via the wheel forwarder injected from
+   ``app.py`` (``_CLICK_SHIELD_WHEEL_FORWARDER_JS``) — that script
+   catches the wheel event on the shield and re-applies the scroll
+   delta to whichever container sits under the cursor. */
+.bioseq-click-shield {
+    position: fixed;
+    inset: 0;
+    /* Must beat Streamlit's sidebar (~999990), our topbar (1000000+),
+       and the debug panel (2147483600). Without this, the sidebar
+       (search-algo selector, "New chat", session history) and the
+       topbar paint over the shield and stay clickable, which aborts
+       the in-flight search via Streamlit rerun. */
+    z-index: 2147483646;
+    background: rgba(255, 255, 255, 0.12);
+    pointer-events: all;
+    cursor: progress;
+}
+
+body:has(.bioseq-click-shield) {
+    cursor: progress;
 }
 
 /* Inline "Working…" progress indicator rendered while the retriever is

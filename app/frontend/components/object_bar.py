@@ -35,7 +35,7 @@ def _chip_insert_icon_css(icon_path: str) -> str:
     url = f"url('data:image/png;base64,{encoded}')"
     return (
         "<style>"
-        ".bioseq-chip-insert {"
+        ".bioseq-chip-insert::before {"
         f" -webkit-mask-image: {url};"
         f" mask-image: {url}; }}"
         "</style>"
@@ -56,31 +56,45 @@ _STATUS_LABEL: dict[str, str] = {
 CHIPS_PER_ROW = 2  # wider chips: two per row keeps the bar compact
 
 
-def _best_match_summary(seq: dict) -> str:
+def _sequence_caption_html(seq: dict) -> str:
+    """Build the caption HTML for a sequence chip.
+
+    Two-row layout:
+      - Row 1: ``<len> aa`` (left) ........... ``<accession>`` pill (right)
+      - Row 2: ``<strong>Full protein name</strong>`` on its own line
+    """
+    length = seq.get("length") or 0
     matches = seq.get("matches") or []
-    if not matches:
-        return ""
     chosen_idx = int(seq.get("selected_match_index") or 0)
     if chosen_idx >= len(matches):
         chosen_idx = 0
-    match = matches[chosen_idx]
-    accession = match.get("accession") or (match.get("protein") or {}).get("accession") or ""
-    gene = (match.get("protein") or {}).get("gene") or ""
-    if accession and gene:
-        return f"{accession} · {gene}"
-    return accession or gene or ""
 
+    accession = ""
+    name = ""
+    if matches:
+        match = matches[chosen_idx] or {}
+        protein = match.get("protein") or {}
+        accession = match.get("accession") or protein.get("accession") or ""
+        name = protein.get("name") or ""
 
-def _sequence_caption(seq: dict) -> str:
-    seq_type = (seq.get("sequence_type") or "").lower() or "unknown"
-    length = seq.get("length") or 0
-    parts = [seq_type]
-    if length:
-        parts.append(f"{length} aa")
-    best = _best_match_summary(seq)
-    if best:
-        parts.append(f"→ {best}")
-    return " · ".join(parts)
+    blocks: list[str] = []
+    if length or accession:
+        len_html = (
+            f'<span class="bioseq-chip-len">{html.escape(f"{length} aa")}</span>'
+            if length
+            else '<span class="bioseq-chip-len"></span>'
+        )
+        acc_html = (
+            f'<span class="bioseq-chip-acc">{html.escape(accession)}</span>'
+            if accession
+            else ""
+        )
+        blocks.append(f'<span class="bioseq-chip-meta">{len_html}{acc_html}</span>')
+    if name:
+        blocks.append(
+            f'<strong class="bioseq-chip-name">{html.escape(name)}</strong>'
+        )
+    return "".join(blocks)
 
 
 def _protein_caption(obj: dict) -> str:
@@ -91,12 +105,18 @@ def _protein_caption(obj: dict) -> str:
 
 
 def _chip_html(obj: dict, is_selected: bool) -> str:
-    label = html.escape(obj.get("label") or obj.get("id") or "?")
+    # ``label`` is the raw identifier (Seq_A / accession). ``visible_label``
+    # is what the user sees and what gets pasted via the insert button —
+    # for matched sequences it's the UniProt entry name (e.g. HBE1_HUMAN)
+    # so the chip carries real biology, not an internal handle.
+    raw_label = obj.get("label") or obj.get("id") or "?"
+    visible_label = session_objects.display_label(obj) or raw_label
+    label = html.escape(visible_label)
     object_id = obj.get("id") or ""
     kind = obj.get("kind") or "object"
 
     if kind == "sequence":
-        caption = _sequence_caption(obj)
+        caption_html = _sequence_caption_html(obj)
         status = obj.get("status") or "draft"
         status_label = _STATUS_LABEL.get(status, status)
         status_html = (
@@ -104,7 +124,7 @@ def _chip_html(obj: dict, is_selected: bool) -> str:
             f"{html.escape(status_label)}</span>"
         )
     else:
-        caption = _protein_caption(obj)
+        caption_html = html.escape(_protein_caption(obj))
         status_html = '<span class="bioseq-chip-status bioseq-chip-status-protein">UniProt</span>'
 
     selected_class = " is-selected" if is_selected else ""
@@ -115,19 +135,26 @@ def _chip_html(obj: dict, is_selected: bool) -> str:
         f'title="Insert @{label} into the chat input">'
         f"</button>"
     )
+    # Carry the human-readable protein name on the chip so JS in the chat
+    # composer can read it (via ``data-tooltip``) and surface it as a
+    # tooltip on the autocomplete dropdown.
+    tooltip_text = session_objects.protein_tooltip(obj)
+    tooltip_attr = (
+        f' data-tooltip="{html.escape(tooltip_text)}"' if tooltip_text else ""
+    )
     return (
         f'<a href="#chip-{html.escape(object_id)}" '
         f'class="bioseq-chip{selected_class}" '
         f'draggable="true" '
         f'data-object-id="{html.escape(object_id)}" '
         f'data-label="{label}" '
-        f'data-kind="{html.escape(kind)}">'
+        f'data-kind="{html.escape(kind)}"{tooltip_attr}>'
         f'<span class="bioseq-chip-header">'
         f'<span class="bioseq-chip-label">{label}</span>'
+        f"{status_html}"
         f"{insert_btn}"
         f"</span>"
-        f'<span class="bioseq-chip-caption">{html.escape(caption)}</span>'
-        f'<span class="bioseq-chip-status-row">{status_html}</span>'
+        f'<span class="bioseq-chip-caption">{caption_html}</span>'
         f"</a>"
     )
 

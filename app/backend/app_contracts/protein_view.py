@@ -84,6 +84,7 @@ class EvidenceItem(BaseModel):
 class ProteinView(BaseModel):
     accession: str
     name: str
+    entry_name: str = ""
     alt_names: list[str] = Field(default_factory=list)
     gene_synonyms: list[str] = Field(default_factory=list)
     gene: str = ""

@@ -153,6 +153,14 @@ class BioSeqChatService:
                 assistant_message = _pipeline_hit_message(pipeline)
                 top_candidate_dump = pipeline_candidates[0].model_dump()
                 history = _history_from_ui_context(request.ui_context or {})
+                # The retriever just populated `matches`/`status` on the
+                # Sequence, but `request.objects` is the pre-retrieval
+                # snapshot the frontend sent. Apply the patch locally so the
+                # Chat-LLM follow-up sees `status=ready` with the freshly-
+                # resolved match (and a resolved `@HBD_HUMAN`-style label)
+                # instead of `searching` / empty `matches`.
+                merged_objects = _objects_with_patch(request.objects, patch)
+                merged_selected_id = patch.set_selected or request.selected_object_id
                 suggested_questions, suggested_metadata = self._maybe_generate_suggested_questions(
                     request=request,
                     assistant_message=assistant_message,
@@ -169,12 +177,22 @@ class BioSeqChatService:
                     secondary_message,
                     secondary_provider,
                     secondary_model,
+                    secondary_raw,
                 ) = self._maybe_generate_followup_llm_reply(
                     request=request,
                     top_candidate=top_candidate_dump,
                     history=history,
                     warnings=warnings,
+                    objects=merged_objects,
+                    selected_object_id=merged_selected_id,
                 )
+                # Merge the Chat-LLM provider's raw payload (which carries
+                # ``debug_request``) into ``metadata`` so the floating debug
+                # panel picks up this Gemini call the same way it does for
+                # plain follow-up turns. ``suggested_metadata`` wins on key
+                # collisions so the suggested-questions debug fields stay
+                # discoverable under their original keys.
+                metadata: dict[str, Any] = {**secondary_raw, **suggested_metadata}
                 return ChatTurnResult(
                     session_id=request.session_id,
                     assistant_message=assistant_message,
@@ -190,7 +208,7 @@ class BioSeqChatService:
                     objects_patch=patch,
                     selected_object_id=patch.set_selected,
                     suggested_questions=suggested_questions,
-                    metadata=suggested_metadata,
+                    metadata=metadata,
                 )
 
         # Follow-up turn: TEXT input within an existing session. Frontend
@@ -257,34 +275,43 @@ class BioSeqChatService:
         top_candidate: dict[str, Any],
         history: list[dict[str, Any]],
         warnings: list[str],
-    ) -> tuple[str | None, str | None, str | None]:
+        objects: dict[str, Any] | None = None,
+        selected_object_id: str | None = None,
+    ) -> tuple[str | None, str | None, str | None, dict[str, Any]]:
         """Run a Chat-LLM call right after a retriever hit.
 
         The user's full prompt (text + sequence) is forwarded to
         Gemini/OpenAI together with the top retriever match injected as
-        protein context. The reply becomes the second assistant bubble
-        rendered after the canonical pipeline message.
+        protein context. ``objects`` / ``selected_object_id`` should be the
+        post-patch snapshot (frontend state + the retriever's just-built
+        ObjectsPatch) so the LLM sees ``status=ready`` and the resolved
+        match instead of the stale ``searching`` chip.
 
-        Returns ``(reply, provider, model)``. All three are ``None`` when
-        no Chat-LLM provider is configured or the call failed — the
+        Returns ``(reply, provider, model, raw)`` where ``raw`` is the
+        provider's debug payload (carrying ``debug_request`` for the
+        floating debug panel). All values are empty/``None`` when no
+        Chat-LLM provider is configured or the call failed — the
         retriever's primary reply is still delivered either way.
         """
         if self._chat_llm_service is None:
-            return None, None, None
+            return None, None, None, {}
         try:
             response = self._chat_llm_service.generate(
                 ChatLLMRequest(
                     prompt=request.message,
                     history=history,
                     selected_candidate=top_candidate,
-                    objects=request.objects or {},
-                    selected_object_id=request.selected_object_id,
+                    objects=objects if objects is not None else (request.objects or {}),
+                    selected_object_id=
+                        selected_object_id
+                        if selected_object_id is not None
+                        else request.selected_object_id,
                 )
             )
         except Exception as exc:
             warnings.append(f"Chat LLM follow-up after retriever failed: {exc}")
-            return None, None, None
-        return response.reply, response.provider, response.model
+            return None, None, None, {}
+        return response.reply, response.provider, response.model, dict(response.raw or {})
 
     def _handle_follow_up(
         self,
@@ -806,6 +833,35 @@ def _retriever_input_from_request(request: ChatTurnRequest) -> tuple[str, str | 
         text = f"{header}\n{body}" if header else body
         return text, object_id
     return request.message or "", None
+
+
+def _objects_with_patch(
+    objects: dict[str, Any] | None,
+    patch: ObjectsPatch | None,
+) -> dict[str, Any]:
+    """Return a deep-copied ``objects`` dict with ``patch`` applied.
+
+    Mirrors ``session_objects.apply_objects_patch`` on the frontend so the
+    backend can simulate the post-patch state when chaining another LLM
+    call in the same turn (the frontend hasn't applied the patch yet —
+    it only does so after the response comes back).
+    """
+    merged: dict[str, Any] = {
+        oid: dict(obj) for oid, obj in (objects or {}).items() if isinstance(obj, dict)
+    }
+    if patch is None:
+        return merged
+    for object_id in patch.remove or []:
+        merged.pop(object_id, None)
+    for object_id, payload in (patch.upsert or {}).items():
+        if not isinstance(payload, dict):
+            continue
+        existing = merged.get(object_id)
+        if existing is None:
+            merged[object_id] = dict(payload)
+        else:
+            existing.update(payload)
+    return merged
 
 
 def _build_retriever_patch(

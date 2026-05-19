@@ -430,6 +430,7 @@ def _read_turn_count(session_id: str) -> int:
 _PROTEIN_DEFAULTS: dict[str, Any] = {
     "accession": "",
     "name": "Unknown protein",
+    "entry_name": "",
     "alt_names": [],
     "gene_synonyms": [],
     "gene": "",

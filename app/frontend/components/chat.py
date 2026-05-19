@@ -101,25 +101,63 @@ def _sub_mentions_outside_code(text: str, replacer: Callable[[re.Match], str]) -
 
 
 def _label_to_object_id() -> dict[str, str]:
-    """Map every label and accession in the registry to its object id."""
+    """Map every label, display label and accession in the registry to its
+    object id.
+
+    Both the raw label (``Seq_A``) and the current display label
+    (``HBE1_HUMAN`` for a matched sequence) are registered so that:
+
+    - old chat history that mentions ``@Seq_A`` still resolves;
+    - the autocomplete / mention bridge for new typing finds the display
+      label too.
+    """
     mapping: dict[str, str] = {}
     for object_id, obj in session_objects.get_objects().items():
         label = obj.get("label")
         if label:
-            mapping[label] = object_id
+            mapping.setdefault(label, object_id)
+        display = session_objects.display_label(obj)
+        if display:
+            mapping.setdefault(display, object_id)
         accession = obj.get("accession")
         if accession:
-            mapping[accession] = object_id
+            mapping.setdefault(accession, object_id)
+        # Sequence objects: also register every entry name / accession from
+        # the top-5 matches so that ``@HBA_HUMAN`` in old messages still
+        # resolves after the user picks a different candidate.
+        if obj.get("kind") == "sequence":
+            for match in obj.get("matches") or []:
+                protein = (match or {}).get("protein") or {}
+                entry = str(protein.get("entry_name") or "").strip()
+                if entry:
+                    mapping.setdefault(entry, object_id)
+                acc = str(protein.get("accession") or match.get("accession") or "").strip()
+                if acc:
+                    mapping.setdefault(acc, object_id)
     return mapping
 
 
-def _mention_anchor(object_id: str, label: str) -> str:
+def _resolved_label(object_id: str, fallback: str) -> str:
+    """Look up the current display label for an object, defaulting to the
+    text the user actually typed when no object is registered."""
+    obj = session_objects.get_object(object_id)
+    if obj:
+        display = session_objects.display_label(obj)
+        if display:
+            return display
+    return fallback
+
+
+def _mention_anchor(object_id: str, label: str, tooltip: str = "") -> str:
     safe_label = html.escape(label)
+    tooltip_attr = ""
+    if tooltip:
+        tooltip_attr = f' data-tooltip="{html.escape(tooltip)}"'
     return (
         f'<a href="#mention-{object_id}" class="bioseq-mention" '
         f'draggable="true" '
         f'data-object-id="{object_id}" '
-        f'data-label="{safe_label}">@{safe_label}</a>'
+        f'data-label="{safe_label}"{tooltip_attr}>@{safe_label}</a>'
     )
 
 
@@ -139,7 +177,9 @@ def _render_user_text(text: str) -> None:
         object_id = label_to_id.get(label)
         if not object_id:
             return match.group(0)
-        return _mention_anchor(object_id, label)
+        resolved = _resolved_label(object_id, label)
+        tooltip = session_objects.protein_tooltip(session_objects.get_object(object_id))
+        return _mention_anchor(object_id, resolved, tooltip)
 
     rendered = _sub_mentions_outside_code(escaped, replace)
     st.markdown(
@@ -165,7 +205,9 @@ def _render_assistant_text(text: str) -> None:
         object_id = label_to_id.get(label)
         if not object_id:
             return match.group(0)
-        return _mention_anchor(object_id, label)
+        resolved = _resolved_label(object_id, label)
+        tooltip = session_objects.protein_tooltip(session_objects.get_object(object_id))
+        return _mention_anchor(object_id, resolved, tooltip)
 
     rendered = _sub_mentions_outside_code(text, replace)
     st.markdown(rendered, unsafe_allow_html=True)
@@ -418,7 +460,7 @@ def _render_inline_object_summary(obj: dict) -> None:
     attachment without needing a second nested rectangle.
     """
     if obj["kind"] == "sequence":
-        label = html.escape(obj.get("label") or "?")
+        label = html.escape(session_objects.display_label(obj) or obj.get("label") or "?")
         seq_type = html.escape((obj.get("sequence_type") or "UNKNOWN").upper())
         length = obj.get("length") or 0
         status = obj.get("status") or "draft"
@@ -647,7 +689,7 @@ def _capture_sequence_result(object_id: str) -> dict[str, Any]:
         top_gene = protein.get("gene") or ""
     return {
         "object_id": object_id,
-        "label": obj.get("label") or "?",
+        "label": session_objects.display_label(obj) or obj.get("label") or "?",
         "status": obj.get("status") or "",
         "accession": top_accession,
         "gene": top_gene,
@@ -721,7 +763,7 @@ def _run_pending(on_submit: SubmitHandler | None) -> None:
     # keep their unprefixed label.
     if next_target_id and total_searches > 1:
         target_obj = session_objects.get_object(next_target_id) or {}
-        target_label = target_obj.get("label") or "?"
+        target_label = session_objects.display_label(target_obj) or target_obj.get("label") or "?"
         position = len(results) + 1
         st.session_state["batch_progress_label"] = (
             f"@{target_label} ({position}/{total_searches})"
@@ -956,7 +998,15 @@ def _render_composer(on_submit: SubmitHandler | None) -> None:
     input. The preview slot has a reserved height so the layout never
     jumps between "no preview" and "PROTEIN detected" states.
     """
-    # Reserved-height preview slot above the composer. Content is
+    # Autocomplete dropdown — populated by JS when the input contains an
+    # unfinished ``@token`` pattern. Hidden via ``:empty`` CSS otherwise.
+    # The slot always reserves vertical space (see .bioseq-autocomplete-slot)
+    # so the chat input doesn't jump when suggestions appear/disappear.
+    st.markdown(
+        '<div id="bioseq-autocomplete" class="bioseq-autocomplete-slot"></div>',
+        unsafe_allow_html=True,
+    )
+    # Reserved-height preview slot directly above the composer. Content is
     # populated by the JS injected below — server-side this stays as a
     # neutral hint until the first keystroke.
     st.markdown(
@@ -965,14 +1015,6 @@ def _render_composer(on_submit: SubmitHandler | None) -> None:
         "Type or paste a sequence / UniProt accession to see a live preview here."
         "</span>"
         "</div>",
-        unsafe_allow_html=True,
-    )
-    # Autocomplete dropdown — populated by JS when the input contains an
-    # unfinished ``@token`` pattern. Hidden via ``:empty`` CSS otherwise.
-    # Rendered AFTER the preview so the "Mention: …" chips sit directly
-    # above the chat input (closer to where the cursor is typing the @).
-    st.markdown(
-        '<div id="bioseq-autocomplete" class="bioseq-autocomplete-slot"></div>',
         unsafe_allow_html=True,
     )
 
@@ -1387,18 +1429,31 @@ _LIVE_PREVIEW_JS = r"""
     const input = focusInput();
     if (!input) return;
     const current = readValue(input);
-    const m = /(?:^|\s)@([A-Za-z0-9_]*)$/.exec(current);
-    let prefix;
+    // Use the caret position, not the end of string — that way clicking an
+    // autocomplete suggestion works even when the partial ``@xxx`` is in
+    // the middle of an already-typed line.
+    const caret = (input.selectionStart != null) ? input.selectionStart : current.length;
+    const head = current.slice(0, caret);
+    const tail = current.slice(caret);
+    const m = /(?:^|\s)@([A-Za-z0-9_]*)$/.exec(head);
+    let newHead;
     if (m) {
-      // Cut the partial '@xxx' at end and replace with the chosen label.
-      prefix = current.slice(0, current.length - m[1].length - 1);
+      // Cut the partial '@xxx' immediately before the caret, keep the rest.
+      const cutAt = head.length - m[1].length - 1;
+      newHead = head.slice(0, cutAt) + '@' + label;
     } else {
-      prefix = current.length && !/\s$/.test(current) ? current + ' ' : current;
+      const needsSpaceBefore = head.length && !/\s$/.test(head);
+      newHead = head + (needsSpaceBefore ? ' ' : '') + '@' + label;
     }
-    const newValue = prefix + '@' + label + ' ';
+    // Ensure the inserted mention is followed by whitespace (or the
+    // existing tail starts with one) so it tokenises cleanly.
+    if (!tail.length || !/^\s/.test(tail)) {
+      newHead += ' ';
+    }
+    const newValue = newHead + tail;
     setNativeValue(input, newValue);
     if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
-      input.selectionStart = input.selectionEnd = newValue.length;
+      input.selectionStart = input.selectionEnd = newHead.length;
     }
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.focus();
@@ -1407,39 +1462,54 @@ _LIVE_PREVIEW_JS = r"""
   // ---- Autocomplete rendering ----
   function collectChipLabels() {
     const out = [];
+    const seen = Object.create(null);
     doc.querySelectorAll('a.bioseq-chip[data-object-id]').forEach(function (chip) {
       const label = (chip.getAttribute('data-label') || '').trim();
-      if (label && !out.includes(label)) out.push(label);
+      if (!label || seen[label]) return;
+      seen[label] = true;
+      out.push({
+        label: label,
+        tooltip: (chip.getAttribute('data-tooltip') || '').trim(),
+      });
     });
     return out;
   }
 
-  function detectPartial(text) {
-    const m = /(?:^|\s)@([A-Za-z0-9_]*)$/.exec(text || '');
+  function detectPartial(text, caret) {
+    // Scan the text immediately before the caret instead of the end of
+    // the whole string — so the dropdown stays open while the caret is
+    // parked right after an ``@`` even if more text follows it.
+    const value = text || '';
+    const at = (caret == null) ? value.length : Math.max(0, Math.min(caret, value.length));
+    const head = value.slice(0, at);
+    const m = /(?:^|\s)@([A-Za-z0-9_]*)$/.exec(head);
     return m ? m[1] : null;
   }
 
-  function renderAutocomplete(text) {
+  function renderAutocomplete(text, caret) {
     const slot = doc.getElementById('bioseq-autocomplete');
     if (!slot) return;
-    const partial = detectPartial(text);
+    const partial = detectPartial(text, caret);
     if (partial === null) {
       slot.innerHTML = '';
       return;
     }
     const lowered = partial.toLowerCase();
-    const labels = collectChipLabels()
-      .filter(function (l) { return l.toLowerCase().startsWith(lowered); })
+    const items = collectChipLabels()
+      .filter(function (item) { return item.label.toLowerCase().startsWith(lowered); })
       .slice(0, 8);
-    if (!labels.length) {
+    if (!items.length) {
       slot.innerHTML = '';
       return;
     }
     slot.innerHTML =
       '<span class="bioseq-autocomplete-hint">Mention:</span>' +
-      labels.map(function (l) {
+      items.map(function (item) {
+        const tip = item.tooltip
+          ? ' data-tooltip="' + escapeHtml(item.tooltip) + '"'
+          : '';
         return '<button type="button" class="bioseq-autocomplete-item" data-label="' +
-               l + '">@' + l + '</button>';
+               escapeHtml(item.label) + '"' + tip + '>@' + escapeHtml(item.label) + '</button>';
       }).join('');
   }
 
@@ -1552,10 +1622,15 @@ _LIVE_PREVIEW_JS = r"""
     try { win.clearInterval(win.__bioseqLivePreviewIntervalId); } catch (e) {}
   }
   let lastValue = null;
+  let lastCaret = null;
   let lastRect = { top: 0, left: 0, width: 0, height: 0 };
-  function syncFromInput(value) {
+  function readCaret(el) {
+    try { return (el && el.selectionStart != null) ? el.selectionStart : null; }
+    catch (e) { return null; }
+  }
+  function syncFromInput(value, caret) {
     renderPreview(value);
-    renderAutocomplete(value);
+    renderAutocomplete(value, caret);
     renderInputHighlight(value);
   }
   // Cheaper sync that only re-positions the mirror over the textarea —
@@ -1575,13 +1650,22 @@ _LIVE_PREVIEW_JS = r"""
       const el = findChatInput();
       if (!el) return;
       const value = readValue(el);
+      const caret = readCaret(el);
       const rect = el.getBoundingClientRect();
       const textChanged = value !== lastValue;
+      const caretChanged = caret !== lastCaret;
       const boxChanged = rectsDiffer(rect, lastRect);
       if (textChanged) {
         lastValue = value;
+        lastCaret = caret;
         lastRect = { top: rect.top, left: rect.left, width: rect.width, height: rect.height };
-        syncFromInput(value);
+        syncFromInput(value, caret);
+      } else if (caretChanged) {
+        // Caret moved within unchanged text (arrow keys, click) —
+        // re-evaluate only the autocomplete, the preview / mirror don't
+        // depend on cursor position.
+        lastCaret = caret;
+        renderAutocomplete(value, caret);
       } else if (boxChanged) {
         // The textarea moved (page scroll) or resized (Streamlit
         // autosize after paste). Either way the mirror must follow.
@@ -1618,13 +1702,23 @@ _LIVE_PREVIEW_JS = r"""
     el.__bioseqDirectListenersAttached = true;
     const handler = function () {
       const value = readValue(el);
+      const caret = readCaret(el);
       if (value !== lastValue) {
         lastValue = value;
-        syncFromInput(value);
+        lastCaret = caret;
+        syncFromInput(value, caret);
+      } else if (caret !== lastCaret) {
+        lastCaret = caret;
+        renderAutocomplete(value, caret);
       }
     };
     el.addEventListener('input', handler);
     el.addEventListener('keyup', handler);
+    // Caret can move without text changes (mouse click, select-all,
+    // arrow-key already covered by keyup). ``click`` covers the
+    // mouse-positioning case; ``select`` fires on any selection change.
+    el.addEventListener('click', handler);
+    el.addEventListener('select', handler);
     // Paste/cut: read the new value after the browser has applied the
     // edit, then schedule a few extra mirror-box syncs to catch
     // Streamlit's textarea autosize, which runs *after* the input event
@@ -1763,6 +1857,24 @@ _LIVE_PREVIEW_JS = r"""
     insertAtCaret(text);
   };
 
+  // Mention tooltip flip-below: the chat history lives inside a scroll
+  // container, so an ``::after`` tooltip drawn above the chip gets clipped
+  // when the chip is near the top of the viewport. On hover we measure the
+  // chip and switch to a "tip-below" class so the tooltip drops under
+  // instead. Threshold matches tooltip height + arrow + a bit of margin.
+  const onMentionHover = function (event) {
+    const mention = event.target.closest && event.target.closest(
+      '.bioseq-mention[data-tooltip]'
+    );
+    if (!mention) return;
+    const rect = mention.getBoundingClientRect();
+    if (rect.top < 46) {
+      mention.classList.add('bioseq-mention--tip-below');
+    } else {
+      mention.classList.remove('bioseq-mention--tip-below');
+    }
+  };
+
   // Map of ``doc`` property name → [event name, handler, useCapture].
   // Stored on ``doc`` so the next iframe load can find and remove the
   // previous (now dead) handler before installing its own live one.
@@ -1774,6 +1886,7 @@ _LIVE_PREVIEW_JS = r"""
     ['__bioseqInputDragOverHandler', 'dragover',  onInputDragOver,     false],
     ['__bioseqInputDragLeaveHandler','dragleave', onInputDragLeave,    false],
     ['__bioseqInputDropHandler',     'drop',      onInputDrop,         false],
+    ['__bioseqMentionHoverHandler',  'mouseover', onMentionHover,      true],
   ];
   for (let i = 0; i < interactionHandlers.length; i++) {
     const key = interactionHandlers[i][0];
@@ -1790,8 +1903,9 @@ _LIVE_PREVIEW_JS = r"""
   // Immediate render so the slot reflects current input even before the
   // first poll tick fires.
   try {
-    const initial = readValue(findChatInput());
-    syncFromInput(initial);
+    const initialEl = findChatInput();
+    const initial = readValue(initialEl);
+    syncFromInput(initial, readCaret(initialEl));
   } catch (e) {}
 })();
 </script>

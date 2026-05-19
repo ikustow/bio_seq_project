@@ -297,6 +297,107 @@ def _inject_right_panel_resizer() -> None:
     components.html(_RIGHT_PANEL_RESIZER_JS, height=0, width=0)
 
 
+# Streamlit/React reconciliation sometimes fails to remove a previous
+# render's ``.st-key-main_layout`` subtree — most reliably when the
+# user sends their first message and several structural changes hit
+# the DOM in the same commit (mention bridge appears, demo chip
+# disappears, chat_area gains its first user message). The previous
+# rendered ``main_layout`` is left in the DOM marked entirely stale,
+# but still occupying flex space — pushing the live chat narrow on
+# the left and the right panel down into the bottom corner.
+#
+# This sweeper runs on every rerun and removes any ``main_layout``
+# whose ``stElementContainer`` descendants are all ``data-stale="true"``.
+# Same defensive-cleanup pattern as the right-resizer / debug panel
+# scripts use for their own orphaned nodes from older builds.
+_STALE_LAYOUT_SWEEPER_JS = """
+<script>
+(function () {
+    const doc = window.parent.document;
+    const win = window.parent;
+
+    function sweep() {
+        const layouts = doc.querySelectorAll(".st-key-main_layout");
+        if (layouts.length < 2) return;
+        const fresh = [];
+        const stale = [];
+        layouts.forEach(function (node) {
+            const containers = node.querySelectorAll(
+                '[data-testid="stElementContainer"]'
+            );
+            if (!containers.length) { fresh.push(node); return; }
+            let anyFresh = false;
+            for (let i = 0; i < containers.length; i++) {
+                if (containers[i].getAttribute("data-stale") !== "true") {
+                    anyFresh = true;
+                    break;
+                }
+            }
+            (anyFresh ? fresh : stale).push(node);
+        });
+        // Only remove orphans when at least one live ``main_layout``
+        // exists — never strip the page bare during a transient state
+        // where every layout happens to be marked stale for one frame.
+        if (!fresh.length) return;
+        stale.forEach(function (node) {
+            try { node.remove(); } catch (e) {}
+        });
+    }
+
+    // Initial sweeps — once on the next frame so we're past the initial
+    // commit, and once after a short delay to catch late reconciliations
+    // (Streamlit's autosize / our own JS injections occasionally land a
+    // few frames after the script-run notification).
+    win.requestAnimationFrame(function () {
+        sweep();
+        win.setTimeout(sweep, 80);
+    });
+
+    // Persistent watcher. The two-shot pattern above misses the case
+    // where the user submits a chat message and the retriever blocks
+    // the script thread for several seconds: Streamlit marks the
+    // previous ``main_layout``'s containers ``data-stale="true"`` long
+    // after the rerun started, so by the time the marks land the
+    // sweeper has already finished. The observer below catches those
+    // late mutations and re-sweeps. Reference is stashed on ``win`` so
+    // a re-mounted iframe disconnects the old observer before
+    // installing its own — same zombie-closure protection used
+    // elsewhere in this file (resizer, debug panel, etc.). */
+    if (win.__bioseqStaleSweepObserver) {
+        try { win.__bioseqStaleSweepObserver.disconnect(); } catch (e) {}
+    }
+    let pending = false;
+    function schedule() {
+        if (pending) return;
+        pending = true;
+        win.requestAnimationFrame(function () {
+            pending = false;
+            sweep();
+        });
+    }
+    const observer = new win.MutationObserver(function (mutations) {
+        for (let i = 0; i < mutations.length; i++) {
+            const m = mutations[i];
+            if (m.type === "attributes") { schedule(); return; }
+            if (m.addedNodes && m.addedNodes.length) { schedule(); return; }
+        }
+    });
+    observer.observe(doc.body, {
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["data-stale"],
+        childList: true,
+    });
+    win.__bioseqStaleSweepObserver = observer;
+})();
+</script>
+"""
+
+
+def _inject_stale_layout_sweeper() -> None:
+    components.html(_STALE_LAYOUT_SWEEPER_JS, height=0, width=0)
+
+
 # Each candidate cell ("Top 5 matches" row) is visually one card, but
 # only the top accession button is clickable in Streamlit. This script
 # forwards clicks from anywhere inside the cell (EMB / SEQ tiles, the
@@ -368,7 +469,19 @@ _TOPBAR_SCROLL_JS = """
             doc.scrollingElement,
         ];
         for (const el of candidates) {
-            if (el && el.scrollTop > y) y = el.scrollTop;
+            if (!el || el.scrollTop === 0) continue;
+            // Style sets overflow:hidden on these containers to disable
+            // page-level scroll, but the browser still programmatically
+            // scrolls them on focus/caret-in-view when the chat input
+            // textarea autoresizes past the viewport. That phantom scroll
+            // never reverses on its own and would leave the topbar
+            // permanently shifted up. Snap scrollTop back to 0 and don't
+            // count it toward the topbar offset.
+            if (getComputedStyle(el).overflowY === 'hidden') {
+                el.scrollTop = 0;
+                continue;
+            }
+            if (el.scrollTop > y) y = el.scrollTop;
         }
         return y;
     }
@@ -421,6 +534,68 @@ _TOPBAR_SCROLL_JS = """
 
 def _inject_topbar_scroll() -> None:
     components.html(_TOPBAR_SCROLL_JS, height=0, width=0)
+
+
+# While ``.bioseq-click-shield`` is in the DOM it captures every pointer
+# event so widget clicks can't trigger a rerun mid-search (see the CSS
+# comment in style.css). That also kills wheel scroll, so this script
+# manually forwards the wheel delta to the topmost scrollable ancestor
+# under the cursor. The listener is installed once per page, gates on
+# the shield's presence each time, and otherwise stays a no-op so it
+# never affects normal interactions.
+_CLICK_SHIELD_WHEEL_FORWARDER_JS = """
+<script>
+(function () {
+    const doc = window.parent.document;
+    if (doc.__bioseqShieldWheelInstalled) return;
+    doc.__bioseqShieldWheelInstalled = true;
+
+    function shield() {
+        return doc.querySelector('.bioseq-click-shield');
+    }
+
+    function findScrollable(x, y, sh) {
+        // Temporarily disable the shield's pointer capture so
+        // elementFromPoint returns the element underneath, then put it
+        // back. The DOM mutation here is synchronous and invisible.
+        const prev = sh.style.pointerEvents;
+        sh.style.pointerEvents = 'none';
+        const el = doc.elementFromPoint(x, y);
+        sh.style.pointerEvents = prev;
+        let node = el;
+        while (node && node !== doc.body) {
+            const cs = doc.defaultView.getComputedStyle(node);
+            const overflowY = cs.overflowY;
+            if ((overflowY === 'auto' || overflowY === 'scroll')
+                    && node.scrollHeight > node.clientHeight) {
+                return node;
+            }
+            node = node.parentElement;
+        }
+        return doc.scrollingElement || doc.documentElement;
+    }
+
+    doc.addEventListener('wheel', function (e) {
+        const sh = shield();
+        if (!sh) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const target = findScrollable(e.clientX, e.clientY, sh);
+        if (target && typeof target.scrollBy === 'function') {
+            target.scrollBy({
+                left: e.deltaX,
+                top: e.deltaY,
+                behavior: 'auto',
+            });
+        }
+    }, { capture: true, passive: false });
+})();
+</script>
+"""
+
+
+def _inject_click_shield_wheel_forwarder() -> None:
+    components.html(_CLICK_SHIELD_WHEEL_FORWARDER_JS, height=0, width=0)
 
 
 def _configured_password() -> str | None:
@@ -557,7 +732,15 @@ def _render_progress(placeholder, label: str) -> None:
     # Session Objects bar look stuck.
     prefix = st.session_state.get("batch_progress_label") or ""
     full_label = f"{prefix} — {label}" if prefix else label
+    # The click-shield is a full-viewport transparent overlay that absorbs
+    # pointer events while the retriever runs synchronously in this script
+    # run. Without it, any click on a Streamlit widget triggers a rerun and
+    # aborts the in-flight search. Both the shield and the inline progress
+    # row live inside the same placeholder, so ``placeholder.empty()`` in
+    # ``_handle_vector_db_submission``'s ``finally`` block removes them
+    # together when the turn completes (or errors).
     placeholder.markdown(
+        f'<div class="bioseq-click-shield" aria-hidden="true"></div>'
         f'<div class="bioseq-progress">'
         f'<span class="bioseq-progress-spinner"></span>'
         f'<span class="bioseq-progress-label">{full_label}</span>'
@@ -660,7 +843,14 @@ def main() -> None:
     session_sidebar.render()
 
     with st.container(key="main_layout"):
-        left, right = st.columns([5, 7], gap="large")
+        # Ratio chosen so the INITIAL paint already matches what the CSS
+        # :has() override later forces (left fills, right pinned to
+        # ~440px). With ratio [5, 7] the left column would briefly render
+        # at ~42% width — visible as the chat "snapping wider" ~1s into
+        # page load, once the override resolves. ~3:1 is close enough to
+        # the final ~73/27 split on a typical viewport that the eye
+        # doesn't catch the adjustment.
+        left, right = st.columns([3, 1], gap="large")
         with left:
             with st.container(key="main_left"):
                 chat.render(
@@ -687,6 +877,8 @@ def main() -> None:
     _inject_right_panel_resizer()
     _inject_candidate_click_forwarder()
     _inject_topbar_scroll()
+    _inject_click_shield_wheel_forwarder()
+    _inject_stale_layout_sweeper()
     debug_panel.render()
 
     # Deferred rerun trigger. ``chat._run_pending`` is invoked from inside

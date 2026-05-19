@@ -149,7 +149,16 @@ class PostgresSessionRepository:
                     active_accession,
                     current_mode,
                     created_at,
-                    updated_at
+                    updated_at,
+                    (
+                        select msg->>'content'
+                        from jsonb_array_elements(
+                            coalesce(working_memory->'messages', '[]'::jsonb)
+                        ) as msg
+                        where msg->>'role' = 'user'
+                        limit 1
+                    ) as first_user_message,
+                    working_memory->'bioseq_workspace'->'objects' as workspace_objects
                 from public.chat_sessions
                 where user_id = %s
                 order by updated_at desc

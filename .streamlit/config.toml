@@ -13,3 +13,13 @@ folderWatchBlacklist = [".venv"]
 [theme]
 base = "light"
 primaryColor = "#4f46e5"
+
+# Streamlit 1.57 introduced a separate sidebar theme namespace. If left
+# blank, Streamlit logs "Invalid color passed for textColor in
+# theme.sidebar: """ on every render. Inherit explicit values from the
+# main theme so the warning stops without changing the visuals.
+[theme.sidebar]
+backgroundColor = "#f1f5f9"
+secondaryBackgroundColor = "#e2e8f0"
+textColor = "#0f172a"
+primaryColor = "#4f46e5"

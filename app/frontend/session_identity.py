@@ -51,6 +51,15 @@ COOKIES_DICT_KEY = "bioseq_cookies_dict"
 _USER_PROMOTION_FLAG = "_bioseq_user_id_pending_promotion"
 _SESSION_PROMOTION_FLAG = "_bioseq_session_id_pending_promotion"
 
+# Per-script-run cache of the (state, cookies, controller) tuple. The
+# CookieController constructor registers a Streamlit custom component
+# iframe — calling it more than once per run leaves orphaned instances
+# behind, which surface in the browser console as "missing our iframe!"
+# and "unregistered ComponentInstance" warnings. bootstrap_identity()
+# clears the cache at the start of every run; downstream callers
+# (cookie_state_snapshot, switch_session, start_new_session) reuse it.
+_CACHE_KEY = "_bioseq_cookie_run_cache"
+
 
 # ---------------------------------------------------------------------------
 # Cookie controller plumbing
@@ -96,6 +105,21 @@ def _read_cookies_with_state() -> tuple[str, dict[str, Any], Any]:
     return "ready", cookies, controller
 
 
+def _cached_cookie_state() -> tuple[str, dict[str, Any], Any]:
+    """Return the per-run cookie state tuple, populating the cache lazily.
+
+    Only ``bootstrap_identity`` should invalidate this cache (it runs at
+    the start of every rerun). Other callers read from the cache so the
+    CookieController iframe is registered exactly once per run.
+    """
+    cached = st.session_state.get(_CACHE_KEY)
+    if cached is not None:
+        return cached
+    result = _read_cookies_with_state()
+    st.session_state[_CACHE_KEY] = result
+    return result
+
+
 def _set_cookie(controller, name: str, value: str, max_age: int) -> None:
     if controller is None:
         return
@@ -129,7 +153,13 @@ def bootstrap_identity() -> tuple[str, str]:
     3. Persist any newly minted id to the cookie — only when the controller
        is known to be hydrated, never during 'pending'.
     """
-    state, cookies, controller = _read_cookies_with_state()
+    # Refresh the per-run cookie cache. bootstrap_identity is the single
+    # entrypoint that runs at the top of every script rerun, so this is
+    # the right place to invalidate; downstream callers within the same
+    # run then reuse the cached controller instead of constructing a
+    # second iframe.
+    st.session_state.pop(_CACHE_KEY, None)
+    state, cookies, controller = _cached_cookie_state()
 
     user_id = _resolve_id(
         controller=controller,
@@ -174,22 +204,49 @@ def _resolve_id(
     """Single resolution rule, reused for user_id and session_id.
 
     Decision table:
-      state=pending, no st.session_state[key] -> mint temp, mark pending_promotion
-      state=pending, has st.session_state[key] -> reuse, keep pending flag
+      state=pending, no st.session_state[key] -> mint temp (do NOT set promotion
+                                                 flag — the temp must yield to a
+                                                 real cookie value once hydration
+                                                 lands; if the cookie really is
+                                                 empty the temp gets promoted on
+                                                 the ready render naturally)
+      state=pending, has st.session_state[key] -> reuse
+      state=ready,   pending_promotion + existing -> force-write existing to cookie
+                                                     (set only by switch_session /
+                                                     start_new_session, which can't
+                                                     write from inside a button
+                                                     callback container)
       state=ready,   cookie_value present       -> adopt cookie (overrides any temp)
       state=ready,   cookie empty, has temp     -> promote temp into cookie
       state=ready,   cookie empty, no temp      -> mint and write cookie
+
+    The crucial invariant: ``pending_promotion`` must NOT be set by the pending
+    render's temp mint. If it were, a returning visitor (real cookie present)
+    would have their cookie overwritten by the freshly minted temp on the very
+    next render — and every page reload would mint yet another user_id,
+    making the sidebar history look empty because the DB rows are filed under
+    the previous id.
     """
     existing = st.session_state.get(session_state_key)
+    pending_promotion = st.session_state.get(promotion_flag, False)
 
     if state == "pending":
         if not existing:
             existing = mint()
             st.session_state[session_state_key] = existing
-            st.session_state[promotion_flag] = True
         return existing
 
     # state == "ready"
+    # A pending promotion means switch_session / start_new_session deferred
+    # the cookie write to us — session_state holds the intended new id and
+    # we must propagate it into the cookie regardless of what the cookie
+    # currently contains. Without this branch the next line would
+    # overwrite session_state back to the stale cookie value.
+    if pending_promotion and existing:
+        _set_cookie(controller, cookie_name, existing, cookie_max_age)
+        st.session_state.pop(promotion_flag, None)
+        return existing
+
     if cookie_value:
         cookie_str = str(cookie_value)
         if existing != cookie_str:
@@ -207,33 +264,32 @@ def _resolve_id(
 
 
 def start_new_session(reason: Optional[str] = None) -> str:
-    """Mint a fresh session_id (e.g. 'New chat' / 'Reset') and persist it."""
+    """Mint a fresh session_id (e.g. 'New chat' / 'Reset') and persist it.
+
+    Cookie write is ALWAYS deferred to the next bootstrap_identity. Calling
+    ``controller.set()`` here would invoke the streamlit-cookies-controller
+    component from inside whatever container the caller sits in (e.g. the
+    'New chat' button's session item), and Streamlit would attach the
+    component's iframe (with a skeleton placeholder) to that container —
+    showing as an empty button-shaped block right under the click for a
+    few frames until the rerun completes.
+    """
     new_id = _new_session_id()
     st.session_state.session_id = new_id
     if reason:
         st.session_state["_last_session_reset_reason"] = reason
-    state, _cookies, controller = _read_cookies_with_state()
-    if state == "ready":
-        _set_cookie(controller, SESSION_COOKIE_NAME, new_id, SESSION_COOKIE_MAX_AGE_SECONDS)
-        st.session_state.pop(_SESSION_PROMOTION_FLAG, None)
-    else:
-        # Controller still pending — defer cookie write. bootstrap_identity()
-        # on the next rerun will promote this id once the controller is ready.
-        st.session_state[_SESSION_PROMOTION_FLAG] = True
-    # Ensure the next bootstrap call doesn't replay an older auto-restore.
+    st.session_state[_SESSION_PROMOTION_FLAG] = True
     st.session_state.pop("_auto_restore_attempted", None)
     return new_id
 
 
 def switch_session(session_id: str) -> None:
-    """Switch the active session to an existing one (e.g. from sidebar)."""
+    """Switch the active session to an existing one (e.g. from sidebar).
+
+    See ``start_new_session`` for why the cookie write is deferred.
+    """
     st.session_state.session_id = session_id
-    state, _cookies, controller = _read_cookies_with_state()
-    if state == "ready":
-        _set_cookie(controller, SESSION_COOKIE_NAME, session_id, SESSION_COOKIE_MAX_AGE_SECONDS)
-        st.session_state.pop(_SESSION_PROMOTION_FLAG, None)
-    else:
-        st.session_state[_SESSION_PROMOTION_FLAG] = True
+    st.session_state[_SESSION_PROMOTION_FLAG] = True
     st.session_state.pop("_auto_restore_attempted", None)
 
 
@@ -246,7 +302,7 @@ def short_id(value: str, prefix_keep: int = 6, suffix_keep: int = 4) -> str:
 
 def cookie_state_snapshot() -> dict[str, Any]:
     """Diagnostic helper: returns what ``bootstrap_identity`` is seeing."""
-    state, cookies, controller = _read_cookies_with_state()
+    state, cookies, controller = _cached_cookie_state()
     return {
         "controller_loaded": controller is not None,
         "state": state,

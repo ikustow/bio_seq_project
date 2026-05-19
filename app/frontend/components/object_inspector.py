@@ -82,7 +82,7 @@ def _render_empty() -> None:
 
 
 def _render_sequence(seq: dict) -> None:
-    label = seq.get("label") or seq.get("id")
+    label = session_objects.display_label(seq) or seq.get("label") or seq.get("id")
     seq_type = seq.get("sequence_type") or "UNKNOWN"
     length = seq.get("length") or 0
     status = seq.get("status") or "draft"

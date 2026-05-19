@@ -20,9 +20,13 @@ the JSON shape we save into ``working_memory`` in Supabase.
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import Any, Iterable
 
 import streamlit as st
+
+
+_MENTION_TOKEN_RE = re.compile(r"@([A-Za-z0-9_]+)")
 
 
 _OBJECTS_KEY = "objects"
@@ -124,6 +128,129 @@ def set_selected(object_id: str | None) -> None:
 def get_object(object_id: str) -> dict[str, Any] | None:
     init_state()
     return st.session_state[_OBJECTS_KEY].get(object_id)
+
+
+def protein_tooltip(obj: dict[str, Any] | None) -> str:
+    """Return the human-readable protein name used as a hover tooltip.
+
+    For a Sequence the source is ``matches[selected].protein.name`` (e.g.
+    "Hemoglobin subunit epsilon"). For a Protein it's the card's
+    ``protein.name`` or ``display_name`` when those differ from the bare
+    accession. Returns "" when no nice name is available.
+    """
+    if not isinstance(obj, dict):
+        return ""
+    kind = obj.get("kind")
+    if kind == "sequence":
+        matches = obj.get("matches") or []
+        idx = int(obj.get("selected_match_index") or 0)
+        if 0 <= idx < len(matches):
+            protein = (matches[idx] or {}).get("protein") or {}
+            return str(protein.get("name") or "").strip()
+        return ""
+    if kind == "protein":
+        card = obj.get("card") or {}
+        card_protein = card.get("protein") if isinstance(card, dict) else None
+        name = ""
+        if isinstance(card_protein, dict):
+            name = str(card_protein.get("name") or "").strip()
+        if not name:
+            name = str(obj.get("display_name") or "").strip()
+        accession = str(obj.get("accession") or "").strip().upper()
+        if name and name.upper() != accession:
+            return name
+    return ""
+
+
+def display_label(obj: dict[str, Any] | None) -> str:
+    """Return the user-visible label for an object.
+
+    For a Sequence that has been matched, this is the UniProt entry name
+    of the currently-selected match (e.g. ``HBE1_HUMAN``). When the entry
+    name is missing, falls back to the original ``Seq_A`` label so the
+    chip still has *some* identifier. Protein objects keep their original
+    label (the accession).
+
+    The function is intentionally derived (not stored) so that picking a
+    different candidate in Top 5 instantly re-labels every chip and every
+    ``@mention`` in chat history.
+    """
+    if not isinstance(obj, dict):
+        return ""
+    fallback = str(obj.get("label") or obj.get("id") or "")
+    if obj.get("kind") != "sequence":
+        return fallback
+    matches = obj.get("matches") or []
+    idx = int(obj.get("selected_match_index") or 0)
+    if 0 <= idx < len(matches):
+        protein = (matches[idx] or {}).get("protein") or {}
+        entry = str(protein.get("entry_name") or "").strip()
+        if entry:
+            return entry
+    return fallback
+
+
+def _matchable_tokens(obj: dict[str, Any]) -> set[str]:
+    """Tokens by which an object can be addressed via @mention.
+
+    Used by ``rewrite_mentions`` to find the right object for a given
+    ``@<token>`` so the title can render the **current** label even if the
+    user originally typed an older name.
+    """
+    tokens: set[str] = set()
+    if not isinstance(obj, dict):
+        return tokens
+    for key in ("label", "accession"):
+        value = str(obj.get(key) or "").strip()
+        if value:
+            tokens.add(value)
+    if obj.get("kind") == "sequence":
+        matches = obj.get("matches") or []
+        try:
+            idx = int(obj.get("selected_match_index") or 0)
+        except (TypeError, ValueError):
+            idx = 0
+        if 0 <= idx < len(matches):
+            protein = (matches[idx] or {}).get("protein") or {}
+            for key in ("entry_name", "gene", "accession"):
+                value = str(protein.get(key) or "").strip()
+                if value:
+                    tokens.add(value)
+    elif obj.get("kind") == "protein":
+        card = obj.get("card") or {}
+        if isinstance(card, dict):
+            for key in ("entry_name", "gene"):
+                value = str(card.get(key) or "").strip()
+                if value:
+                    tokens.add(value)
+    return tokens
+
+
+def rewrite_mentions(text: str, objects: dict[str, Any] | None) -> str:
+    """Replace every ``@<token>`` in ``text`` with the resolved label.
+
+    Pure function — operates on a plain ``objects`` dict, not session
+    state. Used both for live chat rendering (against ``st.session_state``)
+    and for sidebar titles of past sessions (against the persisted
+    ``bioseq_workspace.objects`` snapshot of each row).
+
+    Tokens that don't match any object are kept verbatim, so prose
+    survives unchanged.
+    """
+    if not text or not isinstance(objects, dict) or not objects:
+        return text or ""
+
+    def replace(match: re.Match[str]) -> str:
+        token = match.group(1)
+        for obj in objects.values():
+            if not isinstance(obj, dict):
+                continue
+            if token in _matchable_tokens(obj):
+                resolved = display_label(obj) or token
+                return f"@{resolved}"
+        return match.group(0)
+
+    return _MENTION_TOKEN_RE.sub(replace, text)
 
 
 def list_objects(kind: str | None = None) -> list[dict[str, Any]]:

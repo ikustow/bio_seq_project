@@ -48,23 +48,38 @@ def init_state() -> None:
 def capture(prompt: str, outcome: dict[str, Any]) -> None:
     """Pull the full request payload sent to the chat LLM out of a turn's
     backend ``outcome`` and stash it in session_state. Retriever-only turns
-    have no LLM request and are skipped silently."""
+    have no LLM request and are skipped silently.
+
+    ``reply`` in the captured entry is the Chat-LLM reply itself: on a
+    plain follow-up that's ``outcome["reply"]``, on a retriever turn
+    that's now ``outcome["secondary_reply"]`` (the chained Gemini answer
+    rendered as the second assistant bubble). The retriever's canned
+    "I classified..." string is not a Chat-LLM artefact and shouldn't
+    surface here as the model's response.
+    """
     result = outcome.get("result") or {}
     metadata = result.get("metadata") or {}
     debug_request = metadata.get("debug_request")
     if not debug_request:
         return
+    secondary_reply = outcome.get("secondary_reply") or None
+    primary_reply = outcome.get("reply", "")
+    chat_llm_reply = secondary_reply if secondary_reply is not None else primary_reply
     log = st.session_state.get(_LOG_KEY) or []
-    log.append(
-        {
-            "ts": time.time(),
-            "prompt": prompt,
-            "reply": outcome.get("reply", ""),
-            "backend": outcome.get("backend"),
-            "provider": metadata.get("provider"),
-            "request": debug_request,
-        }
-    )
+    entry: dict[str, Any] = {
+        "ts": time.time(),
+        "prompt": prompt,
+        "reply": chat_llm_reply,
+        "backend": outcome.get("backend"),
+        "provider": metadata.get("provider"),
+        "request": debug_request,
+    }
+    # For chained retriever → Gemini turns surface the canonical pipeline
+    # message too so the panel shows what the user actually saw in the
+    # first assistant bubble. Plain follow-up turns leave this absent.
+    if secondary_reply is not None:
+        entry["primary_reply"] = primary_reply
+    log.append(entry)
     st.session_state[_LOG_KEY] = log[-_LOG_LIMIT:]
 
 
@@ -146,7 +161,14 @@ def _format_entry(entry: dict[str, Any]) -> str:
     parts.append("# Full request object:")
     parts.append(json.dumps(request, indent=2, ensure_ascii=False, default=str))
     parts.append("")
-    parts.append("# Assistant reply:")
+    primary_reply = entry.get("primary_reply")
+    if primary_reply:
+        parts.append("# Retriever (primary) reply shown before the LLM bubble:")
+        parts.append(str(primary_reply))
+        parts.append("")
+        parts.append("# Chat-LLM (secondary) reply:")
+    else:
+        parts.append("# Assistant reply:")
     parts.append(str(entry.get("reply", "")))
     return "\n".join(parts)
 

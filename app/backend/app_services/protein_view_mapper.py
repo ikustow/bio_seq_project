@@ -149,6 +149,7 @@ def protein_record_to_view(record: dict[str, Any]) -> ProteinView:
     return ProteinView(
         accession=accession,
         name=name,
+        entry_name=str(_first_present(record, "entry_name", "uniProtkbId", default="") or ""),
         alt_names=_as_list(_first_present(record, "alt_names_json", "alt_names", default=[])),
         gene=str(_first_present(record, "gene_primary", "gene", "gene_name", default="") or ""),
         organism_scientific=str(_first_present(record, "organism_name", "organism_scientific", default="") or ""),
@@ -259,6 +260,7 @@ def uniprot_record_to_view(record: dict[str, Any]) -> ProteinView:
     return ProteinView(
         accession=accession,
         name=recommended_name or str(record.get("uniProtkbId") or accession or "Unknown protein"),
+        entry_name=str(record.get("uniProtkbId") or ""),
         alt_names=alt_names,
         gene_synonyms=gene_synonyms,
         gene=gene,
