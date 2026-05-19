@@ -172,7 +172,7 @@ def _embed_dna(sequence: str) -> np.ndarray:
         mean_pooled = outputs.last_hidden_state.mean(dim=1).squeeze()
     return mean_pooled.cpu().numpy().astype(np.float32)
 
-def _embed_rerank_texts(texts: List[str], is_query: bool = False, max_length: int = 8192) -> np.ndarray:
+def _embed_rerank_texts(texts: List[str], is_query: bool = False, max_length: int = 2048) -> np.ndarray:
     """
     Generates semantic embeddings using Qwen3-Embedding.
     1. Uses last-token pooling (standard for decoder-based embeddings).
@@ -276,6 +276,62 @@ def _format_record_for_embedding(record: Dict[str, Any]) -> str:
 # ENDPOINTS
 # =============================================================================
 
+# =============================================================================
+# UNCERTAINTY-AWARE FUSION LOGIC
+# =============================================================================
+
+def _normalize_z_score(scores: np.ndarray) -> np.ndarray:
+    """
+    Performs Z-score normalization for scale robustness and translation invariance.
+    Ensures both retrieval and semantic signals are in a comparable space.
+    """
+    mu = np.mean(scores)
+    sigma = np.std(scores) + 1e-9
+    return (scores - mu) / sigma
+
+def _compute_local_uncertainty(scores: np.ndarray, 
+                               window_size: int = RERANK_WINDOW_SIZE, 
+                               temp: float = RERANK_TEMPERATURE) -> np.ndarray:
+    """
+    Estimates local posterior uncertainty using normalized local entropy.
+    
+    Mathematical Principle:
+    1. Define local neighborhood around each candidate.
+    2. Map retrieval scores to a local probability distribution via Softmax.
+    3. Compute Information-Theoretic Entropy (H).
+    4. Normalize H by log(W) to bound uncertainty in [0, 1].
+    """
+    n = len(scores)
+    uncertainty_weights = np.zeros(n)
+    
+    for i in range(n):
+        # 1. Define sliding window neighborhood
+        left = max(0, i - window_size)
+        right = min(n, i + window_size + 1)
+        neighborhood = scores[left:right]
+        
+        # 2. Local Softmax (Numerical stability: subtract max)
+        shifted = neighborhood - np.max(neighborhood)
+        probs = np.exp(shifted / temp)
+        probs /= (np.sum(probs) + 1e-12)
+        
+        # 3. Local Entropy
+        # H = - sum(p * log(p))
+        entropy = -np.sum(probs * np.log(probs + 1e-12))
+        
+        # 4. Normalize by maximum possible entropy for the current window size
+        norm_factor = np.log(len(neighborhood)) if len(neighborhood) > 1 else 1.0
+        alpha_i = entropy / norm_factor
+        
+        uncertainty_weights[i] = alpha_i
+        
+    # Stability: clip uncertainty to prevent exact zeros or complete rerank takeover
+    return np.clip(uncertainty_weights, 0.05, 0.95)
+
+# =============================================================================
+# ENDPOINTS
+# =============================================================================
+
 @app.post("/search/protein")
 async def search_protein(request: SearchRequest):
     try:
@@ -305,53 +361,43 @@ async def rerank(request: RerankRequest):
     try:
         loop = asyncio.get_event_loop()
         
-        # 1. Prepare text passages for candidates
+        # 1. Semantic Embedding
         passages = [_format_record_for_embedding(rec) for rec in request.records]
-        
-        # 2. Embed query and passages
         query_vec = await loop.run_in_executor(executor, _embed_rerank_texts, [request.context_query], True)
         doc_vecs = await loop.run_in_executor(executor, _embed_rerank_texts, passages, False)
         
-        # 3. Calculate semantic scores (Cosine Similarity)
+        # 2. Raw Semantic Scores (Cosine Similarity)
         query_vec = query_vec / (np.linalg.norm(query_vec, axis=1, keepdims=True) + 1e-9)
         doc_vecs = doc_vecs / (np.linalg.norm(doc_vecs, axis=1, keepdims=True) + 1e-9)
         semantic_scores = np.dot(doc_vecs, query_vec.T).flatten()
 
-        # 4. Margin-Aware Adaptive Fusion
-        # Retrieval scores are stored in '_search_score'. We assume records are sorted by this.
-        retrieval_scores = np.array([r.get("_search_score", 0.0) for r in request.records])
-        
-        # Calculate local margins: gap between current and next candidate
-        # For the last element, we repeat the previous margin or use 0
-        margins = np.abs(np.diff(retrieval_scores))
-        if len(margins) > 0:
-            margins = np.append(margins, margins[-1])
-        else:
-            margins = np.array([0.0])
-        
-        # Adaptive weight logic: 
-        # tau is derived from the mean of positive margins to calibrate to the current data distribution
-        tau = np.mean(margins[margins > 0]) + 1e-6 if np.any(margins > 0) else 0.1
-        
-        # Exponential decay: large gaps -> small weights (preserves original ranking)
-        # Small gaps (near-ties) -> large weights (allows reranker to break ties)
-        adaptive_weights = np.exp(-margins / tau)
-        adaptive_weights = np.clip(adaptive_weights, 0, 1)
+        # 3. Z-Score Calibration
+        # Mandatory for theoretical invariance properties
+        retrieval_raw = np.array([r.get("_search_score", 0.0) for r in request.records])
+        retrieval_z = _normalize_z_score(retrieval_raw)
+        semantic_z = _normalize_z_score(semantic_scores)
 
-        # Internal sensitivity constant for the rerank signal
+        # 4. Local Posterior Uncertainty Estimation
+        # α_i -> 0: Retrieval is confident, preserve ranking
+        # α_i -> 1: Retrieval is uncertain, allow semantic signal to dominate
+        alpha = _compute_local_uncertainty(retrieval_z)
+
+        # 5. Principled Confidence-Aware Fusion
+        # f_i = s_i + α_i * λ * (r_i - s_i)
         LAMBDA = RERANK_LAMBDA
-
+        
         reranked_list = []
         for i, record in enumerate(request.records):
-            # Combined score formula: Retrieval + gated Rerank signal
-            # This approximates lexicographic ranking while allowing smooth tie-breaking
-            final_score = retrieval_scores[i] + (LAMBDA * adaptive_weights[i] * semantic_scores[i])
+            final_fused_score = retrieval_z[i] + (alpha[i] * LAMBDA * (semantic_z[i] - retrieval_z[i]))
             
-            record["_search_score"] = float(final_score)
+            # Store metadata for transparency
+            record["_search_score"] = float(final_fused_score)
+            record["_uncertainty_alpha"] = float(alpha[i])
             reranked_list.append(record)
 
-        # 5. Final Sort by the new margin-aware score
+        # 6. Stable Rank Sort
         reranked_list.sort(key=lambda x: x["_search_score"], reverse=True)
+        
         return {"results": reranked_list[:request.top_n]}
     except Exception as e:
         traceback.print_exc()

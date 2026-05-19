@@ -32,11 +32,15 @@ PROTEIN_MODEL_NAME = "Rostlab/prot_t5_xl_uniref50"
 DNA_MODEL_NAME = "LongSafari/hyenadna-medium-160k-seqlen-hf"
 RERANK_MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
 
-# Internal sensitivity constant for the rerank signal (margin-aware fusion)
-RERANK_LAMBDA = 0.10
+# Internal sensitivity constant for the rerank signal (Maximum reranker authority)
+RERANK_LAMBDA = 0.5
+
+# Probability distribution parameters for uncertainty estimation
+RERANK_TEMPERATURE = 0.5
+RERANK_WINDOW_SIZE = 5
 
 # Sequence length limits
-DNA_MAX_LENGTH = 160_000
+DNA_MAX_LENGTH = 60_000
 
 # --- Default FAISS Threads ---
 DEFAULT_FAISS_THREADS = int(os.getenv("FAISS_DEFAULT_THREADS", max(1, os.cpu_count())))
