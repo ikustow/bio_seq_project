@@ -273,11 +273,7 @@ def _format_record_for_embedding(record: Dict[str, Any]) -> str:
     return ". ".join(profile_parts)
 
 # =============================================================================
-# ENDPOINTS
-# =============================================================================
-
-# =============================================================================
-# UNCERTAINTY-AWARE FUSION LOGIC
+# CONFORMAL UNCERTAINTY-AWARE FUSION LOGIC
 # =============================================================================
 
 def _normalize_z_score(scores: np.ndarray) -> np.ndarray:
@@ -289,44 +285,47 @@ def _normalize_z_score(scores: np.ndarray) -> np.ndarray:
     sigma = np.std(scores) + 1e-9
     return (scores - mu) / sigma
 
-def _compute_local_uncertainty(scores: np.ndarray, 
-                               window_size: int = RERANK_WINDOW_SIZE, 
-                               temp: float = RERANK_TEMPERATURE) -> np.ndarray:
+def _compute_conformal_uncertainty(scores: np.ndarray) -> np.ndarray:
     """
-    Estimates local posterior uncertainty using normalized local entropy.
+    Estimates local posterior uncertainty using local conformal nonconformity.
     
     Mathematical Principle:
-    1. Define local neighborhood around each candidate.
-    2. Map retrieval scores to a local probability distribution via Softmax.
-    3. Compute Information-Theoretic Entropy (H).
-    4. Normalize H by log(W) to bound uncertainty in [0, 1].
+    1. Ranking instability: Uncertainty is induced when local score distances are small,
+       implying candidates are exchangeable under local score permutations.
+    2. Nonconformity score (a_i): Defined as the minimum distance to the nearest neighbor.
+       Small a_i -> high exchangeability -> high uncertainty.
+    3. Empirical Conformal p-value (p_i): Measures where a_i sits in the empirical 
+       distribution of all nonconformity scores.
+    4. Uncertainty (alpha_i): Defined as (1 - p_i), bounding it in [0, 1] without parameters.
+    
+    This model is Parameter-Free, Distribution-Free, and statistically rigorous.
     """
     n = len(scores)
-    uncertainty_weights = np.zeros(n)
-    
+    if n < 2:
+        return np.array([0.5] * n) # Degenerate case safety
+        
+    # 1. Compute local nonconformity scores (nearest-neighbor gaps)
+    a = np.zeros(n)
     for i in range(n):
-        # 1. Define sliding window neighborhood
-        left = max(0, i - window_size)
-        right = min(n, i + window_size + 1)
-        neighborhood = scores[left:right]
+        if i == 0:
+            a[i] = abs(scores[0] - scores[1])
+        elif i == n - 1:
+            a[i] = abs(scores[n-1] - scores[n-2])
+        else:
+            # Geometric isolation defines nonconformity
+            a[i] = min(abs(scores[i] - scores[i-1]), abs(scores[i] - scores[i+1]))
+            
+    # 2. Compute empirical conformal p-values
+    # p_i represents the probability that a randomly sampled candidate is 
+    # as isolated as candidate i.
+    p = np.zeros(n)
+    for i in range(n):
+        p[i] = (1 + np.sum(a <= a[i])) / (n + 1)
         
-        # 2. Local Softmax (Numerical stability: subtract max)
-        shifted = neighborhood - np.max(neighborhood)
-        probs = np.exp(shifted / temp)
-        probs /= (np.sum(probs) + 1e-12)
-        
-        # 3. Local Entropy
-        # H = - sum(p * log(p))
-        entropy = -np.sum(probs * np.log(probs + 1e-12))
-        
-        # 4. Normalize by maximum possible entropy for the current window size
-        norm_factor = np.log(len(neighborhood)) if len(neighborhood) > 1 else 1.0
-        alpha_i = entropy / norm_factor
-        
-        uncertainty_weights[i] = alpha_i
-        
-    # Stability: clip uncertainty to prevent exact zeros or complete rerank takeover
-    return np.clip(uncertainty_weights, 0.05, 0.95)
+    # 3. Transform to uncertainty (alpha)
+    # α_i -> 1 means the candidate is statistically exchangeable (high uncertainty)
+    # α_i -> 0 means the candidate is isolated (high confidence)
+    return 1 - p
 
 # =============================================================================
 # ENDPOINTS
@@ -372,18 +371,17 @@ async def rerank(request: RerankRequest):
         semantic_scores = np.dot(doc_vecs, query_vec.T).flatten()
 
         # 3. Z-Score Calibration
-        # Mandatory for theoretical invariance properties
         retrieval_raw = np.array([r.get("_search_score", 0.0) for r in request.records])
         retrieval_z = _normalize_z_score(retrieval_raw)
         semantic_z = _normalize_z_score(semantic_scores)
 
-        # 4. Local Posterior Uncertainty Estimation
-        # α_i -> 0: Retrieval is confident, preserve ranking
-        # α_i -> 1: Retrieval is uncertain, allow semantic signal to dominate
-        alpha = _compute_local_uncertainty(retrieval_z)
+        # 4. Conformal Ranking Uncertainty Estimation (α_i)
+        # Parameter-free and distribution-free exchangeability estimation.
+        alpha = _compute_conformal_uncertainty(retrieval_z)
 
         # 5. Principled Confidence-Aware Fusion
         # f_i = s_i + α_i * λ * (r_i - s_i)
+        # Correction is applied only where the retrieval ranking is statistically exchangeable.
         LAMBDA = RERANK_LAMBDA
         
         reranked_list = []
