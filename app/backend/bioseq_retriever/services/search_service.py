@@ -159,7 +159,7 @@ def _embed_protein(sequence: str) -> np.ndarray:
     
     inputs = protein_tokenizer(processed_seq, return_tensors="pt").to(device)
     with torch.no_grad():
-        outputs = protein_model(**inputs)
+        outputs = protein_model(**inputs, return_dict=True)
         # Exclude the trailing </s> (EOS) token from the mean pool to match bio_embeddings distribution
         residue_embeddings = outputs.last_hidden_state[0, :len(seq), :]
         
@@ -168,7 +168,7 @@ def _embed_protein(sequence: str) -> np.ndarray:
 def _embed_dna(sequence: str) -> np.ndarray:
     inputs = dna_tokenizer(sequence, return_tensors="pt", truncation=True, max_length=DNA_MAX_LENGTH).to(device)
     with torch.no_grad():
-        outputs = dna_model(**inputs)
+        outputs = dna_model(**inputs, return_dict=True)
         mean_pooled = outputs.last_hidden_state.mean(dim=1).squeeze()
     return mean_pooled.cpu().numpy().astype(np.float32)
 
@@ -201,7 +201,7 @@ def _embed_rerank_texts(texts: List[str], is_query: bool = False) -> np.ndarray:
     ).to(device)
 
     with torch.no_grad():
-        outputs = rerank_model(**inputs)
+        outputs = rerank_model(**inputs, return_dict=True)
         # Use last-token pooling of the last hidden state
         # Explicitly cast to float32 before numpy conversion (numpy does not support bfloat16)
         embeddings = outputs.last_hidden_state[:, -1].to(torch.float32)
