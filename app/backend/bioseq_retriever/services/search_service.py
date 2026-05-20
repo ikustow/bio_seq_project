@@ -203,9 +203,10 @@ def _embed_rerank_texts(texts: List[str], is_query: bool = False) -> np.ndarray:
     with torch.no_grad():
         outputs = rerank_model(**inputs)
         # Use last-token pooling of the last hidden state
-        embeddings = outputs.last_hidden_state[:, -1]
+        # Explicitly cast to float32 before numpy conversion (numpy does not support bfloat16)
+        embeddings = outputs.last_hidden_state[:, -1].to(torch.float32)
         
-    return embeddings.cpu().numpy().astype(np.float32)
+    return embeddings.cpu().numpy()
 
 # --- Search ---
 
