@@ -201,13 +201,9 @@ def system_prompt() -> str:
         "You are an expert assistant for protein sequence analysis. "
         "Your primary goal is to answer the user's question accurately and helpfully. "
         "\n\n"
-        "The user works in a chat with a workspace of objects. A `Sequence` is "
-        "a biological sequence the user pasted or uploaded; once resolved against "
-        "UniProt it is addressed by the entry name of its top match (e.g. "
-        "`@HBD_HUMAN`), or by `@Seq_A`, `@Seq_B`, ... before resolution. "
-        "A `Protein` card is addressed by its UniProt accession (e.g. `@P02042`) "
-        "or gene symbol (e.g. `@HBD`). All these forms can refer to the same "
-        "underlying object — treat them as equivalent. "
+        "The user works in a chat with a workspace of objects. Each object is "
+        "addressed by an `@<label>` chip — typically a UniProt entry name "
+        "(`@HBD_HUMAN`), accession (`@P02042`), or gene symbol (`@HBD`). "
         "\n\n"
         "Below this paragraph you will find the current workspace state and the "
         "UniProt details for the object(s) under discussion. Use that data to "
@@ -227,13 +223,30 @@ def system_prompt() -> str:
     )
 
 
+def _anchored_match_index(obj: dict[str, Any]) -> int:
+    """Index of the match that defines this Sequence card's identity.
+
+    Mirrors the frontend's ``_anchored_index``: prefers the explicit
+    ``anchored_match_index`` (set on fork from Top-5), falls back to
+    ``selected_match_index`` for legacy objects, then 0.
+    """
+    for key in ("anchored_match_index", "selected_match_index"):
+        value = obj.get(key) if isinstance(obj, dict) else None
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                continue
+    return 0
+
+
 def _resolved_label(obj: dict[str, Any] | None) -> str:
     """Backend mirror of frontend ``display_label``: entry_name > original label.
 
-    For a Sequence with a chosen match, returns the match's ``entry_name``
-    (e.g. ``HBD_HUMAN``). Otherwise returns the stored ``label`` (``Seq_A``)
-    or the accession for Protein objects. Used so the LLM sees the same
-    ``@HBD_HUMAN`` chip the user sees in the UI.
+    For a Sequence with an anchored match, returns the match's
+    ``entry_name`` (e.g. ``HBD_HUMAN``). Otherwise returns the stored
+    ``label`` (``Seq_A``) or the accession for Protein objects. Used so
+    the LLM sees the same ``@HBD_HUMAN`` chip the user sees in the UI.
     """
     if not isinstance(obj, dict):
         return ""
@@ -241,10 +254,7 @@ def _resolved_label(obj: dict[str, Any] | None) -> str:
     if obj.get("kind") != "sequence":
         return fallback
     matches = obj.get("matches") or []
-    try:
-        idx = int(obj.get("selected_match_index") or 0)
-    except (TypeError, ValueError):
-        idx = 0
+    idx = _anchored_match_index(obj)
     if 0 <= idx < len(matches):
         protein = (matches[idx] or {}).get("protein") or {}
         entry = str(protein.get("entry_name") or "").strip()
@@ -269,10 +279,7 @@ def _label_tokens(obj: dict[str, Any]) -> set[str]:
             tokens.add(value)
     if obj.get("kind") == "sequence":
         matches = obj.get("matches") or []
-        try:
-            idx = int(obj.get("selected_match_index") or 0)
-        except (TypeError, ValueError):
-            idx = 0
+        idx = _anchored_match_index(obj)
         if 0 <= idx < len(matches):
             protein = (matches[idx] or {}).get("protein") or {}
             for key in ("entry_name", "gene", "accession"):
@@ -287,6 +294,31 @@ def _label_tokens(obj: dict[str, Any]) -> set[str]:
                 if value:
                     tokens.add(value)
     return tokens
+
+
+def rewrite_mentions(text: str, objects: dict[str, Any] | None) -> str:
+    """Rewrite every ``@<token>`` in ``text`` to the resolved display label.
+
+    Backend mirror of frontend ``session_objects.rewrite_mentions``. Used to
+    strip the pre-resolution ``@Seq_A`` form out of user prompts before they
+    hit the LLM, so the model sees the same ``@HBD_HUMAN``-style label the
+    user sees on the chip. Tokens that don't match any object are left
+    verbatim — prose survives unchanged.
+    """
+    if not text or not isinstance(objects, dict) or not objects:
+        return text or ""
+
+    def _replace(match: "re.Match[str]") -> str:
+        token = match.group(1)
+        for obj in objects.values():
+            if not isinstance(obj, dict):
+                continue
+            if token in _label_tokens(obj):
+                resolved = _resolved_label(obj) or token
+                return f"@{resolved}"
+        return match.group(0)
+
+    return _MENTION_TOKEN_RE.sub(_replace, text)
 
 
 def build_protein_context(
@@ -450,10 +482,7 @@ def build_mentioned_protein_contexts(
             matches = target.get("matches") or []
             if not matches:
                 continue
-            try:
-                chosen = int(target.get("selected_match_index") or 0)
-            except (TypeError, ValueError):
-                chosen = 0
+            chosen = _anchored_match_index(target)
             if chosen < 0 or chosen >= len(matches):
                 chosen = 0
             mrec = matches[chosen]
@@ -527,7 +556,7 @@ def build_objects_context(
                 unit = "chars"
             line = f"- `@{label}` ({seq_type}, {length} {unit}, {status})"
             matches = seq.get("matches") or []
-            chosen_idx = int(seq.get("selected_match_index") or 0)
+            chosen_idx = _anchored_match_index(seq)
             if matches and 0 <= chosen_idx < len(matches):
                 match = matches[chosen_idx]
                 protein = match.get("protein") or {}
@@ -668,6 +697,8 @@ def _strip_leading_assistant(history: list[dict[str, Any]]) -> list[dict[str, An
 def _build_gemini_contents(request: ChatLLMRequest) -> list[dict[str, Any]]:
     contents: list[dict[str, Any]] = []
     history = _strip_leading_assistant(list(request.history or [])[-20:])
+    objects = request.objects or {}
+    current_prompt = rewrite_mentions(request.prompt, objects)
 
     seen_current_prompt = False
     for message in history:
@@ -678,13 +709,14 @@ def _build_gemini_contents(request: ChatLLMRequest) -> list[dict[str, Any]]:
         if not content:
             continue
         if role == "user":
-            seen_current_prompt = seen_current_prompt or content == request.prompt
-            contents.append({"role": "user", "parts": [{"text": content}]})
+            rewritten = rewrite_mentions(content, objects)
+            seen_current_prompt = seen_current_prompt or rewritten == current_prompt
+            contents.append({"role": "user", "parts": [{"text": rewritten}]})
         elif role == "assistant" and contents:
             contents.append({"role": "model", "parts": [{"text": content}]})
 
     if not seen_current_prompt:
-        contents.append({"role": "user", "parts": [{"text": request.prompt}]})
+        contents.append({"role": "user", "parts": [{"text": current_prompt}]})
     return contents
 
 
@@ -694,6 +726,8 @@ def _build_openai_messages(request: ChatLLMRequest, system_prompt_text: str) -> 
     full_system_prompt = _build_system_instruction(request, system_prompt_text)
     messages: list[Any] = [SystemMessage(content=full_system_prompt)]
     history = _strip_leading_assistant(list(request.history or [])[-20:])
+    objects = request.objects or {}
+    current_prompt = rewrite_mentions(request.prompt, objects)
 
     seen_current_prompt = False
     for message in history:
@@ -704,13 +738,14 @@ def _build_openai_messages(request: ChatLLMRequest, system_prompt_text: str) -> 
         if not content:
             continue
         if role == "user":
-            seen_current_prompt = seen_current_prompt or content == request.prompt
-            messages.append(HumanMessage(content=content))
+            rewritten = rewrite_mentions(content, objects)
+            seen_current_prompt = seen_current_prompt or rewritten == current_prompt
+            messages.append(HumanMessage(content=rewritten))
         elif role == "assistant":
             messages.append(AIMessage(content=content))
 
     if not seen_current_prompt:
-        messages.append(HumanMessage(content=request.prompt))
+        messages.append(HumanMessage(content=current_prompt))
     return messages
 
 

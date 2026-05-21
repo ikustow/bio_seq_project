@@ -529,6 +529,7 @@ def _render_switcher(
     selected_index: int | None = None,
     on_select_index=None,
     key_suffix: str = "",
+    anchored_index: int | None = None,
 ) -> int:
     """Render the candidate switcher and return the chosen index.
 
@@ -545,6 +546,13 @@ def _render_switcher(
       in and a callback that updates the Sequence in ``session_objects``.
       Button keys are suffixed with ``key_suffix`` so multiple switchers
       can coexist on the same page (one per Sequence).
+
+    The ``anchored_index`` argument lets the caller distinguish the card's
+    **identity** (the match its chip references) from what the user is
+    currently previewing. Anchored cells render with a blue fill (the
+    classic "primary" style); previewed-but-not-anchored cells render
+    with a blue outline so the user sees that they're looking at an
+    alternative without losing the card's anchor.
     """
     use_registry = on_select_index is not None
     if use_registry:
@@ -555,6 +563,15 @@ def _render_switcher(
         chosen = 0
     if not use_registry:
         st.session_state.selected_candidate_idx = chosen
+    # Anchor falls back to ``chosen`` so callers that don't pass it (legacy
+    # mode, demo flow) keep the existing single-state look.
+    anchor = anchored_index if anchored_index is not None else chosen
+    try:
+        anchor = int(anchor)
+    except (TypeError, ValueError):
+        anchor = chosen
+    if anchor < 0 or anchor >= len(candidates):
+        anchor = chosen
 
     container_key = f"candidate_switcher_{key_suffix}" if key_suffix else "candidate_switcher"
     with st.container(border=True, key=container_key):
@@ -562,11 +579,19 @@ def _render_switcher(
         selected_protein = selected["protein"]
         header_left, header_right = st.columns([3, 1])
         with header_left:
-            st.markdown("#### Top 5 matches")
-            st.caption(
-                "Ranked & re-ranked by the retrieval pipeline. "
-                "Pick a candidate to view its full record."
-            )
+            if len(candidates) <= 1:
+                st.markdown("#### Anchored match")
+                st.caption(
+                    "This card is pinned to a single UniProt entry — "
+                    "the other top-5 candidates were dropped when it was "
+                    "spawned as its own card."
+                )
+            else:
+                st.markdown(f"#### Top {len(candidates)} matches")
+                st.caption(
+                    "Ranked & re-ranked by the retrieval pipeline. "
+                    "Pick a candidate to view its full record."
+                )
         with header_right:
             markdown_report = build_protein_markdown(
                 selected=selected,
@@ -597,7 +622,25 @@ def _render_switcher(
             accession = protein.get("accession") or ""
             alignment_score = _alignment_score_for_candidate(candidate, query_sequence)
             match_score = _normalize_match_score(candidate.get("match_score"))
-            cell_key = f"candidate_cell_{key_suffix}_{index}" if key_suffix else f"candidate_cell_{index}"
+            # Cell-key state encoding for CSS:
+            #   ``candidate_cell_anchored_…`` — blue fill (card identity)
+            #   ``candidate_cell_preview_…``  — blue outline (user is looking
+            #                                    at this alternative)
+            #   ``candidate_cell_…``          — neutral
+            # All three share the ``candidate_cell_`` prefix that existing
+            # CSS already scopes most rules under, so layout/metrics styling
+            # keeps working unchanged.
+            if index == anchor:
+                state_token = "anchored_"
+            elif index == chosen:
+                state_token = "preview_"
+            else:
+                state_token = ""
+            cell_key = (
+                f"candidate_cell_{state_token}{key_suffix}_{index}"
+                if key_suffix
+                else f"candidate_cell_{state_token}{index}"
+            )
             btn_key = (
                 f"candidate_button_{key_suffix}_{index}_{accession}"
                 if key_suffix
@@ -606,6 +649,10 @@ def _render_switcher(
             click_handler = (
                 (lambda i=index: on_select_index(i)) if use_registry else None
             )
+            # Anchored cell drives the ``stBaseButton-primary`` data attribute
+            # used by the existing blue-fill CSS rule. The previewed cell
+            # uses the secondary button style — its blue outline comes from
+            # the ``preview_`` cell-key prefix matched in style.css.
             with columns[index]:
                 with st.container(key=cell_key):
                     if use_registry:
@@ -614,7 +661,7 @@ def _render_switcher(
                             key=btn_key,
                             help=protein.get("name") or accession,
                             use_container_width=True,
-                            type="primary" if index == chosen else "secondary",
+                            type="primary" if index == anchor else "secondary",
                             on_click=click_handler,
                         )
                     else:
@@ -623,11 +670,11 @@ def _render_switcher(
                             key=btn_key,
                             help=protein.get("name") or accession,
                             use_container_width=True,
-                            type="primary" if index == chosen else "secondary",
+                            type="primary" if index == anchor else "secondary",
                             on_click=_select_candidate,
                             args=(index,),
                         )
-                    active_metrics_class = " candidate-metrics-active" if index == chosen else ""
+                    active_metrics_class = " candidate-metrics-active" if index == anchor else ""
                     st.markdown(
                         f"<div class='candidate-metrics{active_metrics_class}'>"
                         "<div class='candidate-scores'>"
@@ -648,6 +695,7 @@ def render(
     selected_index: int | None = None,
     on_select_index=None,
     key_suffix: str = "",
+    anchored_index: int | None = None,
 ) -> None:
     if candidates is None:
         with st.container(border=True):
@@ -675,6 +723,7 @@ def render(
         selected_index=selected_index,
         on_select_index=on_select_index,
         key_suffix=key_suffix,
+        anchored_index=anchored_index,
     )
     selected = candidates[chosen]
     protein = selected["protein"]

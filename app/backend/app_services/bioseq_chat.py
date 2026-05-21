@@ -449,9 +449,34 @@ class BioSeqChatService:
             f"I loaded **{protein.accession}** ({protein.name or 'UniProt entry'}) "
             "directly without running a similarity search."
         )
+
+        # Chain a Chat-LLM follow-up so direct UniProt lookups produce the same
+        # kind of natural-language explanation as retriever hits. Primary
+        # message stays the templated confirmation; secondary is the LLM's
+        # interpretation of the loaded protein given the user's prompt.
+        top_candidate = {"protein": protein.model_dump(), "match_score": 1.0}
+        history = _history_from_ui_context(request.ui_context or {})
+        merged_objects = _objects_with_patch(request.objects, patch)
+        (
+            secondary_message,
+            secondary_provider,
+            secondary_model,
+            secondary_raw,
+        ) = self._maybe_generate_followup_llm_reply(
+            request=request,
+            top_candidate=top_candidate,
+            history=history,
+            warnings=warnings,
+            objects=merged_objects,
+            selected_object_id=object_id,
+        )
+
         return ChatTurnResult(
             session_id=request.session_id,
             assistant_message=assistant_message,
+            secondary_assistant_message=secondary_message,
+            secondary_provider=secondary_provider,
+            secondary_provider_model=secondary_model,
             candidates=[CandidateView(protein=protein, match_score=1.0, rank=0)],
             selected_candidate_index=0,
             revealed_sections=_revealed_sections(
@@ -463,6 +488,7 @@ class BioSeqChatService:
             current_mode="uniprot_direct_lookup",
             objects_patch=patch,
             selected_object_id=object_id,
+            metadata=secondary_raw,
         )
 
     def _snapshot(self, context: AppContext, state: dict[str, Any]) -> SessionSnapshot:

@@ -199,6 +199,16 @@ def _render_sequence(seq: dict) -> None:
         session_objects.set_sequence_selected_match(_sid, index)
 
     revealed = _revealed_sections((matches[chosen_idx] or {}).get("protein") or {})
+    # ``anchored_match_index`` is the card's identity (drives chip label);
+    # ``selected_match_index`` is preview-only. Pass both through so the
+    # switcher can render the two states distinctly.
+    anchored_idx = seq.get("anchored_match_index")
+    if anchored_idx is None:
+        anchored_idx = chosen_idx
+    try:
+        anchored_idx = int(anchored_idx)
+    except (TypeError, ValueError):
+        anchored_idx = chosen_idx
     protein_card.render(
         matches,
         revealed,
@@ -206,6 +216,7 @@ def _render_sequence(seq: dict) -> None:
         selected_index=chosen_idx,
         on_select_index=_select_match,
         key_suffix=sequence_id,
+        anchored_index=anchored_idx,
     )
 
 

@@ -112,7 +112,13 @@ def _label_to_object_id() -> dict[str, str]:
       label too.
     """
     mapping: dict[str, str] = {}
-    for object_id, obj in session_objects.get_objects().items():
+    # Two-pass so a Sequence/Protein whose **anchor** is some entry_name
+    # always wins that token over another Sequence that merely lists the
+    # same entry as one of its top-5 candidates. Otherwise the first
+    # object's non-anchor matches squat on the token via ``setdefault``
+    # and a sibling card anchored on it can never claim its own name.
+    objects = session_objects.get_objects()
+    for object_id, obj in objects.items():
         label = obj.get("label")
         if label:
             mapping.setdefault(label, object_id)
@@ -122,18 +128,21 @@ def _label_to_object_id() -> dict[str, str]:
         accession = obj.get("accession")
         if accession:
             mapping.setdefault(accession, object_id)
-        # Sequence objects: also register every entry name / accession from
-        # the top-5 matches so that ``@HBA_HUMAN`` in old messages still
-        # resolves after the user picks a different candidate.
-        if obj.get("kind") == "sequence":
-            for match in obj.get("matches") or []:
-                protein = (match or {}).get("protein") or {}
-                entry = str(protein.get("entry_name") or "").strip()
-                if entry:
-                    mapping.setdefault(entry, object_id)
-                acc = str(protein.get("accession") or match.get("accession") or "").strip()
-                if acc:
-                    mapping.setdefault(acc, object_id)
+    # Second pass: register every entry name / accession from each
+    # Sequence's top-5 so legacy mentions like ``@HBA_HUMAN`` keep
+    # resolving after the user picks a different candidate — but only
+    # for tokens no anchored card has already claimed.
+    for object_id, obj in objects.items():
+        if obj.get("kind") != "sequence":
+            continue
+        for match in obj.get("matches") or []:
+            protein = (match or {}).get("protein") or {}
+            entry = str(protein.get("entry_name") or "").strip()
+            if entry:
+                mapping.setdefault(entry, object_id)
+            acc = str(protein.get("accession") or match.get("accession") or "").strip()
+            if acc:
+                mapping.setdefault(acc, object_id)
     return mapping
 
 
@@ -293,6 +302,18 @@ def _looks_like_russian(text: str) -> bool:
 
 
 def _mention_click(object_id: str) -> None:
+    # Ghost spawn chips share this bridge — their synthetic "object id"
+    # carries the SPAWN_PREFIX. Dispatch on the prefix: spawn the fork
+    # and focus it, instead of treating the synthetic id as a real
+    # registry key (``set_selected`` would silently no-op since no such
+    # object exists yet).
+    parsed = session_objects.parse_spawn_token(object_id)
+    if parsed is not None:
+        parent_id, match_index = parsed
+        new_id = session_objects.fork_sequence_with_match(parent_id, match_index)
+        if new_id:
+            session_objects.set_selected(new_id)
+        return
     session_objects.set_selected(object_id)
 
 
@@ -320,6 +341,7 @@ def _render_mention_bridge() -> None:
     the first user message and crashed React with ``removeChild``.
     """
     objects = session_objects.get_objects()
+    spawn_suggestions = session_objects.compute_spawn_suggestions()
 
     with st.container(key="mention_bridge"):
         for object_id in objects.keys():
@@ -328,6 +350,23 @@ def _render_mention_bridge() -> None:
                 key=f"mention_btn_{object_id}",
                 on_click=_mention_click,
                 args=(object_id,),
+            )
+        # Ghost spawn chips piggyback on this bridge. Each suggestion
+        # registers a hidden button keyed by the synthetic spawn token
+        # (``__spawn__<parent_id>__idx<N>``). The Create button in the
+        # ghost chip carries that same id as ``data-object-id``, so the
+        # mention bridge JS finds and clicks the right hidden button on
+        # its own — no separate spawn bridge needed.
+        for parent_obj, match_index, _entry, _acc in spawn_suggestions:
+            parent_id = str(parent_obj.get("id") or "")
+            if not parent_id:
+                continue
+            token = session_objects.make_spawn_token(parent_id, match_index)
+            st.button(
+                "·",
+                key=f"mention_btn_{token}",
+                on_click=_mention_click,
+                args=(token,),
             )
         # Deselect button is always present so the container has a
         # consistent minimum child count across renders.
@@ -380,6 +419,12 @@ _MENTION_BRIDGE_JS = r"""
     // Don't deselect if the user clicked something interactive inside
     // the bar (e.g. a future button) — only the bare background.
     if (event.target.closest('button')) return;
+    // Ghost chip body: clicks inside are intentionally inert (only the
+    // Create button at the bottom is meant to fire — and that path is
+    // already handled above by the ``a[data-object-id]`` match). Bail
+    // here so the deselect handler doesn't fire and clear the user's
+    // current selection.
+    if (event.target.closest('.bioseq-chip-ghost')) return;
     const wrapper = doc.querySelector('.st-key-mention_btn___deselect__');
     if (!wrapper) return;
     const btn = wrapper.querySelector('button');

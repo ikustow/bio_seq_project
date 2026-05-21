@@ -116,6 +116,16 @@ def set_selected(object_id: str | None) -> None:
     if object_id is not None and object_id not in st.session_state[_OBJECTS_KEY]:
         return
     st.session_state[_SELECTED_KEY] = object_id
+    # A re-select (or any selection change) clears Top-5 preview state on
+    # every Sequence so at most one ghost spawn chip can ever exist, and
+    # so the previously-previewed alternative doesn't linger when the
+    # user moves focus elsewhere.
+    for obj in st.session_state[_OBJECTS_KEY].values():
+        if isinstance(obj, dict) and obj.get("kind") == "sequence":
+            anchor = _anchored_index(obj)
+            matches = obj.get("matches") or []
+            if 0 <= anchor < len(matches):
+                obj["selected_match_index"] = anchor
     if object_id and object_id in st.session_state[_OBJECTS_KEY]:
         obj = st.session_state[_OBJECTS_KEY][object_id]
         if obj.get("kind") == "protein":
@@ -143,7 +153,7 @@ def protein_tooltip(obj: dict[str, Any] | None) -> str:
     kind = obj.get("kind")
     if kind == "sequence":
         matches = obj.get("matches") or []
-        idx = int(obj.get("selected_match_index") or 0)
+        idx = _anchored_index(obj)
         if 0 <= idx < len(matches):
             protein = (matches[idx] or {}).get("protein") or {}
             return str(protein.get("name") or "").strip()
@@ -162,18 +172,35 @@ def protein_tooltip(obj: dict[str, Any] | None) -> str:
     return ""
 
 
+def _anchored_index(obj: dict[str, Any]) -> int:
+    """Index of the match that defines this card's identity.
+
+    Defaults to ``anchored_match_index`` (set on fork from the Top-5
+    switcher). Falls back to ``selected_match_index`` for legacy objects
+    that pre-date the anchor split, and finally to 0.
+    """
+    for key in ("anchored_match_index", "selected_match_index"):
+        try:
+            value = obj.get(key)
+        except AttributeError:
+            value = None
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                continue
+    return 0
+
+
 def display_label(obj: dict[str, Any] | None) -> str:
     """Return the user-visible label for an object.
 
     For a Sequence that has been matched, this is the UniProt entry name
-    of the currently-selected match (e.g. ``HBE1_HUMAN``). When the entry
-    name is missing, falls back to the original ``Seq_A`` label so the
-    chip still has *some* identifier. Protein objects keep their original
-    label (the accession).
-
-    The function is intentionally derived (not stored) so that picking a
-    different candidate in Top 5 instantly re-labels every chip and every
-    ``@mention`` in chat history.
+    of the **anchored** match (the one the card was created for — top-1
+    by default, or the match the user chose when spawning a fork from
+    Top 5). Browsing alternative matches inside the card does NOT rename
+    the chip — the anchor is the card's identity. Falls back to the
+    original ``Seq_A`` label if the entry name is missing.
     """
     if not isinstance(obj, dict):
         return ""
@@ -181,7 +208,7 @@ def display_label(obj: dict[str, Any] | None) -> str:
     if obj.get("kind") != "sequence":
         return fallback
     matches = obj.get("matches") or []
-    idx = int(obj.get("selected_match_index") or 0)
+    idx = _anchored_index(obj)
     if 0 <= idx < len(matches):
         protein = (matches[idx] or {}).get("protein") or {}
         entry = str(protein.get("entry_name") or "").strip()
@@ -206,10 +233,7 @@ def _matchable_tokens(obj: dict[str, Any]) -> set[str]:
             tokens.add(value)
     if obj.get("kind") == "sequence":
         matches = obj.get("matches") or []
-        try:
-            idx = int(obj.get("selected_match_index") or 0)
-        except (TypeError, ValueError):
-            idx = 0
+        idx = _anchored_index(obj)
         if 0 <= idx < len(matches):
             protein = (matches[idx] or {}).get("protein") or {}
             for key in ("entry_name", "gene", "accession"):
@@ -332,6 +356,10 @@ def upsert_sequence(
             "status": status,
             "matches": [],
             "selected_match_index": 0,
+            # ``anchored_match_index`` defines the card's identity (chip
+            # label, @mention resolution). ``selected_match_index`` is
+            # mutable previewing inside the protein-card switcher.
+            "anchored_match_index": 0,
             "warnings": warnings or [],
             "classification_reason": classification_reason or "",
             "confidence": confidence,
@@ -387,6 +415,170 @@ def set_sequence_selected_match(object_id: str, index: int) -> None:
         obj["selected_match_index"] = 0
         return
     obj["selected_match_index"] = max(0, min(int(index), len(matches) - 1))
+
+
+# --- Spawn-suggestion plumbing ------------------------------------------
+#
+# When a Sequence card's ``selected_match_index`` diverges from its
+# ``anchored_match_index`` the user is previewing an alternative match
+# and we offer them a ghost chip to spawn it as a new independent card.
+# The ghost chip's click is routed through the same mention bridge that
+# handles regular ``@<id>`` clicks — we just use a synthetic object id
+# (``SPAWN_PREFIX + "<parent_id>__idx<N>"``) and dispatch on the prefix
+# inside the bridge callback.
+
+
+SPAWN_PREFIX = "__spawn__"
+
+
+def make_spawn_token(parent_id: str, match_index: int) -> str:
+    """Synthetic object-id used by the mention bridge to dispatch a spawn."""
+    return f"{SPAWN_PREFIX}{parent_id}__idx{int(match_index)}"
+
+
+def parse_spawn_token(token: str) -> tuple[str, int] | None:
+    """Inverse of :func:`make_spawn_token`. Returns ``None`` if not a spawn id."""
+    if not token or not token.startswith(SPAWN_PREFIX):
+        return None
+    rest = token[len(SPAWN_PREFIX):]
+    sep = rest.rfind("__idx")
+    if sep <= 0:
+        return None
+    parent_id = rest[:sep]
+    try:
+        idx = int(rest[sep + len("__idx"):])
+    except (TypeError, ValueError):
+        return None
+    return parent_id, idx
+
+
+def compute_spawn_suggestions() -> list[tuple[dict[str, Any], int, str, str]]:
+    """List ghost-chip targets for the current registry.
+
+    Returns ``[(parent_obj, match_index, entry_name, accession), ...]``
+    for every Sequence whose preview differs from its anchor. Caller
+    decides how to render — both the object bar (ghost chip) and the
+    mention bridge (hidden buttons) use this same list.
+    """
+    init_state()
+    out: list[tuple[dict[str, Any], int, str, str]] = []
+    for obj in list_objects():
+        if obj.get("kind") != "sequence":
+            continue
+        matches = obj.get("matches") or []
+        if not matches:
+            continue
+        anchored = _anchored_index(obj)
+        try:
+            selected = int(obj.get("selected_match_index") or 0)
+        except (TypeError, ValueError):
+            selected = 0
+        if selected == anchored:
+            continue
+        if selected < 0 or selected >= len(matches):
+            continue
+        chosen = matches[selected] or {}
+        protein = (chosen.get("protein") or {}) if isinstance(chosen, dict) else {}
+        entry = str(protein.get("entry_name") or "").strip()
+        accession = str(
+            protein.get("accession")
+            or (chosen.get("accession") if isinstance(chosen, dict) else "")
+            or ""
+        ).strip()
+        if not entry and not accession:
+            continue
+        # Prefer entry_name as the chip's primary label, accession as the
+        # secondary "ID" line. Either may be missing; ghost chip handles
+        # blanks.
+        out.append((obj, selected, entry or accession, accession))
+    return out
+
+
+def fork_sequence_with_match(parent_id: str, match_index: int) -> str | None:
+    """Spawn a new Sequence card from a non-anchored match of ``parent_id``.
+
+    The user is viewing ``parent`` (anchored on match A) and clicks an
+    alternative match B in the Top-5 switcher. To keep the original
+    discussion intact, we create an independent Sequence object that:
+
+      - references the same underlying sequence body (raw / normalized /
+        protein) so alignment views still work;
+      - carries only the chosen match in its ``matches`` list (the other
+        four candidates are dropped — the fork represents a commitment to
+        this single protein, not a parallel exploration);
+      - anchors itself on that match so the chip label, ``@mention``
+        resolution and tooltip all reflect the new identity (e.g.
+        ``@HBA_HUMAN`` for a fork off ``@INS_HUMAN``).
+
+    The parent's ``selected_match_index`` is reset to its anchor so the
+    user returns to a clean state after spawning. Returns the new object
+    id, or ``None`` if the fork could not be performed (bad parent /
+    out-of-range index).
+    """
+    init_state()
+    parent = get_object(parent_id)
+    if not parent or parent.get("kind") != "sequence":
+        return None
+    matches = list(parent.get("matches") or [])
+    if not matches:
+        return None
+    try:
+        idx = int(match_index)
+    except (TypeError, ValueError):
+        return None
+    if idx < 0 or idx >= len(matches):
+        return None
+
+    chosen = matches[idx] or {}
+    protein = (chosen.get("protein") or {}) if isinstance(chosen, dict) else {}
+    entry_name = str(protein.get("entry_name") or "").strip()
+    accession = str(
+        protein.get("accession") or (chosen.get("accession") if isinstance(chosen, dict) else "") or ""
+    ).strip()
+    suffix = entry_name or accession or f"alt{idx}"
+    fork_id = f"{parent_id}__{suffix}"
+
+    objects = st.session_state[_OBJECTS_KEY]
+    order = st.session_state[_ORDER_KEY]
+    if fork_id in objects:
+        # Already spawned — just hand the existing fork back to the caller.
+        return fork_id
+
+    new_label = entry_name or accession or _next_letter_label()
+    fork_obj: dict[str, Any] = {
+        "id": fork_id,
+        "kind": "sequence",
+        "label": new_label,
+        "display_name": new_label,
+        "source": {
+            "type": "forked_from_match",
+            "parent_sequence_id": parent_id,
+            "match_index": idx,
+        },
+        "fasta_header": parent.get("fasta_header"),
+        "sequence_type": parent.get("sequence_type") or "UNKNOWN",
+        "raw_sequence": parent.get("raw_sequence") or "",
+        "normalized_sequence": parent.get("normalized_sequence") or "",
+        "protein_sequence": parent.get("protein_sequence"),
+        "length": parent.get("length") or 0,
+        "status": "ready",
+        "matches": [dict(chosen) if isinstance(chosen, dict) else chosen],
+        "selected_match_index": 0,
+        "anchored_match_index": 0,
+        "warnings": [],
+        "classification_reason": parent.get("classification_reason") or "",
+        "confidence": parent.get("confidence"),
+    }
+    objects[fork_id] = fork_obj
+    order.append(fork_id)
+
+    # Reset parent's preview to its anchor so the user returns to a
+    # clean state after spawning a new card.
+    parent_anchor = _anchored_index(parent)
+    if 0 <= parent_anchor < len(parent.get("matches") or []):
+        parent["selected_match_index"] = parent_anchor
+
+    return fork_id
 
 
 # ---------------------------------------------------------------------------
@@ -505,11 +697,26 @@ def apply_objects_patch(patch: dict[str, Any] | None) -> None:
             continue
         existing = objects.get(object_id)
         if existing is None:
-            objects[object_id] = dict(payload)
+            new_obj = dict(payload)
+            # Seed the identity-anchor field for sequences arriving fresh
+            # from the backend (the backend doesn't track it). Without this
+            # the chip label would silently drift to whatever the user is
+            # previewing in the Top-5 switcher.
+            if new_obj.get("kind") == "sequence" and "anchored_match_index" not in new_obj:
+                try:
+                    new_obj["anchored_match_index"] = int(new_obj.get("selected_match_index") or 0)
+                except (TypeError, ValueError):
+                    new_obj["anchored_match_index"] = 0
+            objects[object_id] = new_obj
             if object_id not in order:
                 order.append(object_id)
         else:
             existing.update(payload)
+            if existing.get("kind") == "sequence" and "anchored_match_index" not in existing:
+                try:
+                    existing["anchored_match_index"] = int(existing.get("selected_match_index") or 0)
+                except (TypeError, ValueError):
+                    existing["anchored_match_index"] = 0
 
     if "set_selected" in patch:
         target = patch["set_selected"]

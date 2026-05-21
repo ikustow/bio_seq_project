@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>BioSeq — request lifecycle</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1419;
+    --panel: #161b22;
+    --fg: #e6e6e6;
+    --muted: #8a99a8;
+    --accent: #7cc4ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px 32px 64px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    min-height: 100vh;
+  }
+  .wrap {
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  .lang-bar {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-bottom: 24px;
+  }
+  .lang-btn {
+    background: var(--panel);
+    border: 1px solid #2a3340;
+    color: var(--muted);
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.15s ease;
+  }
+  .lang-btn:hover {
+    color: var(--fg);
+    border-color: #3a4654;
+  }
+  .lang-btn.active {
+    background: var(--accent);
+    color: #0f1419;
+    border-color: var(--accent);
+  }
+  h1 {
+    font-weight: 600;
+    font-size: 28px;
+    margin: 0 0 6px;
+    letter-spacing: -0.01em;
+  }
+  .sub {
+    color: var(--muted);
+    font-size: 14px;
+    margin-bottom: 36px;
+  }
+  .diagram {
+    background: var(--panel);
+    border: 1px solid #2a3340;
+    border-radius: 12px;
+    padding: 32px 16px;
+    overflow-x: auto;
+  }
+  .legend {
+    margin-top: 28px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    font-size: 13px;
+  }
+  .legend div {
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid #2a3340;
+    background: var(--panel);
+  }
+  .legend .swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+  footer {
+    margin-top: 32px;
+    color: var(--muted);
+    font-size: 12px;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="lang-bar">
+    <button class="lang-btn active" data-lang="ru">RU</button>
+    <button class="lang-btn" data-lang="en">EN</button>
+    <button class="lang-btn" data-lang="sr">SR</button>
+  </div>
+
+  <h1 id="title"></h1>
+  <div class="sub" id="subtitle"></div>
+
+  <div class="diagram">
+    <pre class="mermaid" id="mermaid-source"></pre>
+  </div>
+
+  <div class="legend" id="legend"></div>
+
+  <footer id="footer"></footer>
+</div>
+
+<script>
+  const i18n = {
+    ru: {
+      title: "BioSeq — жизненный цикл запроса",
+      subtitle: "Детерминированная оркестрация: распознавание → роутер → синтез ответа",
+      footer: "Открой этот файл в браузере — диаграмма рендерится локально через Mermaid.js (CDN)",
+      legend: [
+        { color: "#2a3340", border: "#7cc4ff", label: "Вход" },
+        { color: "#a4c2f4", label: "Regex" },
+        { color: "#b6d7a8", label: "Языковая модель (Mistral / Chat-LLM)" },
+        { color: "#f6d8b0", label: "Regex-фолбэк" },
+        { color: "#ffd966", label: "Точка принятия решения" },
+        { color: "#d9d2e9", label: "Прямой lookup в БД" },
+        { color: "#1e2a32", border: "#7cc4ff", label: "Компоненты ответа" },
+      ],
+      labels: {
+        A: "Сообщение пользователя",
+        FR1: "Фронтенд: regex<br/>UX-превью + создание @Seq_A",
+        C: "Бэкенд<br/>роутер",
+        D1: "Прямой lookup<br/>в UniProt",
+        RET_TITLE: "Retriever pipeline",
+        M: "<b>Mistral</b> (LLM):<br/>извлечение последовательности<br/>+ классификация DNA / PROTEIN",
+        MF: "Regex-фолбэк:<br/>FASTA / IUPAC pattern matching",
+        SEARCH: "Поиск по эмбеддингам<br/>ANN по базе UniProt",
+        G: "Top-5 кандидатов",
+        PICK: "Выбор кандидата #1<br/>с наивысшим match_score",
+        LLM: "Chat-LLM<br/>синтез естественноязычного ответа<br/>контекст: история + объекты + найденные данные",
+        Z_TITLE: " Ответ пользователю ",
+        Z1: "🧬 Карточка белка",
+        Z2: "💬 Текст в чате",
+        Z3: "✨ Подсказки",
+        e_uniprot: "UniProt ID",
+        e_newseq: "Новая<br/>последовательность",
+        e_textq: "Текстовый вопрос<br/>продолжение разговора",
+        e_llmfail: "сбой LLM",
+        e_seqfound: "последовательность<br/>найдена",
+        e_found: "найдено",
+        e_nosseq: "последовательности нет —<br/>обрабатывать как текст",
+        e_nothing: "ничего не найдено",
+      },
+    },
+    en: {
+      title: "BioSeq — request lifecycle",
+      subtitle: "Deterministic orchestration: recognition → router → response synthesis",
+      footer: "Open this file in a browser — the diagram is rendered locally via Mermaid.js (CDN)",
+      legend: [
+        { color: "#2a3340", border: "#7cc4ff", label: "Entry" },
+        { color: "#a4c2f4", label: "Regex" },
+        { color: "#b6d7a8", label: "Language model (Mistral / Chat-LLM)" },
+        { color: "#f6d8b0", label: "Regex fallback" },
+        { color: "#ffd966", label: "Decision point" },
+        { color: "#d9d2e9", label: "Direct DB lookup" },
+        { color: "#1e2a32", border: "#7cc4ff", label: "Response components" },
+      ],
+      labels: {
+        A: "User message",
+        FR1: "Frontend: regex<br/>UX preview + create @Seq_A",
+        C: "Backend<br/>router",
+        D1: "Direct UniProt<br/>lookup",
+        RET_TITLE: "Retriever pipeline",
+        M: "<b>Mistral</b> (LLM):<br/>sequence extraction<br/>+ DNA / PROTEIN classification",
+        MF: "Regex fallback:<br/>FASTA / IUPAC pattern matching",
+        SEARCH: "Embedding search<br/>ANN over UniProt",
+        G: "Top-5 candidates",
+        PICK: "Pick candidate #1<br/>with highest match_score",
+        LLM: "Chat-LLM<br/>natural-language response synthesis<br/>context: history + objects + retrieved data",
+        Z_TITLE: " Response to user ",
+        Z1: "🧬 Protein card",
+        Z2: "💬 Chat text",
+        Z3: "✨ Suggestions",
+        e_uniprot: "UniProt ID",
+        e_newseq: "New<br/>sequence",
+        e_textq: "Text question<br/>conversation follow-up",
+        e_llmfail: "LLM failure",
+        e_seqfound: "sequence<br/>found",
+        e_found: "found",
+        e_nosseq: "no sequence —<br/>handle as text",
+        e_nothing: "nothing found",
+      },
+    },
+    sr: {
+      title: "BioSeq — životni ciklus zahteva",
+      subtitle: "Deterministička orkestracija: prepoznavanje → ruter → sinteza odgovora",
+      footer: "Otvori ovaj fajl u pregledaču — dijagram se renderuje lokalno preko Mermaid.js (CDN)",
+      legend: [
+        { color: "#2a3340", border: "#7cc4ff", label: "Ulaz" },
+        { color: "#a4c2f4", label: "Regex" },
+        { color: "#b6d7a8", label: "Jezički model (Mistral / Chat-LLM)" },
+        { color: "#f6d8b0", label: "Regex-fallback" },
+        { color: "#ffd966", label: "Tačka odluke" },
+        { color: "#d9d2e9", label: "Direktan lookup u bazi" },
+        { color: "#1e2a32", border: "#7cc4ff", label: "Komponente odgovora" },
+      ],
+      labels: {
+        A: "Korisnička poruka",
+        FR1: "Frontend: regex<br/>UX pregled + kreiranje @Seq_A",
+        C: "Backend<br/>ruter",
+        D1: "Direktan lookup<br/>u UniProt-u",
+        RET_TITLE: "Retriever pipeline",
+        M: "<b>Mistral</b> (LLM):<br/>ekstrakcija sekvence<br/>+ klasifikacija DNK / PROTEIN",
+        MF: "Regex-fallback:<br/>FASTA / IUPAC pattern matching",
+        SEARCH: "Pretraga po embeddingima<br/>ANN po bazi UniProt",
+        G: "Top-5 kandidata",
+        PICK: "Izbor kandidata #1<br/>sa najvišim match_score",
+        LLM: "Chat-LLM<br/>sinteza odgovora na prirodnom jeziku<br/>kontekst: istorija + objekti + pronađeni podaci",
+        Z_TITLE: " Odgovor korisniku ",
+        Z1: "🧬 Kartica proteina",
+        Z2: "💬 Tekst u četu",
+        Z3: "✨ Predlozi",
+        e_uniprot: "UniProt ID",
+        e_newseq: "Nova<br/>sekvenca",
+        e_textq: "Tekstualno pitanje<br/>nastavak razgovora",
+        e_llmfail: "neuspeh LLM-a",
+        e_seqfound: "sekvenca<br/>pronađena",
+        e_found: "pronađeno",
+        e_nosseq: "nema sekvence —<br/>obraditi kao tekst",
+        e_nothing: "ništa nije pronađeno",
+      },
+    },
+  };
+
+  function buildMermaidSource(lang) {
+    const L = i18n[lang].labels;
+    return `
+flowchart TD
+    A([${L.A}]) --> FR1
+    FR1["${L.FR1}"]
+    FR1 --> C{"${L.C}"}
+
+    C -->|${L.e_uniprot}| D1["${L.D1}"]
+    C -->|${L.e_newseq}| RET
+    C -->|${L.e_textq}| LLM
+
+    subgraph RET ["${L.RET_TITLE}"]
+      direction TB
+      M["${L.M}"]
+      M -.->|${L.e_llmfail}| MF["${L.MF}"]
+      M -->|${L.e_seqfound}| SEARCH["${L.SEARCH}"]
+      MF -->|${L.e_found}| SEARCH
+      SEARCH --> G["${L.G}"]
+      G --> PICK["${L.PICK}"]
+    end
+
+    M -->|${L.e_nosseq}| LLM
+    MF -->|${L.e_nothing}| LLM
+    D1 --> LLM
+    PICK --> LLM
+
+    LLM["${L.LLM}"]
+
+    LLM --> Z
+
+    subgraph Z ["${L.Z_TITLE}"]
+      direction LR
+      Z1["${L.Z1}"]
+      Z2["${L.Z2}"]
+      Z3["${L.Z3}"]
+    end
+
+    classDef router fill:#ffd966,stroke:#b8860b,stroke-width:2px,color:#1a1a1a;
+    classDef search fill:#a4c2f4,stroke:#3b5998,color:#1a1a1a;
+    classDef llm fill:#b6d7a8,stroke:#3c7a2e,stroke-width:2px,color:#1a1a1a;
+    classDef lookup fill:#d9d2e9,stroke:#674ea7,color:#1a1a1a;
+    classDef fallback fill:#f6d8b0,stroke:#a06820,color:#1a1a1a;
+    classDef entry fill:#2a3340,stroke:#7cc4ff,color:#e6e6e6;
+    classDef output fill:#1e2a32,stroke:#7cc4ff,color:#e6e6e6;
+
+    class C router;
+    class SEARCH,G,PICK search;
+    class LLM,M llm;
+    class FR1 search;
+    class MF fallback;
+    class D1 lookup;
+    class A entry;
+    class Z1,Z2,Z3 output;
+
+    style Z fill:#141d24,stroke:#7cc4ff,stroke-width:1.5px,color:#7cc4ff;
+    style RET fill:#1a2028,stroke:#5a6878,stroke-width:1px,color:#cfd8e0;
+    `;
+  }
+
+  function renderLegend(lang) {
+    const legendEl = document.getElementById("legend");
+    legendEl.innerHTML = i18n[lang].legend.map(item => {
+      const border = item.border ? `border:1px solid ${item.border}` : "";
+      return `<div><span class="swatch" style="background:${item.color};${border}"></span>${item.label}</div>`;
+    }).join("");
+  }
+
+  let mermaidInitialized = false;
+
+  async function switchLanguage(lang) {
+    document.documentElement.lang = lang;
+    document.getElementById("title").textContent = i18n[lang].title;
+    document.getElementById("subtitle").textContent = i18n[lang].subtitle;
+    document.getElementById("footer").textContent = i18n[lang].footer;
+    renderLegend(lang);
+
+    document.querySelectorAll(".lang-btn").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.lang === lang);
+    });
+
+    const container = document.querySelector(".diagram");
+    container.innerHTML = `<pre class="mermaid" id="mermaid-source">${buildMermaidSource(lang)}</pre>`;
+    await mermaid.run({ querySelector: ".mermaid" });
+  }
+
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: "dark",
+    themeVariables: {
+      background: "#161b22",
+      primaryColor: "#1f2730",
+      primaryTextColor: "#e6e6e6",
+      primaryBorderColor: "#3a4654",
+      lineColor: "#8a99a8",
+      fontFamily: "Inter, -apple-system, sans-serif",
+    },
+    flowchart: { curve: "basis", padding: 16, nodeSpacing: 40, rankSpacing: 50 },
+  });
+
+  document.querySelectorAll(".lang-btn").forEach(btn => {
+    btn.addEventListener("click", () => switchLanguage(btn.dataset.lang));
+  });
+
+  switchLanguage("ru");
+</script>
+</body>
+</html>

@@ -121,6 +121,214 @@ class AlignmentMetrics:
     seq2_coverage: float
 
 
+def interpret_alignment(metrics: AlignmentMetrics) -> tuple[str, str, str]:
+    """Return a ``(tone, headline, body)`` triple describing the alignment.
+
+    ``tone`` is one of ``"success" | "info" | "warning"`` and selects which
+    Streamlit banner to use. The structure of the message is:
+
+    1. **100% identity** branches first — coverage shape (symmetric vs.
+       asymmetric vs. both-small) tells a different biological story
+       even though the identity number is the same.
+    2. **Fragment-level matches** (one or both coverages below 40%) get
+       a dedicated message because the headline % is computed only over
+       the aligned region — quoting it as "full-protein identity" is
+       misleading.
+    3. Otherwise the standard identity bands (Rost 1999's "twilight
+       zone" sits at ~20–35% identity) drive the headline, with optional
+       trailing notes that add educational context when secondary
+       signals — conservative substitutions, large gaps, asymmetric
+       coverage, very short alignments — are visible in the metrics.
+    """
+    identity = metrics.identity_paired
+    similarity = metrics.similarity_alignment
+    gap_pct = metrics.gap_percent
+    cov_q = metrics.seq1_coverage
+    cov_c = metrics.seq2_coverage
+    cov_min = min(cov_q, cov_c)
+    aligned_len = metrics.aligned_length
+
+    # --- 1. Perfect / near-perfect identity: branch by coverage shape ----
+    if identity >= 99.5 and aligned_len > 0:
+        if cov_min >= 90:
+            return (
+                "success",
+                "Identical sequences — same protein",
+                "Every aligned position matches and both sequences are "
+                "covered end-to-end. This is the same protein: either the "
+                "exact UniProt entry the query was taken from, or two "
+                "records of the same gene product (e.g. the canonical "
+                "sequence and an identical strain copy).",
+            )
+        if cov_q >= 90 and cov_c < 60:
+            return (
+                "success",
+                "Query is an exact slice of this protein",
+                "Your sequence is fully covered and matches without a "
+                "single substitution, but only part of the candidate is "
+                "used. The candidate is a longer protein and your query "
+                "is an exact piece of it — typically a single domain, the "
+                "mature chain after signal-peptide cleavage, or one chain "
+                "of a multi-chain precursor.",
+            )
+        if cov_c >= 90 and cov_q < 60:
+            return (
+                "success",
+                "This protein is an exact slice of your query",
+                "The full candidate matches perfectly, but it only covers "
+                "part of your query. Your input is the longer protein and "
+                "this candidate is contained inside it verbatim — most "
+                "often a precursor/proprotein vs. one of its cleaved "
+                "chains, or a multi-domain protein that includes this "
+                "domain unchanged.",
+            )
+        return (
+            "info",
+            "Identical conserved region",
+            "A short stretch of both sequences matches without a single "
+            "substitution, but most of each protein lies outside the "
+            "aligned region. That's the signature of a strongly conserved "
+            "motif (active site, binding loop, short domain) on two "
+            "otherwise different proteins.",
+        )
+
+    # --- 2. Collect optional "Note:" signals ----------------------------
+    notes: list[str] = []
+
+    # Coverage asymmetry that doesn't trip the fragment branch below
+    # still suggests a fragment-of relationship and is worth flagging.
+    if cov_min >= 40 and identity >= 50:
+        if cov_q >= 90 and cov_c < 70:
+            notes.append(
+                "Your query is fully covered while only part of the "
+                "candidate is used — the candidate is a longer protein "
+                "and your sequence looks like one of its regions "
+                "(e.g. a single domain or a mature chain)."
+            )
+        elif cov_c >= 90 and cov_q < 70:
+            notes.append(
+                "The candidate is fully covered while only part of your "
+                "query is used — your input contains this protein as a "
+                "region (e.g. precursor → mature chain, or a multi-domain "
+                "host carrying this domain)."
+            )
+
+    # Many BLOSUM62-positive substitutions on top of modest identity is
+    # the textbook "same fold, drifted sequence" signal.
+    if similarity - identity >= 25 and 25 <= identity < 70:
+        notes.append(
+            "Most mismatches are conservative substitutions (BLOSUM62 "
+            "scores them as favourable), so the physico-chemical "
+            "character of the residues is preserved even where the "
+            "letters differ — classic signature of homologs that "
+            "diverged while keeping the same fold and function."
+        )
+
+    if gap_pct >= 20 and identity >= 25:
+        notes.append(
+            "A large share of the alignment is gaps — these proteins "
+            "differ by sizeable insertions or deletions, which can "
+            "indicate alternative splicing, gain/loss of whole domains, "
+            "or longer evolutionary distance."
+        )
+
+    if 0 < aligned_len < 30:
+        notes.append(
+            "The aligned region is very short, so identity and "
+            "similarity numbers are not statistically reliable on their "
+            "own — a short stretch can match by chance."
+        )
+
+    def _with_notes(tone: str, headline: str, body: str) -> tuple[str, str, str]:
+        if notes:
+            body = body + "\n\n**Note:** " + " ".join(notes)
+        return tone, headline, body
+
+    # --- 3. Low-coverage fragment match (identity < 99.5) ----------------
+    if cov_min < 40 and aligned_len > 0:
+        if identity >= 70:
+            body = (
+                "Only a small part of one sequence aligns, but inside that "
+                "region the sequences are strongly conserved. This is the "
+                "classic signature of a single shared domain or motif "
+                "sitting on two otherwise different proteins — one of the "
+                "most common signals in modular protein evolution."
+            )
+        elif identity >= 35:
+            body = (
+                "Only a small part of one sequence aligns, and the shared "
+                "region is moderately conserved. Most likely a homologous "
+                "domain embedded in two otherwise different proteins."
+            )
+        else:
+            body = (
+                "Only a small part of one sequence aligns and even there "
+                "similarity is weak. This is most likely a spurious "
+                "compositional match rather than a real homologous region."
+            )
+        return _with_notes("warning", "Fragment-level match", body)
+
+    # --- 4. Standard identity bands --------------------------------------
+    if identity >= 90:
+        return _with_notes(
+            "success",
+            "Very close orthologs or variants",
+            "Almost certainly the same protein in closely related species, "
+            "or natural variants of one gene (alleles, isoforms, strain "
+            "polymorphisms). Function, structure, and domain architecture "
+            "should be essentially identical.",
+        )
+    if identity >= 70:
+        return _with_notes(
+            "success",
+            "Clear orthologs",
+            "Strongly conserved sequences — most likely the same protein "
+            "in related species, or paralogs that diverged recently. "
+            "Biological function is usually preserved.",
+        )
+    if identity >= 50:
+        return _with_notes(
+            "info",
+            "Confident homologs",
+            "These proteins share a common ancestor and almost certainly "
+            "belong to the same family. Overall fold and the core function "
+            "are typically conserved, though peripheral details can differ.",
+        )
+    if identity >= 35:
+        return _with_notes(
+            "info",
+            "Probable homologs, same family",
+            "Identity is high enough to infer common ancestry with "
+            "confidence. Expect a shared fold and related function, but "
+            "individual residues and specificity may have drifted.",
+        )
+    if identity >= 25:
+        return _with_notes(
+            "warning",
+            "Twilight zone — homology uncertain",
+            "Sequence identity sits in the classic 20–35% \"twilight "
+            "zone\". These proteins may share an evolutionary origin and "
+            "a common fold, but sequence evidence alone is not enough — "
+            "structural or domain-level signal is needed to be sure.",
+        )
+    if identity >= 15:
+        return _with_notes(
+            "warning",
+            "Distant similarity at best",
+            "Identity is below the twilight zone. Any relationship here is "
+            "speculative from sequence alone; matches at this level are "
+            "often due to short conserved motifs or compositional bias "
+            "rather than shared ancestry.",
+        )
+    return _with_notes(
+        "warning",
+        "No meaningful sequence similarity",
+        "These sequences look essentially unrelated. The alignment shown "
+        "is what the algorithm could find by force, not biological "
+        "signal — treat any inferred relationship with strong scepticism.",
+    )
+
+
 def sequence_match_percent(metrics: AlignmentMetrics) -> float:
     """Return a single full-sequence match percent for candidate ranking.
 
@@ -1024,6 +1232,10 @@ def render_alignment(
         metric_cols[3].metric("Gaps", f"{metrics.gap_percent:.1f}%")
         metric_cols[4].metric("Query coverage", f"{metrics.seq1_coverage:.1f}%")
         metric_cols[5].metric("Candidate coverage", f"{metrics.seq2_coverage:.1f}%")
+
+    tone, headline, body = interpret_alignment(metrics)
+    banner = {"success": st.success, "info": st.info, "warning": st.warning}.get(tone, st.info)
+    banner(f"**{headline}.** {body}")
 
     details = pd.DataFrame(
         [

@@ -904,6 +904,29 @@ div.stButton > button:hover {
 [class*="st-key-candidate_cell_"]:has(button[data-testid="stBaseButton-primary"]) button [data-testid="stMarkdownContainer"] p {
     color: #ffffff !important;
 }
+/* Previewed cell — user clicked an alternative match in Top 5 but
+   hasn't promoted it via the Create button. The ring is painted by an
+   ``::after`` overlay so it sits on TOP of the EMB/SEQ tile colours
+   (the previous ``inset`` box-shadow approach was painted under those
+   children and only the top half was visible). The pseudo is
+   non-interactive so clicks pass straight through to the button below. */
+[class*="st-key-candidate_cell_preview_"] {
+    position: relative;
+}
+[class*="st-key-candidate_cell_preview_"]::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    /* box-sizing: border-box so the 2px border is drawn INSIDE the
+       pseudo's box (which is sized to the parent's content area via
+       inset:0). Without this, the border would extend outward and be
+       clipped by the parent's overflow:hidden, hiding the entire ring. */
+    box-sizing: border-box;
+    border: 2px solid #2079D6;
+    border-radius: 8px;
+    pointer-events: none;
+    z-index: 5;
+}
 /* Lock the button itself. NOTE: the real DOM is
      div.stButton  >  span[data-testid=stTooltipHoverTarget]  >  button
    so `div.stButton > button` does NOT match — use a descendant
@@ -1708,6 +1731,97 @@ div.stButton > button:hover {
 
 .bioseq-chip.is-selected .bioseq-chip-caption {
     color: rgba(255, 255, 255, 0.88);
+}
+
+/* ---------- Ghost spawn chip ----------
+   Same outer dimensions as a real ``.bioseq-chip`` so the grid stays
+   uniform — the ghost modifier swaps in a dashed border, a translucent
+   fill and a muted status pill. The chip body itself is informational:
+   clicks on it are deliberately inert (handled by the mention bridge's
+   ghost-skip rule) so the user can't trigger a spawn accidentally. The
+   actual create affordance is the ``.bioseq-chip-create-btn`` floating
+   pill at the bottom-center, mirroring the position of the insert
+   button on real chips — but always visible (never hover-only) since
+   it's the chip's only interactive element. */
+.bioseq-chip.bioseq-chip-ghost {
+    background: rgba(32, 121, 214, 0.05);
+    border: 1.5px dashed rgba(32, 121, 214, 0.5);
+    box-shadow: none;
+    color: #2079D6 !important;
+    cursor: default;
+}
+.bioseq-chip.bioseq-chip-ghost:hover {
+    background: rgba(32, 121, 214, 0.08);
+    border-color: rgba(32, 121, 214, 0.7);
+    box-shadow: none;
+}
+.bioseq-chip.bioseq-chip-ghost:active {
+    /* No depress effect on the body — only the Create button below is
+       clickable, so suppress the inherited ``transform`` from the base
+       ``.bioseq-chip:active`` rule. */
+    transform: none;
+}
+.bioseq-chip.bioseq-chip-ghost .bioseq-chip-label {
+    color: #2079D6;
+    font-weight: 700;
+}
+.bioseq-chip.bioseq-chip-ghost .bioseq-chip-name {
+    color: #1e3a5f;
+    font-weight: 600;
+    font-style: italic;
+    font-size: 0.78rem;
+}
+.bioseq-chip.bioseq-chip-ghost .bioseq-chip-len {
+    color: #475569;
+    background: rgba(32, 121, 214, 0.08);
+    border: 1px dashed rgba(32, 121, 214, 0.3);
+}
+.bioseq-chip.bioseq-chip-ghost .bioseq-chip-acc {
+    background: rgba(32, 121, 214, 0.10);
+    color: #1862B5;
+    border-color: rgba(32, 121, 214, 0.4);
+}
+.bioseq-chip-status.bioseq-chip-status-ghost {
+    background: rgba(32, 121, 214, 0.12);
+    color: #1e3a5f;
+    border: 1px dashed rgba(32, 121, 214, 0.45);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+/* Create button: bottom-center floating pill (mirrors .bioseq-chip-insert
+   position). Always visible — this is the chip's primary affordance. */
+.bioseq-chip-create-btn {
+    position: absolute;
+    left: 50%;
+    bottom: -13px;
+    transform: translateX(-50%);
+    padding: 4px 14px;
+    border: 1.5px solid #ffffff;
+    border-radius: 13px;
+    background-color: #2079D6;
+    color: #ffffff !important;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    text-decoration: none !important;
+    line-height: 1;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.28);
+    cursor: pointer;
+    z-index: 3;
+    transition: background-color 0.12s ease, transform 0.08s ease;
+    white-space: nowrap;
+}
+.bioseq-chip-create-btn:hover {
+    background-color: #1862B5;
+    transform: translateX(-50%) scale(1.06);
+    text-decoration: none !important;
+    color: #ffffff !important;
+}
+.bioseq-chip-create-btn:active {
+    background-color: #134A8A;
+    transform: translateX(-50%) scale(0.96);
 }
 
 /* ---------- Compact Sequence Inspector header ---------- */
