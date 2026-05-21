@@ -8,6 +8,8 @@ import asyncio
 import torch
 import traceback
 import re
+import time
+import itertools
 from typing import List, Tuple, Generator, Dict, Any, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -357,16 +359,23 @@ async def search_dna(request: SearchRequest):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+_rerank_seq = itertools.count(1)
+
 @app.post("/rerank")
 async def rerank(request: RerankRequest):
+    rid = next(_rerank_seq)
+    t0 = time.perf_counter()
+    print(f"[rerank #{rid}] START records={len(request.records)}", flush=True)
     try:
         loop = asyncio.get_event_loop()
-        
+
         # 1. Semantic Embedding
         passages = [_format_record_for_embedding(rec) for rec in request.records]
+        print(f"[rerank #{rid}] passages built, max_chars={max((len(p) for p in passages), default=0)} (+{time.perf_counter()-t0:.1f}s)", flush=True)
         query_vec = await loop.run_in_executor(executor, _embed_rerank_texts, [request.context_query], True)
         doc_vecs = await loop.run_in_executor(executor, _embed_rerank_texts, passages, False)
-        
+        print(f"[rerank #{rid}] embedded (+{time.perf_counter()-t0:.1f}s)", flush=True)
+
         # 2. Raw Semantic Scores (Cosine Similarity)
         query_vec = query_vec / (np.linalg.norm(query_vec, axis=1, keepdims=True) + 1e-9)
         doc_vecs = doc_vecs / (np.linalg.norm(doc_vecs, axis=1, keepdims=True) + 1e-9)
@@ -397,9 +406,11 @@ async def rerank(request: RerankRequest):
 
         # 6. Stable Rank Sort
         reranked_list.sort(key=lambda x: x["_search_score"], reverse=True)
-        
+
+        print(f"[rerank #{rid}] DONE total={time.perf_counter()-t0:.1f}s", flush=True)
         return {"results": reranked_list[:request.top_n]}
     except Exception as e:
+        print(f"[rerank #{rid}] FAILED after {time.perf_counter()-t0:.1f}s: {e}", flush=True)
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
