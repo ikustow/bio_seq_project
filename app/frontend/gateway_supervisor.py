@@ -30,10 +30,10 @@ Design
   modify the retriever or the gateway. It launches ``bootstrap.py`` and
   ``search_service.py`` exactly the way the docs say to launch them by hand.
 
-Known data prerequisites (NOT solved here — see DEPLOY_HF_SINGLE_PROCESS.md):
-the gateway loads BOTH a protein and a DNA FAISS index at startup. ``bootstrap``
-only fetches the protein ``per-protein.h5``; ``per-gene.h5`` must be provided
-separately or the gateway exits on boot.
+Data prerequisites (see DEPLOY_HF_SINGLE_PROCESS.md): the gateway loads BOTH a
+protein and a DNA FAISS index at startup. ``bootstrap`` now fetches both
+``per-protein.h5`` and ``per-gene.h5`` from the dataset — the operator only has
+to upload ``per-gene.h5`` there once, or the gateway exits on boot.
 """
 
 from __future__ import annotations

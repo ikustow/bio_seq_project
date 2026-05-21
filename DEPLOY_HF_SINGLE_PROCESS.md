@@ -51,24 +51,38 @@ RAM note: only the gateway loads ProtT5 + FAISS now (Streamlit is a thin HTTP
 client), so the footprint is ≈ the old in-process deploy — fits the free 16 GB
 CPU tier.
 
-## ⚠️ Remaining data gaps (not solved by Option A)
+## Data provisioning (what the gateway needs on disk)
 
-Option A handles **process startup**. Data provisioning is separate and still
-needs attention before a cold boot succeeds end-to-end:
+Option A handles **process startup**. The gateway then loads *both* a protein
+and a DNA FAISS index at boot, so the dataset behind
+`BIOSEQ_DATA_SOURCE=hf:OWNER/DATASET` must provide both `.h5` files.
+`bootstrap.ensure_data()` fetches them automatically before launching the
+gateway:
 
-1. **DNA index is mandatory at boot.** `search_service` loads *both* a protein
-   and a DNA FAISS index on startup, but `bootstrap.ensure_data()` only fetches
-   the protein `per-protein.h5`. If `per-gene.h5` is absent the gateway exits
-   immediately (the supervisor logs `gateway exited immediately`). Fix options:
-   add `per-gene.h5` to the `radda-i/bioseq-data` dataset and extend
-   `bootstrap.ensure_data()` to fetch it, **or** make the DNA index load lazy /
-   optional in `search_service`. Both touch `main` — out of scope for this
-   branch.
-2. **Accessions cache format mismatch (non-fatal).** bootstrap downloads
-   `per-protein.accessions.pkl`; the gateway reads `per-protein.accessions.json`.
-   Result: the prebuilt index is ignored and rebuilt from the `.h5` (~5–15 min
-   one-time cold-start cost). Align the dataset to ship `.accessions.json` to
-   avoid the rebuild.
+| File | Required | Notes |
+|---|---|---|
+| `per-protein.h5` | **yes** | Protein FAISS source (~1.3 GB). |
+| `per-gene.h5` | **yes** | DNA FAISS source. Without it the gateway **exits on boot** (it loads the DNA index eagerly); the supervisor logs `gateway exited immediately`. |
+| `per-protein.index` + `per-protein.accessions.json` | optional | Pre-built protein index — skips a 5–15 min rebuild. Cache must be `.json` (the gateway reads it with `json.load`). |
+| `per-gene.index` + `per-gene.accessions.json` | optional | Same, for DNA. |
+
+If the optional `.index` / `.accessions.json` are absent the gateway rebuilds
+the index from the `.h5` on first boot — correct, just slow, and repeated on
+every cold start (the HF free tier has no persistent disk). To upload only the
+`.h5` files is enough for a *working* (if slow-booting) deploy.
+
+> **Previously known gaps, now fixed in `bootstrap.py`:** it used to fetch only
+> `per-protein.h5` (so `per-gene.h5` was missing → gateway crashed) and to pull
+> `per-protein.accessions.pkl` instead of the `.json` the gateway reads (so the
+> prebuilt index was ignored). Both are resolved in code: bootstrap now fetches
+> `per-gene.h5`, prefers a shipped `.accessions.json`, and — for the existing
+> dataset that only carries the legacy `.accessions.pkl` — downloads and
+> converts it to `.json` automatically. The **only** manual step left is
+> uploading `per-gene.h5` to the dataset root. (The dataset as of 2026-05-31
+> has `per-protein.h5` + `per-protein.index` + `per-protein.accessions.pkl`;
+> the protein index now works as-is via the auto-conversion. DNA has no
+> prebuilt index, so the gateway builds it once from `per-gene.h5` on first
+> boot.)
 
 ## Local smoke test
 
