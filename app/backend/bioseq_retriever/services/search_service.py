@@ -34,6 +34,14 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 np.random.seed(RANDOM_SEED)
 
 # =============================================================================
+# GLOBAL PARALLELISM CONFIGURATION
+# =============================================================================
+TOTAL_CORES = os.cpu_count() or 1
+faiss.omp_set_num_threads(TOTAL_CORES)
+torch.set_num_threads(TOTAL_CORES)
+print(f"Parallelism Optimized: FAISS and PyTorch using {TOTAL_CORES} threads.")
+
+# =============================================================================
 # DATA STRUCTURES
 # =============================================================================
 
@@ -104,32 +112,29 @@ def iter_embeddings(h5_path: str, batch_size: int = H5_BATCH_SIZE) -> Generator[
                 batch_embeddings[j] = f[acc][:]
             yield batch_embeddings, batch_accs
 
-def build_index(h5_path: str, index_path: str, name: str) -> faiss.IndexHNSWFlat:
+def build_index(h5_path: str, index_path: str, name: str) -> faiss.IndexFlatIP:
     index = None
     for batch_embeddings, _ in iter_embeddings(h5_path):
         dim = batch_embeddings.shape[1]
         if index is None:
-            print(f"Building {name} HNSW index (M={HNSW_M}, efC={HNSW_EF_CONSTRUCTION})...")
-            index = faiss.IndexHNSWFlat(dim, HNSW_M, faiss.METRIC_INNER_PRODUCT)
-            index.hnsw.efConstruction = HNSW_EF_CONSTRUCTION
+            print(f"Building {name} Exhaustive Flat index...")
+            index = faiss.IndexFlatIP(dim)
         faiss.normalize_L2(batch_embeddings)
         index.add(batch_embeddings)
     if index_path:
         faiss.write_index(index, index_path)
     return index
 
-def load_or_create_index(h5_path: str, index_path: str, cache_path: str, name: str) -> Tuple[faiss.IndexHNSWFlat, List[str]]:
+def load_or_create_index(h5_path: str, index_path: str, cache_path: str, name: str) -> Tuple[faiss.IndexFlatIP, List[str]]:
     if os.path.exists(index_path) and os.path.exists(cache_path):
         print(f"Loading existing {name} index...")
         index = faiss.read_index(index_path)
-        index.hnsw.efSearch = HNSW_EF_SEARCH
         with open(cache_path, 'r') as f:
             accessions = json.load(f)
         return index, accessions
     
     # If index or cache missing, build it
     index = build_index(h5_path, index_path, name)
-    index.hnsw.efSearch = HNSW_EF_SEARCH
 
     # Extract and cache accessions (ensuring we only cache dataset keys)
     with h5py.File(h5_path, 'r', libver='latest') as f:
@@ -213,12 +218,8 @@ def _embed_rerank_texts(texts: List[str], is_query: bool = False) -> np.ndarray:
 def _perform_vector_search(index, query_emb: np.ndarray, k: int):
     query_vec = query_emb.reshape(1, -1)
     faiss.normalize_L2(query_vec)
-    faiss.omp_set_num_threads(1) # Strict reproducibility
-    try:
-        distances, indices = index.search(query_vec, k)
-    finally:
-        faiss.omp_set_num_threads(DEFAULT_FAISS_THREADS)
-    return distances, indices
+    # Enable full parallel computation as requested (removed omp_set_num_threads(1))
+    return index.search(query_vec, k)
 
 # --- Reranking Helpers ---
 
