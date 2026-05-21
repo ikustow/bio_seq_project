@@ -83,7 +83,7 @@ def capture(prompt: str, outcome: dict[str, Any]) -> None:
     st.session_state[_LOG_KEY] = log[-_LOG_LIMIT:]
 
 
-def render() -> None:
+def render(*, visible: bool = True) -> None:
     """Emit the panel markup and wire its behavior.
 
     The panel HTML is NOT emitted via ``st.markdown`` — doing so used to
@@ -94,6 +94,10 @@ def render() -> None:
     serialized into the JS payload and the JS creates/updates the panel
     DOM entirely inside ``<body>``, completely outside React's tree.
     """
+    if not visible:
+        st.markdown(_HIDE_PANEL_CSS, unsafe_allow_html=True)
+        return
+
     log: list[dict[str, Any]] = list(st.session_state.get(_LOG_KEY) or [])
     indexed = list(enumerate(log))
     indexed.reverse()  # newest first
@@ -171,6 +175,15 @@ def _format_entry(entry: dict[str, Any]) -> str:
         parts.append("# Assistant reply:")
     parts.append(str(entry.get("reply", "")))
     return "\n".join(parts)
+
+
+_HIDE_PANEL_CSS = """
+<style>
+#bioseq-llm-debug-panel {
+    display: none !important;
+}
+</style>
+"""
 
 
 def _html_escape(value: Any) -> str:
@@ -305,6 +318,8 @@ _PANEL_JS = """
         panel.innerHTML = buildPanelMarkup(PAYLOAD.entries.length > 0);
         doc.body.appendChild(panel);
     }
+    panel.style.display = "";
+    panel.removeAttribute("aria-hidden");
 
     applyEntries(panel, PAYLOAD.entries, PAYLOAD.emptyText);
 

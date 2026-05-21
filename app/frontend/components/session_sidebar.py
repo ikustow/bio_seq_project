@@ -11,6 +11,7 @@ from typing import Any
 import streamlit as st
 
 import chat_pipeline
+import config
 import session_db_adapter
 import session_identity
 import session_objects
@@ -116,25 +117,26 @@ def render() -> None:
         else:
             st.caption("Only this session is available without DB persistence.")
 
-        st.markdown("---")
-        with st.expander("Debug ids", expanded=False):
-            st.markdown(
-                f"- user: `{session_identity.short_id(user_id)}`\n"
-                f"- session: `{session_identity.short_id(session_id)}`"
-            )
-            snapshot = session_identity.cookie_state_snapshot()
-            st.markdown("**Cookie state**")
-            st.markdown(
-                f"- controller loaded: `{snapshot['controller_loaded']}`\n"
-                f"- hydration: `{snapshot['state']}`\n"
-                f"- cookie user_id: `{session_identity.short_id(snapshot['cookie_user_id'] or '—')}`\n"
-                f"- cookie session_id: `{session_identity.short_id(snapshot['cookie_session_id'] or '—')}`\n"
-                f"- pending promotion: user=`{snapshot['user_pending_promotion']}` session=`{snapshot['session_pending_promotion']}`"
-            )
-            if st.session_state.get("backend_warnings"):
-                st.markdown("**Warnings**")
-                for warning in st.session_state.backend_warnings:
-                    st.markdown(f"- {warning}")
+        if config.SHOW_DEBUG_PANELS:
+            st.markdown("---")
+            with st.expander("Debug ids", expanded=False):
+                st.markdown(
+                    f"- user: `{session_identity.short_id(user_id)}`\n"
+                    f"- session: `{session_identity.short_id(session_id)}`"
+                )
+                snapshot = session_identity.cookie_state_snapshot()
+                st.markdown("**Cookie state**")
+                st.markdown(
+                    f"- controller loaded: `{snapshot['controller_loaded']}`\n"
+                    f"- hydration: `{snapshot['state']}`\n"
+                    f"- cookie user_id: `{session_identity.short_id(snapshot['cookie_user_id'] or '—')}`\n"
+                    f"- cookie session_id: `{session_identity.short_id(snapshot['cookie_session_id'] or '—')}`\n"
+                    f"- pending promotion: user=`{snapshot['user_pending_promotion']}` session=`{snapshot['session_pending_promotion']}`"
+                )
+                if st.session_state.get("backend_warnings"):
+                    st.markdown("**Warnings**")
+                    for warning in st.session_state.backend_warnings:
+                        st.markdown(f"- {warning}")
 
 
 def _render_session_list(sessions: list[dict[str, Any]], *, current_id: str) -> None:

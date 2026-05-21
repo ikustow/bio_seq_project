@@ -1063,7 +1063,7 @@ def main() -> None:
     _inject_right_panel_resizer()
     _inject_candidate_click_forwarder()
     _inject_topbar_scroll()
-    debug_panel.render()
+    debug_panel.render(visible=config.SHOW_DEBUG_PANELS)
 
     # Deferred rerun trigger. ``chat._run_pending`` is invoked from inside
     # the left column, well before ``object_bar.render()`` gets a chance to
