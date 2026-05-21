@@ -28,7 +28,11 @@ SEARCH_PROBE_TIMEOUT = float(os.getenv("BIOSEQ_SEARCH_PROBE_TIMEOUT", "2.0"))
 SEARCH_SERVICE_URL = os.getenv("BIOSEQ_SEARCH_SERVICE_URL", "http://localhost:8002")
 
 # --- Retrieval Settings ---
-RETRIEVAL_TOP_K = 75
+# Candidates pulled from FAISS and fed into the reranker. Kept small because the
+# reranker only emits RERANK_TOP_N=5 and its per-candidate cost on CPU is high
+# (~5s/candidate): 75 candidates pushed a single rerank to ~374s, over the 300s
+# client timeout, triggering a retry storm. 15 keeps one rerank well under it.
+RETRIEVAL_TOP_K = 15
 RERANK_TOP_N = 5
 
 # Toggle to use services instead of local loading
