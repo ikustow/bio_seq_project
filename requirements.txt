@@ -45,6 +45,7 @@ pyfaidx
 huggingface_hub==1.13.0
 
 # Persistence — Supabase Postgres for public.chat_sessions
+langgraph-checkpoint-postgres>=3.0
 psycopg[binary]>=3.1
 
 # .env loader so MISTRAL_API_KEY / SUPABASE_DB_URL can come from a local

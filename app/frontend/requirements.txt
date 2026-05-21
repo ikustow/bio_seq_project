@@ -11,6 +11,7 @@ biopython>=1.83
 
 # Persistence + agent runtime ----------------------------------------------
 psycopg[binary]>=3.1
+langgraph-checkpoint-postgres>=3.0
 langgraph
 langchain
 langchain-openai

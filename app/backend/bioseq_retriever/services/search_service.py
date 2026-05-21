@@ -1,11 +1,11 @@
 import os
 import sys
-import faiss
 import json
 import numpy as np
 import h5py
 import asyncio
 import torch
+import faiss
 import traceback
 import re
 import time

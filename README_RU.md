@@ -1,164 +1,204 @@
 # BioSeq Investigator
 
-Streamlit-приложение для исследовательского анализа биологических последовательностей. Пользователь вставляет DNA или protein FASTA + вопрос на естественном языке; первый turn идёт в ProtT5/FAISS retriever по Swiss-Prot с Mistral-reranker-ом, follow-up вопросы — в Gemini через Cloudflare-прокси. История сессий хранится в Supabase Postgres (`public.chat_sessions`).
+BioSeq Investigator - исследовательский ассистент для первичного анализа DNA
+и protein FASTA. Пользователь вставляет последовательность и задает вопрос на
+естественном языке, а приложение находит ближайшие UniProt/Swiss-Prot
+кандидаты, показывает evidence-grounded карточку белка и поддерживает
+follow-up диалог по найденному контексту.
 
-🇬🇧 English version (also used as HF Spaces config): [README.md](README.md).
+English README: [README.md](README.md).
 
-## Документация
+## Бизнес-ценность
 
-- [report/USER_GUIDE.md](report/USER_GUIDE.md) (RU) · [report/USER_GUIDE_en.md](report/USER_GUIDE_en.md) (EN) — 5-минутный walkthrough по live HF-приложению для новичков (биологический бэкграунд не нужен).
-- [app/README.md](app/README.md) (RU) · [app/README_en.md](app/README_en.md) (EN) — Streamlit-приложение: runtime архитектура, env vars, persistence, файловый layout.
-- [app/ARCHITECTURE.md](app/ARCHITECTURE.md) (RU) · [app/ARCHITECTURE_en.md](app/ARCHITECTURE_en.md) (EN) — текущая архитектура app (модули, поток данных, decision points).
-- [app/CHAT_LLM_BACKEND_MIGRATION_PLAN.md](app/CHAT_LLM_BACKEND_MIGRATION_PLAN.md) — план переноса follow-up Chat LLM из `frontend/chat_llm_pipeline.py` в backend service layer.
-- [report/REPORT.MD](report/REPORT.MD) (RU) · [report/REPORT_EN.MD](report/REPORT_EN.MD) (EN) — промежуточный отчёт по проекту с диаграммами.
-- [report/VALIDATION_PLAN.md](report/VALIDATION_PLAN.md) (RU) · [report/VALIDATION_PLAN_en.md](report/VALIDATION_PLAN_en.md) (EN) — план валидации (L1/L2/L3) и датасеты.
-- [app/backend/bioseq_retriever/README.md](app/backend/bioseq_retriever/README.md) — retriever-библиотека (LangGraph-пайплайн, ProtT5/FAISS search service, контекстный rerank).
-- [app/frontend/TO-DO.md](app/frontend/TO-DO.md) — открытые frontend TODO.
-- [tests/eval/README.md](tests/eval/README.md) — как запускать eval-харнессы.
-- [HOW_IT_WORKS.md](HOW_IT_WORKS.md) - detailed description of how it works and how to run it locally (if you don't want to use the HF interface and want to deploy it locally)
+BioSeq Investigator закрывает разрыв между сырым FASTA и понятным
+биологическим контекстом. Вместо ручного прохода по BLAST, UniProt, статьям,
+feature tables и заметкам исследователь получает один рабочий экран:
+последовательность, top-5 кандидатов, объяснение совпадения, структурированные
+аннотации и историю вопросов.
 
-## Конфигурация (HF Space Secrets / Variables)
+Проект полезен для:
 
-| Переменная                        | Где          | Обязательно        | Назначение |
-|-----------------------------------|--------------|--------------------|------------|
-| `APP_PASSWORD`                    | **Secret**   | опционально        | Single-password gate для UI. Если задано, перед чатом показывается форма входа. |
-| `MISTRAL_API_KEY`                 | **Secret**   | да¹                | Mistral API key — LLM-extraction внутри retriever pipeline + контекстный rerank. |
-| `OPENAI_API_KEY`                  | **Secret**   | да¹                | Fallback для retriever LLM / reranker-а; также используется как provider follow-up Chat LLM. |
-| `SUPABASE_DB_URL`                 | **Secret**   | желательно         | Postgres-строка подключения к `public.chat_sessions`. Без неё sidebar показывает «Session history is not persisted», а follow-up routing на каждом turn-е деградирует в retriever. |
-| `BIOSEQ_BACKEND`                  | **Variable** | да                 | `runtime` включает live pipeline (единственный режим, который зовёт search service и Chat LLM). `mock` оставляет скриптованный демо-UI. |
-| `BIOSEQ_ENABLE_RUNTIME_RETRIEVER` | **Variable** | да (для runtime)   | `true` — разрешает service layer звать `app/backend/bioseq_retriever`. |
-| `BIOSEQ_SEARCH_SERVICE_URL`       | **Variable** | да (для runtime)   | URL unified BioSeq search/rerank gateway (`/search/protein`, `/search/dna`, `/rerank`). Дефолт `http://localhost:8002`. |
-| `BIOSEQ_CHAT_LLM_PROVIDER`        | **Variable** | опционально        | `auto` (по умолчанию — Gemini-прокси при наличии URL+token, иначе OpenAI), `gemini_proxy`, `openai`. |
-| `BIOSEQ_LLM_PROXY_URL`            | **Secret**   | условно            | URL Cloudflare Worker-а, который проксирует Gemini. Нужен, если выбран `gemini_proxy`. |
-| `BIOSEQ_LLM_PROXY_TOKEN`          | **Secret**   | условно            | Bearer-токен, который ожидает Cloudflare-прокси. |
-| `BIOSEQ_OPENAI_CHAT_MODEL`        | **Variable** | опционально        | Имя OpenAI-модели для follow-up Chat LLM. |
-| `BIOSEQ_DATA_SOURCE`              | **Variable** | желательно         | Поставить `hf:radda-i/bioseq-data` — подтягивает `per-protein.h5` (~1.3 GB), готовый FAISS-индекс (~2.5 GB) и accession-кеш из HF Dataset. Cold start ~1–2 мин. Дефолт `uniprot` — качает с UniProt FTP без индекса, добавляет +5–15 мин на ребилд FAISS при каждом cold start. |
-| `BIOSEQ_DATA_DIR`                 | **Variable** | опционально        | Переопределяет путь к данным (по умолчанию `data/`). |
-| `APP_WORKSPACE_ID`                | **Variable** | опционально        | Workspace-metadata, прицепляется к session context. |
-| `APP_USER_ROLE`                   | **Variable** | опционально        | User-role-metadata, прицепляется к session context. |
+- pre-screening неизвестных или плохо документированных последовательностей;
+- быстрых демо и образовательных сценариев, где нужен понятный путь от FASTA
+  к функции белка;
+- продуктовой проверки AI-assisted bioinformatics workflow;
+- воспроизводимого анализа: сессия, кандидаты, выбранный белок и follow-up
+  контекст сохраняются в Postgres;
+- командной работы над bioinformatics UX, где backend, frontend, retrieval и
+  eval-слои можно развивать независимо.
 
-¹ Хотя бы один из `MISTRAL_API_KEY` / `OPENAI_API_KEY` обязателен, иначе retriever pipeline отклонит каждый запрос с friendly-сообщением в чате.
+Главная идея: не заменить curated-анализ биоинформатика, а убрать рутину
+первичного поиска и дать проверяемую стартовую гипотезу за минуты.
 
-## Cold-start (бесплатный HF Space, 16 GB CPU)
+## Что делает проект
 
-1. `per-protein.h5` (~1.3 GB) скачивается в `data/` (~5–10 мин с UniProt FTP, ~1–2 мин с HF Dataset).
-2. Веса `Rostlab/prot_t5_xl_uniref50` (~3 GB) подтягиваются в HF-кеш с публичного Hub-а при первом обращении к ProtT5.
-3. FAISS HNSW индекс либо грузится из dataset-а, либо строится из `.h5` (5–15 мин однопоточно — если pre-built индекс не залит в dataset).
-4. Последующие запросы — ~30–90 сек.
+1. Принимает raw sequence, FASTA или UniProt accession/mnemonic ID.
+2. Определяет тип входа: DNA, protein или обычный текстовый follow-up.
+3. Для sequence-turn запускает runtime retriever:
+   - ProtT5/FAISS поиск по protein embeddings;
+   - DNA path через DNA индекс/поиск, где доступен;
+   - альтернативный BLAST path для protein-поиска;
+   - UniProt metadata fetch;
+   - contextual rerank по смыслу вопроса.
+4. Возвращает top-5 UniProt candidates и UI-ready `ProteinView`.
+5. Рендерит Streamlit UI: чат, карточку белка, features, domains,
+   interactions, variants, alignment viewer и session sidebar.
+6. Для follow-up вопросов использует Chat LLM поверх уже найденного контекста,
+   не сбрасывая активную карточку.
+7. Сохраняет историю и compact session state в Supabase/Postgres, если задан
+   `SUPABASE_DB_URL`.
 
-Для демо-дня имеет смысл сходить в Space хотя бы один раз до зрителей, чтобы прогреть всё перечисленное.
+## Архитектура
 
-## Локальная разработка
+```text
+User
+  -> app/frontend Streamlit UI
+  -> backend.app_contracts.ChatTurnRequest
+  -> backend.app_services.BioSeqChatService
+  -> BioSeqRetrieverPipeline / ChatLLMService / SuggestedQuestionsService
+  -> backend.bioseq_retriever LangGraph pipeline
+  -> FastAPI search gateway: ProtT5 + FAISS + rerank
+  -> UniProt metadata
+  -> CandidateView / ProteinView
+  -> Streamlit protein card + persisted session
+```
+
+Слои разведены так, чтобы UI не знал деталей FAISS/UniProt, а retriever не
+знал Streamlit state. Контракт между ними - Pydantic DTO из
+`app/backend/app_contracts`.
+
+## Техническая документация
+
+### Внутри репозитория
+
+- [Backend layer](app/backend/README_RU.md) ([EN](app/backend/README.md)) -
+  сервисы, контракты, агенты, persistence и search gateway.
+- [Frontend layer](app/frontend/README_RU.md) ([EN](app/frontend/README.md)) -
+  Streamlit entrypoint, UI компоненты, object registry, session restore и
+  runtime modes.
+- [Retriever library](app/backend/bioseq_retriever/README.md) - LangGraph
+  pipeline, ProtT5/FAISS gateway, UniProt fetch и rerank.
+- [Data preparation](data_prep/README.md) - offline pipeline для подготовки
+  Swiss-Prot/RefSeq данных и HDF5 artifacts.
+- [Evaluation harness](tests/eval/README.md) - L1/L2/L3 eval-пайплайны и
+  проверка качества retrieval/LLM ответов.
+- [Environment template](example.env.txt) - минимальный набор переменных для
+  локального runtime.
+
+## Быстрый старт
 
 ```bash
-pip install -r app/frontend/requirements.txt
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp example.env.txt .env
+```
 
-# .env в корне репозитория:
-#   MISTRAL_API_KEY=...                       # либо OPENAI_API_KEY=...
-#   SUPABASE_DB_URL=postgresql://...
-#   BIOSEQ_BACKEND=runtime
-#   BIOSEQ_ENABLE_RUNTIME_RETRIEVER=true
-#   BIOSEQ_SEARCH_SERVICE_URL=http://localhost:8002
-#   BIOSEQ_LLM_PROXY_URL=https://...          # опционально, для Gemini follow-up
-#   BIOSEQ_LLM_PROXY_TOKEN=...                # опционально
-#   BIOSEQ_DATA_SOURCE=hf:radda-i/bioseq-data # желательно
+Для live runtime в `.env` нужен минимум:
 
-# 1) Тяжёлый search/rerank gateway (грузит ProtT5 + FAISS-индекс, слушает :8002).
+```dotenv
+MISTRAL_API_KEY=...
+# или OPENAI_API_KEY=...
+
+BIOSEQ_BACKEND=runtime
+BIOSEQ_ENABLE_RUNTIME_RETRIEVER=true
+BIOSEQ_SEARCH_SERVICE_URL=http://localhost:8002
+BIOSEQ_DATA_SOURCE=hf:radda-i/bioseq-data
+
+# опционально, но желательно для истории сессий
+SUPABASE_DB_URL=postgresql://user:password@host:5432/postgres
+```
+
+Запуск в двух терминалах:
+
+```bash
+# 1. Heavy search/rerank gateway: ProtT5, FAISS, rerank.
 python app/backend/bioseq_retriever/services/search_service.py
 
-# 2) Streamlit UI в другом shell-е.
+# 2. Streamlit UI.
 streamlit run app/frontend/app.py
+```
 
-# Скриптованный демо-режим (без backend и API-ключей):
+Демо-режим без тяжелого backend и API ключей:
+
+```bash
 BIOSEQ_BACKEND=mock streamlit run app/frontend/app.py
 ```
 
+## Основные runtime-переменные
+
+| Переменная | Обязательно | Назначение |
+| --- | --- | --- |
+| `BIOSEQ_BACKEND` | да | `runtime` для live pipeline, `mock` для scripted demo. |
+| `BIOSEQ_ENABLE_RUNTIME_RETRIEVER` | да для runtime | Разрешает service layer запускать `app/backend/bioseq_retriever`. |
+| `BIOSEQ_SEARCH_SERVICE_URL` | да для runtime | URL FastAPI gateway, по умолчанию `http://localhost:8002`. |
+| `MISTRAL_API_KEY` | один из LLM ключей | LLM extraction/rerank path и optional think mode. |
+| `OPENAI_API_KEY` | один из LLM ключей | fallback LLM provider и Chat LLM provider. |
+| `BIOSEQ_CHAT_LLM_PROVIDER` | нет | `auto`, `gemini_proxy` или `openai` для follow-up ответов. |
+| `BIOSEQ_LLM_PROXY_URL` | для `gemini_proxy` | Cloudflare Worker URL для Gemini proxy. |
+| `BIOSEQ_LLM_PROXY_TOKEN` | для `gemini_proxy` | Bearer token для proxy. |
+| `SUPABASE_DB_URL` | желательно | Postgres connection string для `public.chat_sessions`. |
+| `BIOSEQ_DATA_SOURCE` | желательно | `hf:radda-i/bioseq-data` быстрее cold start, `uniprot` качает исходные данные. |
+| `BIOSEQ_DATA_DIR` | нет | Папка для HDF5, FAISS index и accession cache. |
+| `APP_PASSWORD` | нет | Простая password gate для публичного UI. |
+
+Полный шаблон: [example.env.txt](example.env.txt).
+
 ## Структура репозитория
 
-- [`app/frontend/`](app/frontend/) — Streamlit UI: chat, карточка белка, alignment viewer, session sidebar, identity bootstrap. Подробный разбор по модулям — в [`app/README.md`](app/README.md).
-- [`app/backend/`](app/backend/) — сервисный слой: `app_contracts`, `app_services` (`BioSeqChatService`, `BioSeqRetrieverPipeline`, `protein_view_mapper`), `agents_core` (`runtime_agent`, persistence glue).
-- [`app/backend/bioseq_retriever/`](app/backend/bioseq_retriever/) — runtime retriever pipeline (LangGraph + ProtT5/FAISS через search service + UniProt fetch + контекстный rerank).
-- [`depricated/bioseq_retriever/`](depricated/bioseq_retriever/) — rollback/reference snapshot оригинального root-level retriever-а; не на runtime-пути.
-- [`data_prep/`](data_prep/) — offline-скрипты подготовки данных (не часть Streamlit runtime).
-- [`report/`](report/) — промежуточный отчёт, план валидации, user guide.
-- [`tests/`](tests/) — suites `backend/`, `depricated/`, `scripts/`, `eval/`.
+```text
+app/
+  backend/
+    app_contracts/       Pydantic DTO между UI и backend.
+    app_services/        Application orchestration и routing turn-ов.
+    agents_core/         LangGraph session-agent, memory, persistence.
+    bioseq_retriever/    Retrieval pipeline и FastAPI search gateway.
+  frontend/
+    app.py               Streamlit entrypoint.
+    components/          Chat, protein card, alignment, sidebar, debug panel.
+    assets/              Logo, icons, CSS.
+    mock/                Scripted demo mode.
+data_prep/               Offline data-build scripts.
+tests/
+  unit/                  Unit tests для frontend/backend сервисов.
+  backend/               Retriever/backend integration tests.
+  eval/                  Retrieval и LLM evaluation harnesses.
+to_delete/               Архив старой документации и deprecated кода.
+```
 
----
+## Данные и cold start
 
-## Правила работы с репозиторием
+Runtime gateway работает с тяжелыми артефактами:
 
-1. Клонирование репозитория
+- `per-protein.h5` - protein embeddings;
+- `per-protein.index` - FAISS HNSW index;
+- accession cache - соответствие index row -> UniProt accession;
+- optional DNA artifacts для DNA path.
 
-- Скопировать репозиторий себе локально:
-  - `git clone <url>`
-- Перейти в папку проекта:
-  - `cd bio_seq_project`
+На HF/CPU cold start может занять минуты: сначала скачиваются data artifacts,
+затем веса ProtT5, затем gateway загружает FAISS index. Для демо лучше заранее
+прогреть Space одним запросом.
 
-2. Обновление локальной копии
+## Качество и валидация
 
-- Всегда синхронизируйтесь с удалённой веткой `main` перед началом работы:
-  - `git checkout main`
-  - `git pull origin main`
+Retrieval quality проверяется через [tests/eval](tests/eval/README.md).
+Важные метрики: top-k recall, корректность классификации DNA/protein, качество
+follow-up ответов и стабильность session restore. Подробности текущего
+retriever pipeline и известных рисков качества лежат в
+[app/backend/bioseq_retriever/README.md](app/backend/bioseq_retriever/README.md).
 
-3. Создание новой ветки
+## Workflow для разработки
 
-- Отправная точка — всегда `main`.
-- Создавайте ветку из актуальной `main`:
-  - `git checkout main`
-  - `git pull origin main`
-  - `git checkout -b feature/имя-работы`
+1. Работать от свежей `main`.
+2. Создавать короткую ветку: `feature/...`, `fix/...`, `docs/...`.
+3. Перед PR запускать релевантные тесты:
 
-4. Правила именования веток
+```bash
+pytest tests/unit
+pytest tests/backend/bioseq_retriever
+python scripts/smoke_chat_pipeline_routing.py
+```
 
-- Используйте понятные и короткие имена.
-- Формат ветки:
-  - `feature/<описание>` — новая функциональность
-  - `fix/<описание>` — исправление бага
-  - `docs/<описание>` — документация
-  - `chore/<описание>` — вспомогательные задачи
-- Пример:
-  - `feature/add-sequence-parser`
-  - `fix/readme-typo`
-
-5. Работа в ветке
-
-- Делайте небольшие и логичные коммиты.
-- Пишите осмысленные сообщения коммита:
-  - `git commit -m "Добавить парсер последовательностей"`
-- Перед пушем убедитесь, что ветка чиста:
-  - `git status`
-
-6. Публикация ветки
-
-- Отправляйте ветку на удалённый репозиторий:
-  - `git push -u origin <branch-name>`
-
-7. Создание pull request / merge request
-
-- Создавайте PR/MR в `main`.
-- В описании указывайте:
-  - что сделано;
-  - зачем;
-  - если надо — короткий план тестирования.
-
-8. Ревью и слияние
-
-- После позитивного ревью сливайте изменения в `main`.
-- Перед слиянием обновите ветку от `main`, если необходимо:
-  - `git checkout main`
-  - `git pull origin main`
-  - `git checkout <branch-name>`
-  - `git merge main`
-
-9. Удаление ветки
-
-- После слияния удалите локальную и удалённую ветку:
-  - `git branch -d <branch-name>`
-  - `git push origin --delete <branch-name>`
-
-10. Общие рекомендации
-
-- Работайте из свежей `main`.
-- Избегайте работы сразу в `main`.
-- Пишите понятные сообщения коммитов.
-- Делайте частые сохранения через коммиты.
+4. Для изменений retrieval качества запускать eval harness из
+   [tests/eval/README.md](tests/eval/README.md).
+5. В PR писать: что изменено, зачем, как проверено.

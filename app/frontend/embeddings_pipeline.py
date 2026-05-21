@@ -1,16 +1,9 @@
-"""Legacy embeddings retrieval path (ProtT5 + FAISS + UniProt).
+"""Streamlit adapter for the embeddings retriever backend.
 
-Wraps :mod:`bioseq_retriever.src.pipeline` so it can be selected from the
-Streamlit UI as a legacy root-level retriever path. The legacy pipeline does
-not write to ``public.chat_sessions`` itself — this adapter is the sole DB
-writer for the embeddings backend.
-
-Heavy dependencies (``torch``, ``transformers``, ``faiss``, ``h5py``,
-``sentence-transformers``, ``pyfaidx``) are *optional*. We import them
-lazily inside the cached factory so users outside this legacy path never pay
-the import cost. If anything is missing — packages, the H5 file, or the
-LLM key needed by the contextual reranker — we surface a clear instruction
-in the chat reply rather than crashing the page.
+The actual retrieval pipeline lives in ``app/backend/bioseq_retriever`` and
+talks to the search/rerank gateway over HTTP. This module keeps the old
+Streamlit result shape and session persistence behavior while routing through
+the supported backend entry point.
 """
 
 from __future__ import annotations
@@ -24,71 +17,15 @@ import streamlit as st
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _APP_ROOT = _PROJECT_ROOT / "app"
+_BACKEND_ROOT = _APP_ROOT / "backend"
+_BACKEND_RETRIEVER_ROOT = _BACKEND_ROOT / "bioseq_retriever"
 _FRONTEND_ROOT = Path(__file__).resolve().parent
-_RETRIEVER_ROOT = _PROJECT_ROOT / "bioseq_retriever"
-for _path in (_FRONTEND_ROOT, _APP_ROOT, _PROJECT_ROOT, _RETRIEVER_ROOT):
+for _path in (_FRONTEND_ROOT, _APP_ROOT, _PROJECT_ROOT, _BACKEND_ROOT, _BACKEND_RETRIEVER_ROOT):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
 import session_db_adapter  # noqa: E402
 from mock.protein_loader import Candidate, from_dict  # noqa: E402
-
-# bioseq_retriever now defaults BIOSEQ_USE_SERVICES=true and routes embed/search
-# through HTTP microservices on localhost:8001/8002. We're using the local-mode
-# (in-process ProtT5+FAISS), so force services off before any retriever module
-# imports config.py — it's a module-level constant that's read once at import.
-os.environ.setdefault("BIOSEQ_USE_SERVICES", "false")
-
-
-# ---------------------------------------------------------------------------
-# Cached pipeline factory
-# ---------------------------------------------------------------------------
-
-
-REQUIRED_PACKAGES = ("torch", "transformers", "faiss", "h5py")
-
-
-def _ensure_data_paths() -> tuple[Path, Path, Path]:
-    """Resolve the H5 / FAISS index / accessions cache paths.
-
-    Reads ``BIOSEQ_H5_PATH`` / ``BIOSEQ_INDEX_PATH`` / ``BIOSEQ_ACCESSIONS_CACHE_PATH``
-    from env (the legacy pipeline does the same), with sensible defaults
-    pointing under the legacy ``bioseq_retriever/data/`` folder. Returns the
-    resolved absolute paths and raises ``FileNotFoundError`` with a clear
-    message when the H5 file is missing.
-    """
-    h5_path_env = os.getenv("BIOSEQ_H5_PATH") or str(_RETRIEVER_ROOT / "data" / "per-protein.h5")
-    h5_path = Path(h5_path_env).expanduser().resolve()
-
-    base = h5_path.with_suffix("")
-    index_default = f"{base}.index"
-    # bioseq_retriever switched accessions cache from pickle to JSON
-    # (embeddings.get_or_create_index now does json.load); reading a stale
-    # ``.pkl`` produces "Expecting value: line 1 column 1 (char 0)". Default
-    # to ``.json`` so the cache extension matches the loader.
-    cache_default = f"{base}.accessions.json"
-
-    index_path = Path(os.getenv("BIOSEQ_INDEX_PATH", index_default)).expanduser().resolve()
-    cache_path = Path(os.getenv("BIOSEQ_ACCESSIONS_CACHE_PATH", cache_default)).expanduser().resolve()
-
-    if not h5_path.exists():
-        raise FileNotFoundError(
-            f"Embeddings H5 file not found at {h5_path}. "
-            f"Set BIOSEQ_H5_PATH in your .env to the actual location, "
-            f"or place the file at the default path."
-        )
-
-    return h5_path, index_path, cache_path
-
-
-def _missing_packages() -> list[str]:
-    missing: list[str] = []
-    for name in REQUIRED_PACKAGES:
-        try:
-            __import__(name)
-        except ImportError:
-            missing.append(name)
-    return missing
 
 
 def _has_llm_credentials() -> tuple[bool, str]:
@@ -99,59 +36,13 @@ def _has_llm_credentials() -> tuple[bool, str]:
     return False, ""
 
 
-@st.cache_resource(show_spinner="Loading ProtT5 + FAISS index (one-time)…")
-def _build_pipeline_resources():
-    """Build the legacy LangGraph + reranker once per Streamlit process.
-
-    Cached because:
-    - ProtT5 weights load is ~3-5s warm / ~60s cold;
-    - FAISS index build from H5 can take tens of seconds;
-    - the LangChain LLM client opens connections we'd rather reuse.
-
-    Calls ``bootstrap.ensure_data()`` first — same hook the hf-spaces deploy
-    uses inside ``rank_node``. That makes the embeddings backend self-bootstrap
-    on the powerful laptop / HF Spaces: if ``BIOSEQ_DATA_SOURCE=hf:OWNER/REPO``
-    is set and the H5 file is missing, it pulls from the configured HF Dataset
-    (idempotent — skips when files are already on disk). Falls back to UniProt
-    FTP otherwise.
-    """
-    # Bootstrap the data files before resolving paths, so the H5/index land
-    # in the expected location if they were missing.
-    from depricated.bioseq_retriever.src.bootstrap import ensure_data
-    ensure_data()
-
-    # Make env-derived data paths visible to the legacy pipeline before import.
-    h5_path, index_path, cache_path = _ensure_data_paths()
-    os.environ["BIOSEQ_H5_PATH"] = str(h5_path)
-    os.environ["BIOSEQ_INDEX_PATH"] = str(index_path)
-    os.environ["BIOSEQ_ACCESSIONS_CACHE_PATH"] = str(cache_path)
-
-    from bioseq_retriever.src.embeddings import get_or_create_index
-    from depricated.bioseq_retriever.src.search import get_prottrans_embedder
-    from depricated.bioseq_retriever.src.reranking import LocalReranker
-    from depricated.bioseq_retriever.src.pipeline import create_pipeline
-
-    embedder_tools = get_prottrans_embedder()
-    index, accessions = get_or_create_index(str(h5_path), str(index_path), str(cache_path))
-    reranker = LocalReranker()
-    graph = create_pipeline()
-
-    return {
-        "graph": graph,
-        "embedder_tools": embedder_tools,
-        "index": index,
-        "accessions": accessions,
-        "reranker": reranker,
-    }
-
-
 # ---------------------------------------------------------------------------
 # Public turn handler
 # ---------------------------------------------------------------------------
 
 
 def run_turn_embeddings(prompt: str) -> dict[str, Any]:
-    """Run one user turn through the legacy ProtT5+FAISS pipeline.
+    """Run one user turn through the embeddings retriever pipeline.
 
     Returns the same dict shape as ``chat_pipeline.run_turn`` so the caller
     can render either backend's result identically.
@@ -171,8 +62,8 @@ def run_turn_embeddings(prompt: str) -> dict[str, Any]:
     )
     warnings: list[str] = list(session_db_adapter.get_warnings())
 
-    # Preflight: dependencies, data file, LLM key. Fail-fast with friendly UI
-    # message before importing the heavy modules.
+    # Preflight only covers credentials needed by pipeline_interface. The
+    # heavyweight FAISS/ProtT5 dependencies live behind the backend gateway.
     preflight_error = _preflight_check()
     if preflight_error:
         warnings.append(preflight_error)
@@ -187,12 +78,6 @@ def run_turn_embeddings(prompt: str) -> dict[str, Any]:
             "persisted": session_db_adapter.is_persistent(),
         }
 
-    # Retriever architecture moved embeddings/FAISS into HTTP microservices
-    # (see ``bioseq_retriever/services/``). The legacy in-process path below
-    # (``_build_pipeline_resources`` + ``_run_legacy_pipeline``) is kept intact
-    # for reference / future fallback but no longer reachable, since its
-    # imports — ``bioseq_retriever.src.embeddings`` etc. — were removed in the
-    # retriever rewrite. Route through the public entry point instead.
     # ``search_algorithm`` picks the rank-step backend; selectable from the
     # sidebar dropdown. Default is the embeddings (ProtT5+FAISS) path.
     algorithm = st.session_state.get("search_algorithm", "embeddings")
@@ -228,7 +113,7 @@ def run_turn_embeddings(prompt: str) -> dict[str, Any]:
         }
 
     raw_candidates = list(result.get("final_results") or [])
-    ui_candidates = [_candidate_from_legacy(record) for record in raw_candidates]
+    ui_candidates = [_candidate_from_record(record) for record in raw_candidates]
     reply = _assistant_message(result)
     query_protein_sequence = result.get("protein_sequence") or ""
     reveals = _revealed_sections(ui_candidates, query_protein_sequence)
@@ -253,16 +138,6 @@ def run_turn_embeddings(prompt: str) -> dict[str, Any]:
 
 
 def _preflight_check() -> str | None:
-    missing = _missing_packages()
-    if missing:
-        return (
-            "**Embeddings backend dependencies are not installed.**\n\n"
-            f"Missing: `{', '.join(missing)}`\n\n"
-            "Install the embeddings extras section of `requirements.txt` "
-            "(torch / transformers / faiss-cpu / h5py / sentencepiece / protobuf / "
-            "sentence-transformers / pyfaidx / huggingface_hub). Total download is "
-            "~2 GB; the ProtT5 weights are pulled lazily on first inference."
-        )
     has_key, _provider = _has_llm_credentials()
     if not has_key:
         return (
@@ -270,103 +145,14 @@ def _preflight_check() -> str | None:
             "Set `MISTRAL_API_KEY` (preferred — what the hf-spaces deploy uses) "
             "or `OPENAI_API_KEY` in your .env, then restart Streamlit."
         )
-    # Note: we deliberately do NOT pre-check H5 file existence here. The
-    # bootstrap step inside ``_build_pipeline_resources`` will download the
-    # H5 from BIOSEQ_DATA_SOURCE (HF Dataset or UniProt FTP) on first run.
-    # If that fails, the error surfaces from there with a precise reason.
     return None
 
 
-def _run_legacy_pipeline(prompt: str, resources: dict[str, Any]) -> dict[str, Any]:
-    """Drive the legacy LangGraph with our cached resources.
-
-    Calling ``run_bioseq_pipeline(prompt)`` directly would re-create the
-    embedder/index/reranker on every turn. We instead invoke the same nodes
-    in sequence using the cached instances, replicating the graph's
-    extract → translate/pass → rank → rerank flow.
-    """
-    from depricated.bioseq_retriever.src.data_fetcher import get_uniprot_records
-    from depricated.bioseq_retriever.src.pipeline import (
-        extract_and_classify_node,
-        pass_protein_node,
-        resolve_filepath_node,
-        translate_dna_node,
-        use_raw_sequence_node,
-    )
-    from depricated.bioseq_retriever.src.search import search_top_k
-
-    state: dict[str, Any] = {
-        "prompt": prompt,
-        "sequence_or_path": None,
-        "input_type": None,
-        "context": None,
-        "sequence": None,
-        "sequence_type": None,
-        "protein_sequence": None,
-        "is_confident": None,
-        "ranked_results": None,
-        "final_results": None,
-        "error": None,
-    }
-    state.update(extract_and_classify_node(state))
-    if state.get("error"):
-        return state
-
-    if state.get("input_type") == "FILEPATH":
-        state.update(resolve_filepath_node(state))
-    else:
-        state.update(use_raw_sequence_node(state))
-    if state.get("error"):
-        return state
-
-    if state.get("sequence_type") == "DNA":
-        state.update(translate_dna_node(state))
-    else:
-        state.update(pass_protein_node(state))
-    if state.get("error"):
-        return state
-
-    # rank_node — direct FAISS search on the cached index
-    try:
-        matches = search_top_k(
-            state["protein_sequence"],
-            resources["embedder_tools"],
-            resources["index"],
-            resources["accessions"],
-            k=50,
-        )
-        embedding_scores = {accession: score for accession, score in matches}
-        records = get_uniprot_records([accession for accession, _score in matches])
-        for record in records:
-            accession = record.get("primaryAccession")
-            if accession in embedding_scores:
-                record["_bioseq_embedding_score"] = embedding_scores[accession]
-        state["ranked_results"] = records
-        state["embedding_scores"] = embedding_scores
-    except Exception as exc:
-        state["error"] = f"Ranking failed: {exc}"
-        return state
-
-    # rerank_node — semantic reranking using the cached reranker
-    try:
-        final = resources["reranker"].rerank_by_context(
-            state["ranked_results"],
-            state.get("context") or "",
-            top_n=5,
-        )
-        state["final_results"] = final
-    except Exception as exc:
-        state["error"] = f"Reranking failed: {exc}"
-
-    return state
-
-
-def _candidate_from_legacy(record: dict[str, Any]) -> Candidate:
+def _candidate_from_record(record: dict[str, Any]) -> Candidate:
     """UniProt JSON record → UI Candidate.
 
-    The FAISS stage returns cosine similarity from normalized protein
-    embeddings. We attach that score to the UniProt record before reranking so
-    the final top-5 buttons can show it.
+    The backend stamps ``_bioseq_embedding_score`` before contextual reranking
+    so the final top-5 buttons can show the original retrieval score.
     """
     return Candidate(
         protein=from_dict(record),
