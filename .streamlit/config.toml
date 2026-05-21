@@ -1,6 +1,13 @@
 [browser]
 gatherUsageStats = false
 
+[logger]
+# Quiet Streamlit's per-rerun WARNING noise — notably the ``st.components.v1.html``
+# deprecation, which fires on every rerun across our ~15 ``components.html`` JS
+# injections — so the Space logs stay readable for gateway/bootstrap diagnostics.
+# Our own gateway/bootstrap logs use print() to stdout and are unaffected.
+level = "error"
+
 [server]
 headless = true
 enableXsrfProtection = true
