@@ -84,6 +84,98 @@ every cold start (the HF free tier has no persistent disk). To upload only the
 > prebuilt index, so the gateway builds it once from `per-gene.h5` on first
 > boot.)
 
+## Deploying to the Space (push)
+
+A HF Space **is its own git repo** — there is **no GitHub→HF auto-sync** (no
+GitHub Action in this repo). Deploy = a manual push to the `space` remote:
+
+```
+space → https://huggingface.co/spaces/radda-i/BioSeq_investigator   (branch main)
+origin → github.com/ikustow/bio_seq_project                          (NOT linked to HF)
+```
+
+You **cannot** push `main` / `deploy/hf-single-process` directly: their history
+carries >10 MiB blobs from the old `backend/graph_core/` experiments, and HF
+rejects oversized blobs *anywhere* in the pushed history. So a deploy is a fresh
+**orphan snapshot** (one commit, no history) of the current tree.
+
+Two HF push rules to satisfy — both handled by the recipe below:
+
+1. **No blob >10 MiB in the pushed history.** The orphan snapshot strips the old
+   graph_core blobs (the current tree's largest file is ~6.5 MiB).
+2. **No binary file stored as a plain git blob** ("use Xet/LFS"). The UI assets
+   (`*.png`, `*.psd` under `app/frontend/assets/`) must go through **LFS**. The
+   old `deploy/hf-spaces` predates this policy, so it slipped through without it.
+
+### Prerequisites
+
+* `per-gene.h5` uploaded to the `radda-i/bioseq-data` dataset root (see *Data
+  provisioning* above).
+* Space Variables/Secrets set (see *HF Space settings*) — crucially
+  `BIOSEQ_SPAWN_GATEWAY=true` and `BIOSEQ_DATA_SOURCE=hf:radda-i/bioseq-data`.
+* `git lfs` installed locally (`git lfs version`).
+
+### The `.gitattributes` (LFS) the snapshot needs
+
+The snapshot must contain a repo-root `.gitattributes` tracking binaries via LFS.
+It is **intentionally not committed on `main`** (to avoid changing the team's
+normal git/LFS behaviour) — create it at deploy time with:
+
+```
+*.png  filter=lfs diff=lfs merge=lfs -text
+*.psd  filter=lfs diff=lfs merge=lfs -text
+*.jpg  filter=lfs diff=lfs merge=lfs -text
+*.jpeg filter=lfs diff=lfs merge=lfs -text
+*.gif  filter=lfs diff=lfs merge=lfs -text
+*.ico  filter=lfs diff=lfs merge=lfs -text
+*.webp filter=lfs diff=lfs merge=lfs -text
+*.pdf  filter=lfs diff=lfs merge=lfs -text
+*.zip  filter=lfs diff=lfs merge=lfs -text
+*.h5   filter=lfs diff=lfs merge=lfs -text
+*.bin  filter=lfs diff=lfs merge=lfs -text
+*.pkl  filter=lfs diff=lfs merge=lfs -text
+*.index filter=lfs diff=lfs merge=lfs -text
+*.npy  filter=lfs diff=lfs merge=lfs -text
+```
+
+### Commands (run from a clean `main`)
+
+```powershell
+# 0. Make sure the .gitattributes block above exists at the repo root.
+
+# 1. Fresh orphan snapshot of the current tree (no history → no big blobs)
+git branch -D deploy/hf-space-snapshot   # first time this errors — ignore it
+git checkout --orphan deploy/hf-space-snapshot
+git add -A
+git commit -m "deploy: HF single-process snapshot"
+
+# 2. Convert binary UI assets to LFS pointers (HF rejects plain-blob binaries)
+git lfs install --local
+git add .gitattributes
+git add --renormalize app/frontend/assets
+git commit --amend --no-edit
+
+# 3. Force-push the snapshot as the Space's main branch (uploads LFS objects too)
+git push space deploy/hf-space-snapshot:main --force
+
+# 4. Back to your working branch
+git checkout main
+```
+
+Sanity check before the push: `git cat-file -p HEAD:app/frontend/assets/BotIcon.png`
+should start with `version https://git-lfs…` (i.e. it's an LFS pointer, not a PNG).
+After the push, HF rebuilds the Space automatically; watch the build + runtime
+logs (`[gateway_supervisor]` → `[bioseq.bootstrap]` → `Uvicorn running on :8002`).
+
+### Rollback
+
+The previous live snapshot is the `deploy/hf-spaces` branch (old v3.0 in-process
+build). Restore it with:
+
+```powershell
+git push space deploy/hf-spaces:main --force
+```
+
 ## Local smoke test
 
 ```powershell
