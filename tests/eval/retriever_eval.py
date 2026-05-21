@@ -70,6 +70,17 @@ def _rank_of(target: str | None, accs: list[str]) -> int:
     return -1
 
 
+def _best_rank(targets: list[str], accs: list[str]) -> int:
+    """Best (lowest) 1-based rank of any of `targets` in `accs`, or -1 if none present.
+
+    With `top1_any_of` listing several acceptable accessions, the rank/MRR
+    metric anchors to whichever accepted accession the system ranked highest —
+    consistent with the pass criterion (top-1 ∈ accepted set).
+    """
+    ranks = [r for r in (_rank_of(t, accs) for t in targets) if r > 0]
+    return min(ranks) if ranks else -1
+
+
 def evaluate_test_case(tc: dict[str, Any], run_pipeline) -> dict[str, Any]:
     tc_id = tc["id"]
     expected = tc.get("expected") or {}
@@ -91,15 +102,15 @@ def evaluate_test_case(tc: dict[str, Any], run_pipeline) -> dict[str, Any]:
     ranked_50 = _extract_accessions(result.get("ranked_results"))
     final_5 = _extract_accessions(result.get("final_results"))
 
-    expected_top1 = expected.get("top1_accession")
+    accepted_top1 = list(expected.get("top1_any_of") or [])
     must_appear = list(expected.get("must_appear_in_top5") or [])
 
     top1_after = final_5[0] if final_5 else ""
     top1_before = ranked_50[0] if ranked_50 else ""
-    rank_before = _rank_of(expected_top1, ranked_50)
-    rank_after = _rank_of(expected_top1, final_5)
+    rank_before = _best_rank(accepted_top1, ranked_50)
+    rank_after = _best_rank(accepted_top1, final_5)
 
-    top1_pass = int(bool(expected_top1) and top1_after == expected_top1)
+    top1_pass = int(bool(accepted_top1) and top1_after in accepted_top1)
     top5_pass = int(bool(must_appear) and all(a in final_5 for a in must_appear))
     rr_at_5 = (1.0 / rank_after) if rank_after > 0 else 0.0
 
@@ -109,7 +120,7 @@ def evaluate_test_case(tc: dict[str, Any], run_pipeline) -> dict[str, Any]:
         "variant": metadata.get("variant") or "",
         "input_type": tc.get("input_type", ""),
         "context_question": tc.get("context_question", ""),
-        "expected_top1_accession": expected_top1 or "",
+        "expected_top1_any_of": "|".join(accepted_top1),
         "expected_must_appear": "|".join(must_appear),
         "top1_accession_before_rerank": top1_before,
         "top1_accession_after_rerank": top1_after,
@@ -139,7 +150,7 @@ def write_csv(rows: list[dict[str, Any]], out_dir: Path) -> Path:
 
 
 def summarize(rows: list[dict[str, Any]]) -> dict[str, float]:
-    positives = [r for r in rows if r["expected_top1_accession"]]
+    positives = [r for r in rows if r["expected_top1_any_of"]]
     n_pos = len(positives)
     if n_pos == 0:
         return {"n_positive": 0}
@@ -192,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[{i}/{len(test_cases)}] {tc['id']} ({tc.get('metadata', {}).get('variant', '?')}) ...", flush=True)
         row = evaluate_test_case(tc, run_bioseq_pipeline)
         rows.append(row)
-        verdict = "OK" if row["top1_pass"] else ("MISS" if row["expected_top1_accession"] else "NEG")
+        verdict = "OK" if row["top1_pass"] else ("MISS" if row["expected_top1_any_of"] else "NEG")
         print(f"    {verdict}  top1={row['top1_accession_after_rerank'] or '-'}  rank={row['rank_of_expected_after_rerank']}  {row['latency_ms']}ms")
         if row["error"]:
             print(f"    ERROR: {row['error']}")

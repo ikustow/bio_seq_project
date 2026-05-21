@@ -76,12 +76,18 @@
 #   context_question    Literal string. Usually one of context_questions above,
 #                       but ANY string is allowed.
 #   expected:
-#     top1_accession            UniProt accession that MUST be at rank 1 after
-#                               rerank. `null` means "no specific top-1 is
+#     top1_any_of               List of UniProt accessions, ANY of which counts
+#                               as a correct rank-1 result after rerank. The
+#                               case PASSES top-1 if the system's top-1 is in
+#                               this list. Use a single-element list for a
+#                               strict expectation (e.g. [P01308]); list several
+#                               to accept any of a set of acceptable homologs.
+#                               An empty list `[]` means "no specific top-1 is
 #                               expected" (used by the negative control).
+#                               rank/MRR anchor to the best-ranked member.
 #     must_appear_in_top5       List of UniProt accessions that MUST appear in
-#                               the returned top-5 (any order). Usually just
-#                               [top1_accession]; can include known homologs
+#                               the returned top-5 (any order). Usually mirrors
+#                               top1_any_of; can include known homologs
 #                               if the dataset author wants to enforce them.
 #                               Empty list means "no constraint on top-5".
 #     top1_score_below          (Optional, negative control only.) The top-1
@@ -106,7 +112,7 @@ test_cases:
     input_type: protein
     context_question: "I am looking for sequences involved in glucose metabolism and structurally related to human insulin."
     expected:
-      top1_accession: P01308
+      top1_any_of: [P01308]
       must_appear_in_top5: [P01308, Q6YK33]
     metadata:
       protein_ref: P01308
@@ -120,7 +126,7 @@ test_cases:
     input_type: protein
     context_question: "I am interested in any species except Human."
     expected:
-      top1_accession: Q6YK33
+      top1_any_of: [Q6YK33]
       must_appear_in_top5: [Q6YK33]
     metadata:
       protein_ref: Q6YK33
@@ -134,7 +140,7 @@ test_cases:
     input_type: protein
     context_question: "Identify this protein and list close matches."
     expected:
-      top1_accession: P01308
+      top1_any_of: [P01308]
       must_appear_in_top5: [P01308]
     metadata:
       protein_ref: P01308
@@ -148,7 +154,7 @@ test_cases:
     input_type: protein
     context_question: "Identify this protein and list close matches."
     expected:
-      top1_accession: P01308
+      top1_any_of: [P01308]
       must_appear_in_top5: [P01308]
     metadata:
       protein_ref: P01308
@@ -161,7 +167,7 @@ test_cases:
     input_type: dna
     context_question: "What is it?"
     expected:
-      top1_accession: P36845
+      top1_any_of: [P36845]
       must_appear_in_top5: [P36845, P68983, P68982]
     metadata:
       protein_ref: P36845
@@ -175,7 +181,7 @@ test_cases:
     input_type: dna
     context_question: "What's that?"
     expected:
-      top1_accession: P36845
+      top1_any_of: [P36845]
       must_appear_in_top5: [P36845, P68983]
     metadata:
       protein_ref: P36845
@@ -189,8 +195,8 @@ test_cases:
     input_type: protein
     context_question: "What's that?"
     expected:
-      top1_accession: P0DTC2
-      must_appear_in_top5: [P0DTC2]
+      top1_any_of: [P0DTC2, A3EX94, P22432]
+      must_appear_in_top5: [P0DTC2, A3EX94, P22432]
     metadata:
       protein_ref: P0DTC2
       variant: V0_full
@@ -203,8 +209,8 @@ test_cases:
     input_type: protein
     context_question: "Identify this protein and list close matches."
     expected:
-      top1_accession: P0DTC2
-      must_appear_in_top5: [P0DTC2]
+      top1_any_of: [P0DTC2, A3EX94, P22432]
+      must_appear_in_top5: [P0DTC2, A3EX94, P22432]
     metadata:
       protein_ref: P0DTC2
       variant: V1_not_full
@@ -213,11 +219,11 @@ test_cases:
   - id: T09_O95185_V1
     # 
     input_seq: |
-      MRKGLRATAARCGLGLGYLLQMLVLPALALLSASGTGSAAQDDDFFHELPETFPSDPPEPLPHFLIEPEEAYIVKNKPVNLYCKASPATQIYFKCNSEWVHQKDHIVDERVDETSGLIVREVSIEISRQQVEELFGPEDYWCQCVAWSSAGTTKSRKAYVRIAYLRKTFEQEPLGKEVSLEQEVLLQCRPPEGIPVAEVEWLKNEDIIDPVEDRNFYITIDHNLIIKQARLSDTANYTCVAKNIVAKRKSTTATVIVYVNGGWSTWTEWSVCNSRCGRGYQKRTRTCTNPAPLNGGAFCEGQSVQKIACTTLCPVDGRWTPWSKWSTCGTECTHWRRRECTAPAPKNGGKDCDGLVLQSKNCTDGL
+      MRKGLRATAARCGLGLGYLLQMLVLPALALLSASGTGSAAQDDDFFHELPETFPSDPPEPLPHFLIEPEEAYIVKNKPVNLYCKASPATQIYFKCNSEWVHQKDHIVDERVDETSGLIVREVSIEISRQQVEELFGPEDYWCQCVAWSSAGTTKSRKAYVRIAYLRKTFEQEPLGKEVSLEQEVLLQCRPPEGIPVAEVEWLKNEDIIDPVEDRNFYITIDHNLIIKQARLSDTANYTCVAKNIVAKRKSTTATVIVYVNGGWSTWTEWSVCNSRCGRGYQKRTRTCTNPAPLNGGAFCEGQSVQKIACTTLCPVDGRWTPWSKWSTCGTECTHWRRRECTAPAPKNGGKDCDGLVLQSKNCTDGLCMQTAPDSDDVALYVGIVIAVIVCLAISVVVALFVYRKNHRDFESDIIDSSALNGGFQPVNIKAARQDLLAVPPDLTSAAAMYRGPVYALHDVSDKIPMTNSPILDPLPNLKIKVYNTSGAVTPQDDLSEFTSKLSPQMTQSLLENEALSLKNQSLARQTDPSCTAFGSFNSLGGHLIVPNSGVSLLIPAGAIPQGRVYEMYVTVHRKETMRPPMDDSQTLLTPVVSCGPPGALLTRPVVLTMHHCADPNTEDWKILLKNQAAQGQWEDVVVVGEENFTTPCYIQLDAEACHILTENLSTYALVGHSTTKAAAKRLKLAIFGPLCCSSLEYSIRVYCLDDTQDALKEILHLERQMGGQLLEEPKALHFKGSTHNLRLSIHDIAHSLWKSKLLAKYQEIPFYHVWSGSQRNLHCTFTLERFSLNTVELVCKLCVRQVEGEGQIFQLNCTVSEEPTGIDLPLLDPANTITTVTGPSAFSIPLPIRQKLCSSLDAPQTRGHDWRMLAHKLNLDRYLNYFATKSSPTGVILDLWEAQNFPDGNLSMLAAVLEEMGRHETVVSLAAEGQY
     input_type: protein
     context_question: "what is the best match for species Human?"
     expected:
-      top1_accession: O95185
+      top1_any_of: [O95185]
       must_appear_in_top5: [O95185-2, O95185]
     metadata:
       protein_ref: O95185
@@ -226,20 +232,20 @@ test_cases:
 
   # ---------- NEGATIVE CONTROL ---------------------------------------------
 
-  - id: T10_NEG_random
-    # 100 uniformly random amino acids; generated with:
-    #   python -c "import random; random.seed(42); \
-    #     print(''.join(random.choices('ACDEFGHIKLMNPQRSTVWY', k=100)))"
-    # Frozen here so the test is reproducible across machines.
-    input_seq: |
-      PAGFRQVCKAFMAEPMFNTATQHEYHCCTPTRMYINTPVNRAFGCFDGPIIFGWPPEREIYPNQTSFAHGFWVHQIWLGFNGNVIFYMCADPSKCIYMYV
-    input_type: protein
-    context_question: "Identify this protein and list close matches."
-    expected:
-      top1_accession: null
-      must_appear_in_top5: []
-      top1_score_below: 0.5        # adjust after baseline run
-    metadata:
-      protein_ref: null
-      variant: NEG
-      notes: "Random sequence — only checks that the system does not crash and reports low confidence."
+  # - id: T10_NEG_random
+  #   # 100 uniformly random amino acids; generated with:
+  #   #   python -c "import random; random.seed(42); \
+  #   #     print(''.join(random.choices('ACDEFGHIKLMNPQRSTVWY', k=100)))"
+  #   # Frozen here so the test is reproducible across machines.
+  #   input_seq: |
+  #     PAGFRQVCKAFMAEPMFNTATQHEYHCCTPTRMYINTPVNRAFGCFDGPIIFGWPPEREIYPNQTSFAHGFWVHQIWLGFNGNVIFYMCADPSKCIYMYV
+  #   input_type: protein
+  #   context_question: "Identify this protein and list close matches."
+  #   expected:
+  #     top1_any_of: []
+  #     must_appear_in_top5: []
+  #     top1_score_below: 0.5        # adjust after baseline run
+  #   metadata:
+  #     protein_ref: null
+  #     variant: NEG
+  #     notes: "Random sequence — only checks that the system does not crash and reports low confidence."

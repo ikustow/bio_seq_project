@@ -78,7 +78,15 @@ def validate_proteins(errs: list[str]) -> None:
             )
 
         expected = tc.get("expected") or {}
-        _validate_accession(expected.get("top1_accession"), f"proteins.yaml[{tc_id}].expected.top1_accession", errs)
+        any_of = expected.get("top1_any_of")
+        if any_of is not None and not isinstance(any_of, list):
+            errs.append(
+                f"proteins.yaml[{tc_id}].expected.top1_any_of: must be a list of accessions "
+                f"(use [] for the negative control)."
+            )
+        else:
+            for acc in any_of or []:
+                _validate_accession(acc, f"proteins.yaml[{tc_id}].expected.top1_any_of", errs)
         for acc in expected.get("must_appear_in_top5") or []:
             _validate_accession(acc, f"proteins.yaml[{tc_id}].expected.must_appear_in_top5", errs)
 

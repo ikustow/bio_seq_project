@@ -45,7 +45,7 @@ def _md_table(headers: list[str], rows: list[list[str]]) -> str:
 # L1
 # =============================================================================
 def _aggregate_l1(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    positives = [r for r in rows if r["expected_top1_accession"]]
+    positives = [r for r in rows if r["expected_top1_any_of"]]
     n_pos = len(positives)
 
     def _ratio(passed: int) -> float:
@@ -99,8 +99,8 @@ def _render_l1(run_dir: Path, rows: list[dict[str, Any]], agg: dict[str, Any]) -
 
     if agg["failed"]:
         parts.append("## Top-1 misses\n")
-        rows_f = [[r["test_case_id"], r["variant"], r["expected_top1_accession"], r["top1_accession_after_rerank"] or "-", str(r["rank_of_expected_after_rerank"])] for r in agg["failed"]]
-        parts.append(_md_table(["Test", "Variant", "Expected", "Got top-1", "Rank of expected"], rows_f) + "\n")
+        rows_f = [[r["test_case_id"], r["variant"], r["expected_top1_any_of"], r["top1_accession_after_rerank"] or "-", str(r["rank_of_expected_after_rerank"])] for r in agg["failed"]]
+        parts.append(_md_table(["Test", "Variant", "Accepted top-1", "Got top-1", "Rank of expected"], rows_f) + "\n")
 
     if agg["errored"]:
         parts.append("## Errored cases\n")

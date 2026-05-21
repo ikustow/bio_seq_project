@@ -26,7 +26,7 @@ One row per test case.
 | `variant` | string | `V2_point_mutations_3` |
 | `context_question` | string | `Identify this protein and list close matches.` |
 | `input_type` | string | `protein` |
-| `expected_top1_accession` | string (or empty) | `P01308` |
+| `expected_top1_any_of` | string (`\|`-separated, or empty) | `P01308` |
 | `expected_must_appear` | string (`\|`-separated) | `P01308` |
 | `top1_accession_before_rerank` | string | `P01308` |
 | `top1_accession_after_rerank` | string | `P01308` |
@@ -70,7 +70,7 @@ python -m tests.eval.validate_data
 This will:
 1. parse both YAML files,
 2. fail if any `<FILL: ...>` placeholders remain,
-3. fail if any `expected.top1_accession` or `metadata.protein_ref` in `proteins.yaml` is malformed,
+3. fail if any accession in `expected.top1_any_of` / `expected.must_appear_in_top5` or `metadata.protein_ref` in `proteins.yaml` is malformed (and that `top1_any_of` is a list),
 4. fail if any `context_id` referenced by a scenario does not exist in `contexts`.
 
 Run this BEFORE you commit the filled-in dataset — it's the cheapest way to catch typos.
