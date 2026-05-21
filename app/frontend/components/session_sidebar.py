@@ -77,6 +77,7 @@ def render() -> None:
 
         st.toggle(
             "Assistant Mode 🧠",
+            value=True,
             key="think_mode_enabled",
             help="Suggest three follow-up questions after each answer",
         )
