@@ -27,6 +27,7 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 import config  # noqa: E402
+import gateway_supervisor  # noqa: E402
 import session_identity  # noqa: E402
 import session_objects  # noqa: E402
 from components import chat, debug_panel, object_bar, object_inspector, protein_card, session_sidebar  # noqa: E402
@@ -914,12 +915,27 @@ def _handle_vector_db_submission(
     )
 
 
+@st.cache_resource(show_spinner=False)
+def _ensure_gateway_once() -> dict:
+    """Bring up the heavy search/rerank gateway exactly once per server
+    process. Opt-in via ``BIOSEQ_SPAWN_GATEWAY`` (set it on single-container
+    deploys such as a HF Streamlit Space, where there is no second terminal to
+    run ``services/search_service.py`` in). ``st.cache_resource`` makes this
+    run once and survive Streamlit's per-interaction script reruns. No-op /
+    harmless when the flag is unset or a gateway is already listening."""
+    return gateway_supervisor.ensure_gateway()
+
+
 def main() -> None:
     st.set_page_config(
         page_title="BioSeq Investigator",
         page_icon=_load_favicon(),
         layout="wide",
     )
+    # Kick off the gateway before anything heavy renders, so its multi-minute
+    # warmup overlaps with the user reading the page. Fire-and-forget; the
+    # retriever's own probe handles the not-ready-yet window.
+    _ensure_gateway_once()
     _inject_styles()
     _render_topbar()
     # Install the wheel forwarder early too — the click shield it

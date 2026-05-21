@@ -18,6 +18,14 @@ langgraph==1.1.10
 pydantic==2.13.3
 httpx
 
+# Search/rerank gateway HTTP server. services/search_service.py is a FastAPI
+# app served by uvicorn; on single-container deploys the frontend spawns it
+# (see app/frontend/gateway_supervisor.py). Ranged, not pinned, because the
+# gateway only uses stable FastAPI/uvicorn basics — let pip resolve a build
+# compatible with the pinned pydantic 2.x above.
+fastapi>=0.115,<1.0
+uvicorn>=0.30,<1.0
+
 # ProtT5 embedding (heavy: ~3 GB downloaded from HF Hub on first boot)
 transformers==5.7.0
 torch==2.10.0
