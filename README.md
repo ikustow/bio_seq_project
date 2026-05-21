@@ -14,18 +14,23 @@ short_description: Paste a FASTA, get an evidence-grounded UniProt match.
 # BioSeq Investigator
 
 BioSeq Investigator is a research assistant for first-pass DNA and protein
-FASTA analysis. A user pastes a sequence and asks a natural-language question;
-the app finds the closest UniProt/Swiss-Prot candidates, shows an
-evidence-grounded protein card, and supports a follow-up dialogue grounded in
-the retrieved context.
+FASTA analysis (FASTA is a simple text format for writing a DNA or protein
+sequence).
+A user pastes a sequence and asks a natural-language question; the app finds
+the closest UniProt/Swiss-Prot candidates (UniProt is a large public database
+of proteins, and Swiss-Prot is its manually reviewed, high-quality part),
+shows an evidence-grounded protein card, and supports a follow-up dialogue
+grounded in the retrieved context.
 
 Russian README: [README_RU.md](README_RU.md).
 
 ## Business Value
 
 BioSeq Investigator bridges the gap between raw FASTA and understandable
-biological context. Instead of manually moving across BLAST, UniProt, papers,
-feature tables, and notes, a researcher gets one working screen: the sequence,
+biological context. Instead of manually moving across BLAST (a classic
+bioinformatics tool that searches a database for sequences similar to your
+query), UniProt, papers, feature tables, and notes, a researcher gets one
+working screen: the sequence,
 top-5 candidates, match explanation, structured annotations, and question
 history.
 
