@@ -16,6 +16,10 @@ ALLOWED_DATA_DIR = os.getenv("BIOSEQ_ALLOWED_DATA_DIR", "data")
 FETCH_TIMEOUT = float(os.getenv("BIOSEQ_FETCH_TIMEOUT", "300.0"))
 MAX_RETRIES = int(os.getenv("BIOSEQ_MAX_RETRIES", "5"))
 BACKOFF_FACTOR = float(os.getenv("BIOSEQ_BACKOFF_FACTOR", "2.0"))
+# Message printed on every transient-failure retry, mirrored from the frontend's
+# user-facing notice (``_SERVER_BUSY_NOTICE`` in app/frontend/app.py) so the UI
+# and the backend logs say the same thing.
+SERVER_BUSY_MESSAGE = "Server is busy, let us wait for a couple of seconds…"
 # TCP-connect probe for the search gateway before the request goes out — if the
 # port is closed, we fail in this many seconds instead of grinding through the
 # api_client's ~31s exponential-backoff retry loop. Default of 2.0s leaves

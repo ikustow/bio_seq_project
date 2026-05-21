@@ -44,6 +44,9 @@ RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 CHAT_RETRY_MAX_ATTEMPTS = int(os.getenv("BIOSEQ_CHAT_RETRY_ATTEMPTS", "3"))
 CHAT_RETRY_BASE_DELAY_SECONDS = float(os.getenv("BIOSEQ_CHAT_RETRY_BASE_DELAY", "1.0"))
 CHAT_RETRY_MAX_DELAY_SECONDS = float(os.getenv("BIOSEQ_CHAT_RETRY_MAX_DELAY", "8.0"))
+# Printed on each retry, mirrored from the frontend's user-facing notice
+# (``_SERVER_BUSY_NOTICE`` in app/frontend/app.py) so UI and logs match.
+SERVER_BUSY_MESSAGE = "Server is busy, let us wait for a couple of seconds…"
 
 
 def is_retryable_error(exc: BaseException) -> bool:
@@ -115,6 +118,11 @@ def generate_with_retry(
             delay = _retry_delay_seconds(exc, attempt)
             if delay is None:
                 raise
+            print(
+                f"{SERVER_BUSY_MESSAGE} (chat-llm retry {attempt + 1}/{attempts} "
+                f"in {delay:.1f}s)",
+                flush=True,
+            )
             time.sleep(delay)
     raise RuntimeError("generate_with_retry exhausted without returning")  # pragma: no cover
 

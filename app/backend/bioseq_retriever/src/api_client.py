@@ -2,7 +2,7 @@ import httpx
 import time
 import random
 from typing import Callable, Any
-from src.config import MAX_RETRIES, BACKOFF_FACTOR, FETCH_TIMEOUT
+from src.config import MAX_RETRIES, BACKOFF_FACTOR, FETCH_TIMEOUT, SERVER_BUSY_MESSAGE
 
 class APIClient:
     """
@@ -26,7 +26,7 @@ class APIClient:
                 # Rate limited or Server Error
                 if response.status_code == 429 or 500 <= response.status_code < 600:
                     wait_time = (BACKOFF_FACTOR ** attempt) + random.uniform(0, 1)
-                    print(f"API Error {response.status_code}. Retrying in {wait_time:.2f}s (Attempt {attempt+1}/{MAX_RETRIES})...")
+                    print(f"{SERVER_BUSY_MESSAGE} (upstream {response.status_code}, retry {attempt+1}/{MAX_RETRIES} in {wait_time:.1f}s)", flush=True)
                     time.sleep(wait_time)
                     continue
                 
@@ -35,7 +35,7 @@ class APIClient:
                 
             except httpx.RequestError as exc:
                 wait_time = (BACKOFF_FACTOR ** attempt) + random.uniform(0, 1)
-                print(f"Request Error {exc}. Retrying in {wait_time:.2f}s...")
+                print(f"{SERVER_BUSY_MESSAGE} (connection error, retry {attempt+1}/{MAX_RETRIES} in {wait_time:.1f}s: {exc})", flush=True)
                 time.sleep(wait_time)
         
         # If all retries fail
