@@ -14,9 +14,11 @@ mutation remain in the frontend for the first migration step.
 from __future__ import annotations
 
 import os
+import random
 import re
+import time
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 import requests
 
@@ -36,6 +38,13 @@ REQUEST_TIMEOUT_SECONDS = 45
 # usual "try again shortly" family.
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
+# Bounded retry for the transient codes above. Kept short on purpose: the
+# after-retriever narrative is secondary (the retriever's results are already
+# shown), so we must not block the turn for long. Override via env if needed.
+CHAT_RETRY_MAX_ATTEMPTS = int(os.getenv("BIOSEQ_CHAT_RETRY_ATTEMPTS", "3"))
+CHAT_RETRY_BASE_DELAY_SECONDS = float(os.getenv("BIOSEQ_CHAT_RETRY_BASE_DELAY", "1.0"))
+CHAT_RETRY_MAX_DELAY_SECONDS = float(os.getenv("BIOSEQ_CHAT_RETRY_MAX_DELAY", "8.0"))
+
 
 def is_retryable_error(exc: BaseException) -> bool:
     """True for transient upstream failures worth retrying after a pause.
@@ -52,6 +61,62 @@ def is_retryable_error(exc: BaseException) -> bool:
         exc,
         (requests.exceptions.ConnectionError, requests.exceptions.Timeout),
     )
+
+
+def _parse_retry_after_seconds(exc: BaseException) -> float | None:
+    """Seconds from a 429/503 ``Retry-After`` header, when present and numeric.
+
+    Only the integer-seconds form is honoured; the HTTP-date form is ignored
+    (falls back to exponential backoff).
+    """
+    if not isinstance(exc, requests.exceptions.HTTPError):
+        return None
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None) or {}
+    raw = headers.get("Retry-After")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _retry_delay_seconds(exc: BaseException, attempt: int) -> float | None:
+    """Seconds to wait before the next attempt, or ``None`` to stop retrying.
+
+    Honours a numeric ``Retry-After`` but gives up if it exceeds the cap — a
+    long wait means an exhausted per-minute/day quota, so retrying a secondary
+    narrative is futile. Otherwise exponential backoff + jitter, capped.
+    """
+    retry_after = _parse_retry_after_seconds(exc)
+    if retry_after is not None:
+        return retry_after if retry_after <= CHAT_RETRY_MAX_DELAY_SECONDS else None
+    backoff = CHAT_RETRY_BASE_DELAY_SECONDS * (2 ** attempt)
+    return min(backoff, CHAT_RETRY_MAX_DELAY_SECONDS) + random.uniform(0, 0.5)
+
+
+def generate_with_retry(
+    call: Callable[[], "ChatLLMResponse"],
+    *,
+    attempts: int = CHAT_RETRY_MAX_ATTEMPTS,
+) -> "ChatLLMResponse":
+    """Run ``call`` with bounded backoff on transient (429 / 5xx / conn) errors.
+
+    Re-raises the last exception when attempts are exhausted, the error is not
+    retryable, or the upstream asks for a wait longer than the cap.
+    """
+    for attempt in range(attempts):
+        try:
+            return call()
+        except Exception as exc:  # noqa: BLE001 - re-raised below when not retryable
+            if attempt >= attempts - 1 or not is_retryable_error(exc):
+                raise
+            delay = _retry_delay_seconds(exc, attempt)
+            if delay is None:
+                raise
+            time.sleep(delay)
+    raise RuntimeError("generate_with_retry exhausted without returning")  # pragma: no cover
 
 
 @dataclass

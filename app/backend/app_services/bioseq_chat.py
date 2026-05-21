@@ -16,7 +16,7 @@ from backend.app_contracts import (
     SessionSnapshot,
 )
 
-from .chat_llm import ChatLLMRequest, ChatLLMService, is_retryable_error
+from .chat_llm import ChatLLMRequest, ChatLLMService, generate_with_retry, is_retryable_error
 from .retriever_pipeline import BioSeqRetrieverPipeline
 from .suggested_questions import SuggestedQuestionsRequest, SuggestedQuestionsService
 from .uniprot_lookup import lookup_protein_view
@@ -295,19 +295,24 @@ class BioSeqChatService:
         """
         if self._chat_llm_service is None:
             return None, None, None, {}
+        service = self._chat_llm_service
+        chat_request = ChatLLMRequest(
+            prompt=request.message,
+            history=history,
+            selected_candidate=top_candidate,
+            objects=objects if objects is not None else (request.objects or {}),
+            selected_object_id=(
+                selected_object_id
+                if selected_object_id is not None
+                else request.selected_object_id
+            ),
+        )
         try:
-            response = self._chat_llm_service.generate(
-                ChatLLMRequest(
-                    prompt=request.message,
-                    history=history,
-                    selected_candidate=top_candidate,
-                    objects=objects if objects is not None else (request.objects or {}),
-                    selected_object_id=
-                        selected_object_id
-                        if selected_object_id is not None
-                        else request.selected_object_id,
-                )
-            )
+            # Retry transient upstream failures (Gemini-proxy 429 / 5xx) with a
+            # short, capped backoff before degrading. The narrative is secondary
+            # — the retriever's results are already shown — so on final failure
+            # we just drop the narrative and warn.
+            response = generate_with_retry(lambda: service.generate(chat_request))
         except Exception as exc:
             warnings.append(f"Chat LLM follow-up after retriever failed: {exc}")
             return None, None, None, {}
