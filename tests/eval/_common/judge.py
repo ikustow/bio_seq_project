@@ -42,10 +42,10 @@ REQUEST_TIMEOUT_SECONDS = 60
 # transient per-minute bursts; the daily quota is unrecoverable — we detect
 # it from the error body and fail fast so the user doesn't burn 5×backoff
 # minutes on every rubric item.
-JUDGE_MIN_INTERVAL_S = float(os.getenv("EVAL_JUDGE_MIN_INTERVAL_S", "3.5"))
+JUDGE_MIN_INTERVAL_S = float(os.getenv("EVAL_JUDGE_MIN_INTERVAL_S", "5"))
 JUDGE_MAX_RETRIES = int(os.getenv("EVAL_JUDGE_MAX_RETRIES", "4"))
 JUDGE_BACKOFF_BASE_S = float(os.getenv("EVAL_JUDGE_BACKOFF_BASE_S", "4"))
-JUDGE_BACKOFF_CAP_S = float(os.getenv("EVAL_JUDGE_BACKOFF_CAP_S", "60"))
+JUDGE_BACKOFF_CAP_S = float(os.getenv("EVAL_JUDGE_BACKOFF_CAP_S", "120"))
 
 _DAILY_QUOTA_BODY_RE = re.compile(
     r"(per[-\s_]day|daily limit|free[-\s_]models[-\s_]per[-\s_]day|exhausted|add\s+\d+\s+credits)",
