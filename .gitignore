@@ -80,7 +80,7 @@ app/frontend/assets/AF-*.pdb
 /data_prep/*.fa
 /data_prep/*.fastq
 /data_prep/*.fq
-
+/presentation/
 # Large ML/data binaries and generated indexes.
 *.h5
 *.hdf5
