@@ -1,90 +1,82 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, FileText, Pause, Play, RotateCcw } from "lucide-react";
 
 const TOTAL_MS = 60_000;
 
 const scenes = [
   {
-    eyebrow: "Сцена 1 / 4",
-    title: "Поступает вопрос",
+    eyebrow: "Scene 1 / 4",
+    title: "User asks",
     copy:
-      "Пользователь задает вопрос в чате. Think Mode нужен, чтобы сразу предложить понятное продолжение.",
+      "The user asks a question in chat. Think Mode keeps the product moving by suggesting what to ask next.",
     accent: "teal",
   },
   {
-    eyebrow: "Сцена 2 / 4",
-    title: "Собираем контекст",
+    eyebrow: "Scene 2 / 4",
+    title: "Context is prepared",
     copy:
-      "Контур берет только нужные источники: вопрос, ответ, историю и текущую карточку белка.",
+      "The feature reuses the current answer, recent chat history, and the selected protein card instead of starting a new search.",
     accent: "violet",
   },
   {
-    eyebrow: "Сцена 3 / 4",
-    title: "Готовим 3 вопроса",
+    eyebrow: "Scene 3 / 4",
+    title: "Three prompts are planned",
     copy:
-      "LLM не отвечает заново, а планирует три коротких follow-up вопроса для следующего хода.",
+      "The AI Agent calls context tools and turns the available context into three concise follow-up prompts.",
     accent: "amber",
   },
   {
-    eyebrow: "Сцена 4 / 4",
-    title: "Отдаем в чат",
+    eyebrow: "Scene 4 / 4",
+    title: "Chips appear in chat",
     copy:
-      "Проверяем формат, убираем повторы и показываем три clickable chips под ответом ассистента.",
+      "The output is normalized, deduplicated, and rendered as three clickable chips under the assistant answer.",
     accent: "rose",
   },
 ];
 
 const pipelineSteps = [
   {
-    label: "Вопрос пользователя",
-    detail: "Новый turn приходит из chat UI.",
-    packet: "user asks",
+    label: "User prompt",
+    detail: "A new chat turn arrives from the product UI.",
+    packet: "new turn",
     activeNodes: ["user", "answer"],
     edges: ["user-context"],
-    position: { x: "11%", y: "18%" },
+    position: { x: "11%", y: "15%" },
   },
   {
-    label: "Контекст",
-    detail: "Собираем источники, на которые можно опереться.",
+    label: "Context pack",
+    detail: "We collect the inputs that can safely ground the suggestions.",
     packet: "context",
     activeNodes: ["context", "router"],
     edges: ["user-context", "context-llm", "llm-router"],
-    position: { x: "39%", y: "23%" },
+    position: { x: "39%", y: "20%" },
     sources: ["user question", "assistant answer", "chat history", "protein card", "open topics"],
   },
   {
-    label: "Три идеи",
-    detail: "LLM готовит короткие разные follow-up вопросы.",
-    packet: "3 questions",
+    label: "Tools + 3 prompts",
+    detail: "The AI Agent calls context tools and drafts three useful next prompts.",
+    packet: "tools",
     activeNodes: ["llm", "tools", "retriever", "uniprot", "state"],
     edges: ["context-llm", "router-tools", "tools-faiss", "tools-uniprot", "tools-state"],
-    position: { x: "50%", y: "43%" },
+    position: { x: "50%", y: "39%" },
+    tools: [
+      { name: "get_current_protein_context", purpose: "facts from the protein card" },
+      { name: "get_recent_dialogue_summary", purpose: "what the user and assistant discussed" },
+      { name: "get_open_bioseq_threads", purpose: "topics worth asking about next" },
+    ],
   },
   {
-    label: "Chips в чате",
-    detail: "Валидация оставляет ровно три вопроса и UI рисует их под ответом.",
+    label: "Chat chips",
+    detail: "Validation keeps exactly three prompts and the UI renders them below the answer.",
     packet: "render",
     activeNodes: ["answer", "retriever", "uniprot", "state"],
     edges: ["q1-chat", "q2-chat", "q3-chat"],
-    position: { x: "12%", y: "66%" },
+    position: { x: "12%", y: "74%" },
   },
 ];
-
-const speakerText = `Я бы объяснял Think Mode как маленькую фичу поверх обычного чата. Пользователь задает вопрос, ассистент отвечает, а затем отдельный контур подбирает три вопроса, которые помогут продолжить разговор.
-
-Сначала собирается контекст из конкретных источников: последний вопрос пользователя, последний ответ ассистента, история диалога, выбранная protein card и открытые биологические темы. Важно, что здесь нет нового поиска по базе — мы используем уже доступный контекст.
-
-После этого LLM получает узкую задачу: подготовить ровно три коротких follow-up вопроса. Мы проверяем формат, убираем повторы и отдаем эти вопросы обратно в чат как clickable chips под ответом ассистента.`;
-
-function formatTime(ms) {
-  const seconds = Math.ceil(Math.max(0, ms) / 1000);
-  return `0:${String(seconds).padStart(2, "0")}`;
-}
 
 function App() {
   const [elapsed, setElapsed] = useState(0);
   const [isPlaying, setIsPlaying] = useState(true);
-  const [showNotes, setShowNotes] = useState(false);
   const sceneMs = TOTAL_MS / scenes.length;
   const stepMs = TOTAL_MS / pipelineSteps.length;
 
@@ -134,8 +126,6 @@ function App() {
   const activeStepIndex = Math.min(pipelineSteps.length - 1, Math.floor(elapsed / stepMs));
   const scene = scenes[activeIndex];
   const activeStep = pipelineSteps[activeStepIndex];
-  const remaining = TOTAL_MS - elapsed;
-  const sceneProgress = ((elapsed - activeIndex * sceneMs) / sceneMs) * 100;
   const stepProgress = ((elapsed - activeStepIndex * stepMs) / stepMs) * 100;
 
   const activeNodeSet = useMemo(() => new Set(activeStep.activeNodes), [activeStep]);
@@ -152,77 +142,25 @@ function App() {
     setIsPlaying(true);
   };
 
-  const reset = () => {
-    setElapsed(0);
-    setIsPlaying(true);
-  };
-
   return (
     <div className={`deck accent-${scene.accent}`}>
       <header className="topbar">
         <div>
           <span className="kicker">BioSeq Assistant Think Mode</span>
-          <strong>Think Mode: 3 follow-up вопроса</strong>
-        </div>
-
-        <div className="controls">
-          <button
-            aria-label="Назад"
-            title="Назад"
-            onClick={() => setElapsed((current) => Math.max(0, current - sceneMs))}
-          >
-            <ArrowLeft size={18} />
-          </button>
-          <button
-            aria-label={isPlaying ? "Пауза" : "Пуск"}
-            title={isPlaying ? "Пауза" : "Пуск"}
-            onClick={() => setIsPlaying((current) => !current)}
-          >
-            {isPlaying ? <Pause size={18} /> : <Play size={18} />}
-          </button>
-          <button aria-label="Сначала" title="Сначала" onClick={reset}>
-            <RotateCcw size={18} />
-          </button>
-          <button
-            aria-label="Вперед"
-            title="Вперед"
-            onClick={() => setElapsed((current) => Math.min(TOTAL_MS, current + sceneMs))}
-          >
-            <ArrowRight size={18} />
-          </button>
-          <button
-            aria-label="Текст речи"
-            title="Текст речи"
-            className={showNotes ? "selected" : ""}
-            onClick={() => setShowNotes((current) => !current)}
-          >
-            <FileText size={18} />
-          </button>
         </div>
       </header>
 
       <main className="stage">
         <section className="narrative" aria-live="polite">
-          <p className="scene-label">{scene.eyebrow}</p>
-          <h1>{scene.title}</h1>
-          <p className="scene-copy">{scene.copy}</p>
-
           <StepCard
             activeStep={activeStep}
             activeStepIndex={activeStepIndex}
             progress={stepProgress}
             onStepClick={jumpToStep}
           />
-
-          <div className="timer">
-            <span>{formatTime(remaining)}</span>
-            <div className="timer-track">
-              <div className="timer-fill" style={{ width: `${sceneProgress}%` }} />
-            </div>
-          </div>
         </section>
 
-        <section className="loop-panel" aria-label="Схема LLM-контура">
+        <section className="loop-panel" aria-label="AI Agent suggestion flow">
           <FlowLines activeEdges={activeEdgeSet} seenEdges={seenEdgeSet} />
           <div className="panel-step-banner">
             <span>{String(activeStepIndex + 1).padStart(2, "0")} / 04</span>
@@ -230,24 +168,24 @@ function App() {
           </div>
           <Node
             id="user"
-            label="Вопрос"
-            meta="user prompt"
+            label="Prompt"
+            meta="chat input"
             active={activeNodeSet.has("user")}
             seen={seenNodeSet.has("user")}
             badge={activeNodeSet.has("user") ? activeStepIndex + 1 : null}
           />
           <Node
             id="context"
-            label="Контекст"
-            meta="sources"
+            label="Context"
+            meta="grounded inputs"
             active={activeNodeSet.has("context")}
             seen={seenNodeSet.has("context")}
             badge={activeNodeSet.has("context") ? activeStepIndex + 1 : null}
           />
           <Node
             id="llm"
-            label="LLM"
-            meta="plans 3 questions"
+            label="AI Agent"
+            meta="plans 3 prompts"
             active={activeNodeSet.has("llm")}
             seen={seenNodeSet.has("llm")}
             badge={activeNodeSet.has("llm") ? activeStepIndex + 1 : null}
@@ -255,7 +193,7 @@ function App() {
           />
           <Node
             id="router"
-            label="Sources"
+            label="Inputs"
             meta="answer / history / card"
             active={activeNodeSet.has("router")}
             seen={seenNodeSet.has("router")}
@@ -263,39 +201,39 @@ function App() {
           />
           <Node
             id="tools"
-            label="Validate"
-            meta="exactly 3"
+            label="Tools"
+            meta="context tools"
             active={activeNodeSet.has("tools")}
             seen={seenNodeSet.has("tools")}
             badge={activeNodeSet.has("tools") ? activeStepIndex + 1 : null}
           />
           <Node
             id="retriever"
-            label="Q1"
-            meta="function"
+            label="Protein card"
+            meta="current facts"
             active={activeNodeSet.has("retriever")}
             seen={seenNodeSet.has("retriever")}
             badge={activeNodeSet.has("retriever") ? activeStepIndex + 1 : null}
           />
           <Node
             id="uniprot"
-            label="Q2"
-            meta="evidence"
+            label="Dialogue"
+            meta="recent messages"
             active={activeNodeSet.has("uniprot")}
             seen={seenNodeSet.has("uniprot")}
             badge={activeNodeSet.has("uniprot") ? activeStepIndex + 1 : null}
           />
           <Node
             id="state"
-            label="Q3"
-            meta="limits"
+            label="Topics"
+            meta="open threads"
             active={activeNodeSet.has("state")}
             seen={seenNodeSet.has("state")}
             badge={activeNodeSet.has("state") ? activeStepIndex + 1 : null}
           />
           <Node
             id="answer"
-            label="Чат"
+            label="Chat"
             meta="3 chips"
             active={activeNodeSet.has("answer")}
             seen={seenNodeSet.has("answer")}
@@ -311,14 +249,6 @@ function App() {
         </section>
       </main>
 
-      {showNotes && (
-        <aside className="notes" aria-label="Текст речи">
-          <h2>Речь на 60 секунд</h2>
-          {speakerText.split("\n\n").map((paragraph) => (
-            <p key={paragraph}>{paragraph}</p>
-          ))}
-        </aside>
-      )}
     </div>
   );
 }
@@ -327,21 +257,31 @@ function StepCard({ activeStep, activeStepIndex, progress, onStepClick }) {
   return (
     <div className="step-card">
       <div className="step-card-head">
-        <span>Шаг {String(activeStepIndex + 1).padStart(2, "0")}</span>
+        <span>Step {String(activeStepIndex + 1).padStart(2, "0")}</span>
         <strong>{activeStep.label}</strong>
       </div>
       <p>{activeStep.detail}</p>
       {activeStep.sources && (
-        <div className="source-pills" aria-label="Источники контекста">
+        <div className="source-pills" aria-label="Context sources">
           {activeStep.sources.map((source) => (
             <span key={source}>{source}</span>
+          ))}
+        </div>
+      )}
+      {activeStep.tools && (
+        <div className="tool-list" aria-label="Context tools">
+          {activeStep.tools.map((tool) => (
+            <span key={tool.name}>
+              <strong>{tool.name}</strong>
+              {tool.purpose}
+            </span>
           ))}
         </div>
       )}
       <div className="step-card-progress">
         <i style={{ width: `${progress}%` }} />
       </div>
-      <div className="step-rail" aria-label="Переход по шагам">
+      <div className="step-rail" aria-label="Step navigation">
         {pipelineSteps.map((step, index) => (
           <button
             key={step.label}
@@ -350,7 +290,7 @@ function StepCard({ activeStep, activeStepIndex, progress, onStepClick }) {
             }`}
             onClick={() => onStepClick(index)}
             title={step.label}
-            aria-label={`Шаг ${index + 1}: ${step.label}`}
+            aria-label={`Step ${index + 1}: ${step.label}`}
           >
             {index + 1}
           </button>
@@ -376,33 +316,20 @@ function Node({ id, label, meta, active, seen, badge, core = false }) {
 
 const flowEdges = [
   { id: "user-context", d: "M190 134 C238 112 300 118 356 150" },
-  { id: "context-llm", d: "M420 226 C456 252 490 288 514 330" },
-  { id: "llm-router", d: "M600 260 C692 190 778 166 858 172" },
-  { id: "router-tools", d: "M905 248 C892 315 878 356 850 418" },
-  { id: "tools-faiss", d: "M818 440 C764 484 714 496 655 500" },
-  { id: "tools-uniprot", d: "M872 438 C890 470 908 490 925 504" },
-  { id: "tools-state", d: "M800 430 C684 482 560 497 442 500" },
+  { id: "context-llm", d: "M392 196 C444 212 470 242 452 286" },
+  { id: "llm-router", d: "M572 302 C666 226 772 178 858 172" },
+  { id: "router-tools", d: "M900 188 C916 222 916 260 900 292" },
+  { id: "tools-faiss", d: "M852 366 C802 424 724 500 616 528" },
+  { id: "tools-uniprot", d: "M896 366 C920 424 920 488 884 528" },
+  { id: "tools-state", d: "M824 366 C720 432 560 508 354 528" },
   { id: "q1-chat", d: "M650 615 C530 660 330 652 190 588" },
   { id: "q2-chat", d: "M900 615 C670 684 350 672 190 588" },
-  { id: "q3-chat", d: "M420 615 C340 646 250 632 190 588" },
+  { id: "q3-chat", d: "M352 568 C304 582 248 584 190 572" },
 ];
 
 function FlowLines({ activeEdges, seenEdges }) {
   return (
     <svg className="flow-lines" viewBox="0 0 1000 680" preserveAspectRatio="none">
-      <defs>
-        <marker
-          id="arrow-active"
-          markerHeight="8"
-          markerWidth="8"
-          orient="auto"
-          refX="7"
-          refY="4"
-          viewBox="0 0 8 8"
-        >
-          <path d="M0 0 L8 4 L0 8 Z" className="arrow-head" />
-        </marker>
-      </defs>
       {flowEdges.map((edge) => {
         const isActive = activeEdges.has(edge.id);
         const isSeen = seenEdges.has(edge.id);
@@ -411,7 +338,6 @@ function FlowLines({ activeEdges, seenEdges }) {
             key={`${edge.id}-${isActive ? "active" : "idle"}`}
             className={`line route ${isSeen ? "seen" : ""} ${isActive ? "active" : ""}`}
             d={edge.d}
-            markerEnd={isActive ? "url(#arrow-active)" : undefined}
           />
         );
       })}

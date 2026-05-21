@@ -1,10 +1,10 @@
 :root {
-  color-scheme: dark;
+  color-scheme: light;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
-  background: #0d0e12;
-  color: #f3efe3;
+  background: #f7f8fb;
+  color: #151923;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
@@ -25,37 +25,41 @@ button {
 }
 
 .deck {
-  --accent: #37c6a6;
-  --accent-soft: rgba(55, 198, 166, 0.16);
-  --accent-line: rgba(55, 198, 166, 0.58);
-  --panel: rgba(23, 24, 29, 0.98);
-  --panel-strong: rgba(31, 32, 38, 0.99);
-  --line: rgba(243, 239, 227, 0.16);
+  --accent: #087b6f;
+  --accent-soft: rgba(8, 123, 111, 0.12);
+  --accent-line: rgba(8, 123, 111, 0.48);
+  --ink: #151923;
+  --muted: rgba(21, 25, 35, 0.66);
+  --muted-strong: rgba(21, 25, 35, 0.82);
+  --panel: rgba(255, 255, 255, 0.92);
+  --panel-strong: rgba(255, 255, 255, 0.98);
+  --line: rgba(21, 25, 35, 0.14);
   min-height: 100vh;
   padding: clamp(18px, 2.2vw, 32px);
   background:
-    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-    linear-gradient(135deg, #0d0e12 0%, #121217 46%, #171512 100%);
+    linear-gradient(rgba(21, 25, 35, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(21, 25, 35, 0.055) 1px, transparent 1px),
+    linear-gradient(135deg, #f7f8fb 0%, #edf3f7 46%, #f8f6f1 100%);
   background-size: 44px 44px, 44px 44px, 100% 100%;
+  color: var(--ink);
 }
 
 .accent-violet {
-  --accent: #b995ff;
-  --accent-soft: rgba(185, 149, 255, 0.16);
-  --accent-line: rgba(185, 149, 255, 0.6);
+  --accent: #6f49c8;
+  --accent-soft: rgba(111, 73, 200, 0.12);
+  --accent-line: rgba(111, 73, 200, 0.48);
 }
 
 .accent-amber {
-  --accent: #e8b94d;
-  --accent-soft: rgba(232, 185, 77, 0.18);
-  --accent-line: rgba(232, 185, 77, 0.62);
+  --accent: #8f5d00;
+  --accent-soft: rgba(143, 93, 0, 0.13);
+  --accent-line: rgba(143, 93, 0, 0.48);
 }
 
 .accent-rose {
-  --accent: #ff7f8f;
-  --accent-soft: rgba(255, 127, 143, 0.17);
-  --accent-line: rgba(255, 127, 143, 0.6);
+  --accent: #b83f55;
+  --accent-soft: rgba(184, 63, 85, 0.12);
+  --accent-line: rgba(184, 63, 85, 0.48);
 }
 
 .topbar {
@@ -71,99 +75,42 @@ button {
   gap: 4px;
 }
 
-.kicker,
-.scene-label {
+.kicker {
   color: var(--accent);
   font-size: 12px;
   font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.topbar strong {
-  font-size: clamp(16px, 1.4vw, 22px);
   letter-spacing: 0;
-}
-
-.controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.controls button {
-  width: 38px;
-  height: 38px;
-  display: grid;
-  place-items: center;
-  color: #f3efe3;
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  cursor: pointer;
-  transition:
-    border-color 160ms ease,
-    background 160ms ease,
-    transform 160ms ease;
-}
-
-.controls button:hover,
-.controls button.selected {
-  background: var(--accent-soft);
-  border-color: var(--accent-line);
-}
-
-.controls button:active {
-  transform: scale(0.96);
+  text-transform: uppercase;
 }
 
 .stage {
   height: calc(100vh - 120px);
   min-height: 560px;
   display: grid;
-  grid-template-columns: minmax(260px, 0.52fr) minmax(680px, 1.65fr);
+  grid-template-columns: minmax(320px, 430px) minmax(0, 1fr);
   gap: clamp(18px, 2.2vw, 36px);
-  align-items: center;
+  align-items: start;
 }
 
 .narrative {
   align-self: stretch;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
   min-width: 0;
-}
-
-.scene-label {
-  margin: 0 0 18px;
-}
-
-.narrative h1 {
-  max-width: 520px;
-  margin: 0;
-  font-size: clamp(38px, 4.5vw, 70px);
-  line-height: 0.96;
-  letter-spacing: 0;
-}
-
-.scene-copy {
-  max-width: 460px;
-  margin: 22px 0 0;
-  color: rgba(243, 239, 227, 0.76);
-  font-size: clamp(18px, 1.65vw, 27px);
-  line-height: 1.38;
+  padding-top: 0;
 }
 
 .step-card {
   width: min(430px, 100%);
-  margin-top: 28px;
+  margin-top: 0;
   padding: 16px;
   border: 1px solid var(--accent-line);
   border-radius: 8px;
   background:
-    linear-gradient(135deg, var(--accent-soft), rgba(255, 255, 255, 0.035)),
-    rgba(22, 23, 28, 0.78);
-  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.26);
+    linear-gradient(135deg, var(--accent-soft), rgba(255, 255, 255, 0.68)),
+    rgba(255, 255, 255, 0.86);
+  box-shadow: 0 18px 46px rgba(48, 58, 78, 0.14);
 }
 
 .step-card-head {
@@ -175,7 +122,7 @@ button {
 
 .step-card-head span {
   min-width: 64px;
-  color: #111216;
+  color: #ffffff;
   background: var(--accent);
   border-radius: 6px;
   padding: 6px 8px;
@@ -186,7 +133,7 @@ button {
 }
 
 .step-card-head strong {
-  color: #f3efe3;
+  color: var(--ink);
   font-size: clamp(16px, 1.2vw, 20px);
   letter-spacing: 0;
 }
@@ -194,7 +141,7 @@ button {
 .step-card p {
   min-height: 24px;
   margin: 10px 0 0;
-  color: rgba(243, 239, 227, 0.74);
+  color: var(--muted);
   font-size: clamp(14px, 1vw, 16px);
   line-height: 1.35;
 }
@@ -208,13 +155,40 @@ button {
 
 .source-pills span {
   padding: 5px 8px;
-  border: 1px solid rgba(243, 239, 227, 0.15);
+  border: 1px solid rgba(21, 25, 35, 0.12);
   border-radius: 7px;
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(243, 239, 227, 0.8);
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--muted-strong);
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.tool-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.tool-list span {
+  display: grid;
+  gap: 3px;
+  min-height: 26px;
+  padding: 5px 8px;
+  border: 1px solid var(--accent-line);
+  border-radius: 7px;
+  background: var(--accent-soft);
+  color: var(--muted-strong);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.tool-list strong {
+  min-width: 0;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 950;
+  overflow-wrap: anywhere;
 }
 
 .step-card-progress {
@@ -222,7 +196,7 @@ button {
   margin-top: 13px;
   overflow: hidden;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.13);
+  background: rgba(21, 25, 35, 0.1);
 }
 
 .step-card-progress i {
@@ -242,9 +216,9 @@ button {
 
 .step-rail button {
   height: 30px;
-  color: rgba(243, 239, 227, 0.62);
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(243, 239, 227, 0.12);
+  color: rgba(21, 25, 35, 0.58);
+  background: rgba(255, 255, 255, 0.68);
+  border: 1px solid rgba(21, 25, 35, 0.12);
   border-radius: 7px;
   cursor: pointer;
   font-size: 12px;
@@ -258,55 +232,27 @@ button {
 }
 
 .step-rail button.done {
-  color: rgba(243, 239, 227, 0.84);
-  border-color: rgba(243, 239, 227, 0.22);
+  color: var(--muted-strong);
+  border-color: rgba(21, 25, 35, 0.2);
 }
 
 .step-rail button.active {
-  color: #111216;
+  color: #ffffff;
   background: var(--accent);
   border-color: var(--accent);
   transform: translateY(-2px);
-}
-
-.timer {
-  width: min(360px, 100%);
-  margin-top: 28px;
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 14px;
-  align-items: center;
-  color: rgba(243, 239, 227, 0.68);
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
-}
-
-.timer-track,
-.total-track {
-  height: 4px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.timer-fill,
-.total-fill {
-  height: 100%;
-  border-radius: inherit;
-  background: var(--accent);
-  box-shadow: 0 0 24px var(--accent-line);
 }
 
 .loop-panel {
   position: relative;
   height: min(76vh, 700px);
   min-height: 560px;
-  border: 1px solid rgba(243, 239, 227, 0.12);
+  border: 1px solid rgba(21, 25, 35, 0.12);
   border-radius: 8px;
   background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.07), transparent 42%),
-    rgba(17, 18, 22, 0.66);
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
+    linear-gradient(145deg, rgba(255, 255, 255, 0.82), transparent 42%),
+    rgba(255, 255, 255, 0.58);
+  box-shadow: 0 24px 80px rgba(48, 58, 78, 0.16);
   overflow: hidden;
 }
 
@@ -314,7 +260,7 @@ button {
   content: "";
   position: absolute;
   inset: 22px;
-  border: 1px solid rgba(243, 239, 227, 0.09);
+  border: 1px solid rgba(21, 25, 35, 0.09);
   border-radius: 8px;
   pointer-events: none;
 }
@@ -334,31 +280,26 @@ button {
 }
 
 .line.route {
-  stroke: rgba(243, 239, 227, 0.13);
+  stroke: rgba(21, 25, 35, 0.16);
   stroke-width: 2;
+  stroke-dasharray: 5 12;
   opacity: 0.72;
 }
 
 .line.route.seen {
   stroke: var(--accent-line);
-  stroke-dasharray: 5 12;
-  opacity: 0.54;
+  opacity: 0.64;
   animation: dash 4.2s linear infinite;
 }
 
 .line.route.active {
   stroke: var(--accent);
   stroke-width: 4;
-  stroke-dasharray: 28 16;
   opacity: 1;
-  filter: drop-shadow(0 0 10px var(--accent-line));
+  filter: drop-shadow(0 0 8px var(--accent-line));
   animation:
     dash 0.8s linear infinite,
     routePulse 1.2s ease-in-out infinite;
-}
-
-.arrow-head {
-  fill: var(--accent);
 }
 
 @keyframes routePulse {
@@ -382,11 +323,11 @@ button {
   align-content: center;
   gap: 6px;
   padding: 12px 14px;
-  border: 1px solid rgba(243, 239, 227, 0.13);
+  border: 1px solid rgba(21, 25, 35, 0.12);
   border-radius: 8px;
   background: var(--panel);
-  color: rgba(243, 239, 227, 0.76);
-  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28);
+  color: var(--muted-strong);
+  box-shadow: 0 14px 32px rgba(48, 58, 78, 0.12);
   transition:
     border-color 260ms ease,
     background 260ms ease,
@@ -396,31 +337,31 @@ button {
 }
 
 .node strong {
-  color: #f3efe3;
+  color: var(--ink);
   font-size: clamp(14px, 0.95vw, 17px);
   line-height: 1.1;
   letter-spacing: 0;
 }
 
 .node span {
-  color: rgba(243, 239, 227, 0.58);
+  color: var(--muted);
   font-size: clamp(10px, 0.74vw, 12px);
   line-height: 1.2;
 }
 
 .node.active {
-  color: #fff;
+  color: var(--ink);
   border-color: var(--accent-line);
   background:
-    linear-gradient(135deg, var(--accent-soft), rgba(255, 255, 255, 0.04)),
+    linear-gradient(135deg, var(--accent-soft), rgba(255, 255, 255, 0.72)),
     var(--panel-strong);
   transform: translateY(-4px);
 }
 
 .node.seen:not(.active) {
-  border-color: rgba(243, 239, 227, 0.22);
+  border-color: rgba(21, 25, 35, 0.2);
   background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.055), transparent),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.68), transparent),
     var(--panel);
 }
 
@@ -444,9 +385,9 @@ button {
   display: grid;
   place-items: center;
   border-radius: 999px;
-  border: 2px solid #111216;
+  border: 2px solid #ffffff;
   background: var(--accent);
-  color: #111216;
+  color: #ffffff;
   font-size: 11px;
   font-style: normal;
   font-weight: 950;
@@ -462,7 +403,8 @@ button {
 
 .node-core strong,
 .node.core strong {
-  font-size: clamp(26px, 2.05vw, 34px);
+  font-size: clamp(22px, 1.7vw, 28px);
+  white-space: nowrap;
 }
 
 @keyframes nodePulse {
@@ -536,12 +478,12 @@ button {
   gap: 10px;
   max-width: calc(100% - 48px);
   padding: 8px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.28);
+  border: 1px solid rgba(21, 25, 35, 0.12);
   border-radius: 8px;
-  background: #f3efe3;
-  color: #111216;
+  background: #ffffff;
+  color: var(--ink);
   transform: translateX(-50%);
-  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
+  box-shadow: 0 18px 42px rgba(48, 58, 78, 0.16);
   white-space: nowrap;
 }
 
@@ -558,16 +500,16 @@ button {
 
 .step-packet {
   position: absolute;
-  z-index: 2;
+  z-index: 6;
   min-width: 88px;
   height: 34px;
   display: grid;
   place-items: center;
   border-radius: 8px;
-  background: #f3efe3;
-  color: #111216;
-  transform: translate(-50%, -50%);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.26), 0 18px 44px rgba(0, 0, 0, 0.42);
+  background: #ffffff;
+  color: var(--ink);
+  transform: translate(-50%, calc(-100% - 12px));
+  box-shadow: 0 0 0 1px rgba(21, 25, 35, 0.12), 0 18px 44px rgba(48, 58, 78, 0.16);
   transition:
     left 720ms cubic-bezier(0.2, 0.8, 0.2, 1),
     top 720ms cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -593,7 +535,7 @@ button {
 
 @keyframes packetBeat {
   50% {
-    transform: translate(-50%, -50%) scale(1.06);
+    transform: translate(-50%, calc(-100% - 12px)) scale(1.06);
   }
 }
 
@@ -602,35 +544,6 @@ button {
     transform: scale(1.24);
     opacity: 0;
   }
-}
-
-.notes {
-  position: fixed;
-  right: 24px;
-  bottom: 94px;
-  z-index: 10;
-  width: min(580px, calc(100vw - 48px));
-  max-height: min(620px, calc(100vh - 140px));
-  overflow: auto;
-  padding: 22px 24px;
-  border: 1px solid var(--accent-line);
-  border-radius: 8px;
-  background: rgba(16, 17, 22, 0.96);
-  box-shadow: 0 22px 90px rgba(0, 0, 0, 0.5);
-}
-
-.notes h2 {
-  margin: 0 0 14px;
-  color: var(--accent);
-  font-size: 17px;
-  letter-spacing: 0;
-}
-
-.notes p {
-  margin: 0 0 12px;
-  color: rgba(243, 239, 227, 0.82);
-  font-size: 15px;
-  line-height: 1.55;
 }
 
 @media (max-width: 960px) {
@@ -657,18 +570,6 @@ button {
     height: auto;
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .controls {
-    flex-wrap: wrap;
-  }
-
-  .narrative h1 {
-    font-size: 40px;
-  }
-
-  .scene-copy {
-    font-size: 18px;
   }
 
   .loop-panel {

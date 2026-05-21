@@ -1,42 +1,11 @@
-# Минутная презентация: Assistant Think Mode
+# One-minute presentation: Assistant Think Mode
 
-## Речь на 60 секунд
+## 60-second talk track
 
-Я бы объяснял Think Mode как маленькую фичу поверх обычного чата. Пользователь задает вопрос, ассистент отвечает, а затем отдельный контур подбирает три вопроса, которые помогут продолжить разговор.
+Think Mode adds suggested next questions to the normal chat. The user asks a question, the assistant answers, and then a separate flow prepares three prompts for what to ask next.
 
-Сначала собирается контекст из конкретных источников: последний вопрос пользователя, последний ответ ассистента, история диалога, выбранная protein card и открытые биологические темы. Важно, что здесь нет нового поиска по базе — мы используем уже доступный контекст.
+First, it uses context tools to read only context that is already available: the latest user question, the latest assistant answer, recent chat history, the selected protein card, and possible next topics. This matters because Think Mode does not start or promise a new vector search.
 
-После этого LLM получает узкую задачу: подготовить ровно три коротких follow-up вопроса. Мы проверяем формат, убираем повторы и отдаем эти вопросы обратно в чат как clickable chips под ответом ассистента.
+Then the AI Agent gets a focused task: create exactly three short follow-up prompts. We check the format, check for duplicates, and show the prompts in chat as clickable chips below the assistant answer.
 
-## Слайды / сцены
-
-Анимация идет по 4 большим сценам: вопрос пользователя → сбор контекста → генерация трех вопросов → вывод chips в чат.
-
-1. **Поступает вопрос**  
-   Пользователь задает вопрос в чате; Think Mode готовит продолжение.
-
-2. **Собираем контекст**  
-   Источники: user question, assistant answer, chat history, selected protein card, open topics.
-
-3. **Готовим 3 вопроса**  
-   LLM планирует не новый ответ, а три коротких follow-up prompts.
-
-4. **Отдаем в чат**  
-   Validate + normalize → три clickable chips под ответом ассистента.
-
-## Микро-шаги в анимации
-
-1. Вопрос пользователя.
-2. Контекст.
-3. Три идеи.
-4. Chips в чате.
-
-## Как записать
-
-```bash
-cd presentation/assistant-mode-llm-contour
-npm install
-npm run dev
-```
-
-Открой локальный URL из терминала, разверни окно браузера в 16:9 и запиши экран. Анимация сама идет ровно 60 секунд; кнопка с иконкой документа показывает текст речи.
+The user can click any chip to continue the conversation on that topic. This makes the chat feel more guided and interactive, and helps the user explore related ideas without writing the next question from scratch.
