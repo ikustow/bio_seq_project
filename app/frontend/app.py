@@ -753,8 +753,22 @@ _PROGRESS_STAGES: tuple[tuple[float, str], ...] = (
     (55.0, "Finalizing results…"),
 )
 
+# Display labels for the search-algorithm picker. Kept in sync with the
+# sidebar (components/session_sidebar.py) — both modules want to print the
+# same human-readable name (status footer here, dropdown there).
+_ALGO_LABELS = {
+    "embeddings": "Embeddings (ProtT5 + FAISS)",
+    "blast": "BLAST (EBI / SwissProt)",
+}
 
-def _render_progress(placeholder, label: str) -> None:
+
+def _format_elapsed(seconds: float) -> str:
+    """Format elapsed seconds as ``m:ss`` for the live progress ticker."""
+    total = int(seconds)
+    return f"{total // 60}:{total % 60:02d}"
+
+
+def _render_progress(placeholder, label: str, elapsed_seconds: float = 0.0) -> None:
     # Multi-sequence batches push a ``@Seq_B (2/5)`` prefix into session
     # state from ``chat._run_pending`` so each search in the batch tells the
     # user which one is in flight — without it the spinner just cycles the
@@ -762,6 +776,7 @@ def _render_progress(placeholder, label: str) -> None:
     # Session Objects bar look stuck.
     prefix = st.session_state.get("batch_progress_label") or ""
     full_label = f"{prefix} — {label}" if prefix else label
+    timer = _format_elapsed(elapsed_seconds)
     # The click-shield is a full-viewport transparent overlay that absorbs
     # pointer events while the retriever runs synchronously in this script
     # run. Without it, any click on a Streamlit widget triggers a rerun and
@@ -774,6 +789,7 @@ def _render_progress(placeholder, label: str) -> None:
         f'<div class="bioseq-progress">'
         f'<span class="bioseq-progress-spinner"></span>'
         f'<span class="bioseq-progress-label">{full_label}</span>'
+        f'<span class="bioseq-progress-timer">{timer}</span>'
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -787,23 +803,35 @@ def _start_progress_ticker(placeholder, stop_event):
     without plumbing one through several layers of the backend. A timed
     ticker on a background thread gives the user a sense of which stage
     we are likely in (matched to empirical timings of the pipeline) and
-    is good enough until proper callbacks land.
+    is good enough until proper callbacks land. The same ticker also
+    re-renders every ~0.5s so the live elapsed-time counter next to the
+    label updates smoothly without a per-stage trigger.
     """
     import threading
     import time
     from streamlit.runtime.scriptrunner import add_script_run_ctx
 
+    TICK_INTERVAL = 1.0
+
     def _tick() -> None:
-        start = time.time()
-        for delay, label in _PROGRESS_STAGES[1:]:
-            wait = delay - (time.time() - start)
-            if wait > 0 and stop_event.wait(wait):
-                return
-            if stop_event.is_set():
-                return
+        start = time.monotonic()
+        stage_index = 1  # next stage threshold to cross
+        current_label = _PROGRESS_STAGES[0][1]
+        while not stop_event.is_set():
+            elapsed = time.monotonic() - start
+            # Advance the stage label across any thresholds we've crossed
+            # since the last tick.
+            while (
+                stage_index < len(_PROGRESS_STAGES)
+                and elapsed >= _PROGRESS_STAGES[stage_index][0]
+            ):
+                current_label = _PROGRESS_STAGES[stage_index][1]
+                stage_index += 1
             try:
-                _render_progress(placeholder, label)
+                _render_progress(placeholder, current_label, elapsed)
             except Exception:
+                return
+            if stop_event.wait(TICK_INTERVAL):
                 return
 
     thread = threading.Thread(target=_tick, daemon=True)
@@ -831,17 +859,39 @@ def _handle_vector_db_submission(
     """
     import chat_pipeline  # noqa: WPS433  (lazy import; heavy backend deps)
     import threading
+    import time
 
     stop_event = threading.Event()
     placeholder = st.empty()
-    _render_progress(placeholder, _PROGRESS_STAGES[0][1])
+    _render_progress(placeholder, _PROGRESS_STAGES[0][1], 0.0)
     ticker = _start_progress_ticker(placeholder, stop_event)
+    start = time.monotonic()
     try:
         outcome = chat_pipeline.run_turn(text)
     finally:
+        elapsed_seconds = time.monotonic() - start
         stop_event.set()
         ticker.join(timeout=1)
-        placeholder.empty()
+        # Don't blank the slot here — there's still ~1–3s of work below
+        # (footer, session-state, debug_panel, then Streamlit rerun + chat
+        # history re-render). If we ``empty()`` now, that interval shows as
+        # a blank gap between the live progress and the final reply. Hold a
+        # "Finalizing…" label until the very end of the function instead.
+        _render_progress(placeholder, "Finalizing…", elapsed_seconds)
+
+    # Only retriever turns get the timing/algorithm footer — Chat-LLM
+    # follow-up turns don't actually hit a database, so the elapsed
+    # number would mostly be Gemini latency and the algorithm label
+    # would be misleading.
+    if outcome.get("update_card", True):
+        algo_key = st.session_state.get("search_algorithm") or "embeddings"
+        algo_label = _ALGO_LABELS.get(algo_key, algo_key)
+        footer = (
+            f"\n\n---\n"
+            f"*Search completed in {elapsed_seconds:.1f}s · "
+            f"Algorithm: {algo_label}*"
+        )
+        outcome["reply"] = f"{outcome['reply']}{footer}"
 
     if outcome.get("update_card", True):
         st.session_state.candidates = outcome["candidates"]
@@ -852,6 +902,10 @@ def _handle_vector_db_submission(
     st.session_state.backend_warnings = outcome["warnings"]
     debug_panel.capture(text, outcome)
     secondary_reply = outcome.get("secondary_reply") or None
+    # All post-processing done; safe to tear down the progress slot. The
+    # caller renders the actual reply right after this returns, so the
+    # transition from "Finalizing…" to the final message is now seamless.
+    placeholder.empty()
     return (
         outcome["reply"],
         outcome["reveals"],

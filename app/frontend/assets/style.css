@@ -2336,6 +2336,11 @@ body:has(.bioseq-click-shield) {
 .bioseq-progress-label {
     line-height: 1.2;
 }
+.bioseq-progress-timer {
+    font-variant-numeric: tabular-nums;
+    color: #8b94a8;
+    font-size: 0.9em;
+}
 @keyframes bioseq-progress-spin {
     to { transform: rotate(360deg); }
 }

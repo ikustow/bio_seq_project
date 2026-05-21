@@ -125,3 +125,9 @@ class CandidateView(BaseModel):
     similarity_score: float | None = None
     context_score: float | None = None
     evidence: list[EvidenceItem] = Field(default_factory=list)
+    # Query DNA translated in this hit's specific BLAST frame. Only populated
+    # for the BLAST-DNA path (where blastx tells us the frame per candidate);
+    # ``None`` for embeddings, protein, or non-DNA inputs. The alignment viewer
+    # prefers it over the global query_protein_sequence so the protein-vs-
+    # protein alignment uses the right reading frame for this candidate.
+    query_translation: str | None = None

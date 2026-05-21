@@ -227,6 +227,7 @@ def uniprot_record_to_candidate(record: dict[str, Any], rank: int) -> CandidateV
         similarity_score=similarity_score,
         context_score=rerank_score,
         evidence=evidence,
+        query_translation=(record.get("_query_translation") or None),
     )
 
 

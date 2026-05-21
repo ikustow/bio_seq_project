@@ -476,6 +476,14 @@ def _looks_like_prose(fragment: str) -> bool:
     if not tokens:
         return True
 
+    # Pre-check: codon-formatted DNA ("ATG GCC CTG ...") trips the short-token
+    # and longest-run checks below because every codon is exactly 3 chars.
+    # Skip prose checks when the whitespace-stripped fragment is pure
+    # nucleotide alphabet (DNA IUPAC) — English text never satisfies this.
+    compact = re.sub(r"\s+", "", fragment).upper()
+    if len(compact) >= MIN_RAW_SEQUENCE_LENGTH and set(compact) <= NUCLEOTIDE_AMBIGUOUS:
+        return False
+
     # 1. Short-token density. Prose has multiple 1-3 char tokens
     #    (`I`, `am`, `is`, `of`, `to`, ...); real sequence pastes are one
     #    long token or uniform 10/60/80-char blocks.

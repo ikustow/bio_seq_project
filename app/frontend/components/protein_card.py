@@ -508,13 +508,17 @@ def _normalize_match_score(value: object) -> float | None:
 
 
 def _alignment_score_for_candidate(candidate: Candidate, query_sequence: str | None) -> float | None:
-    if not query_sequence:
+    # Prefer the per-candidate query translation when available (BLAST-DNA
+    # path stamps it with the hit's specific reading frame). Falls back to
+    # the session-global query for protein queries and the embeddings path.
+    effective_query = candidate.get("query_translation") or query_sequence
+    if not effective_query:
         return None
     protein = candidate["protein"]
     candidate_sequence = protein.get("sequence")
     if not candidate_sequence:
         return None
-    return alignment_viewer.alignment_match_percent(query_sequence, candidate_sequence)
+    return alignment_viewer.alignment_match_percent(effective_query, candidate_sequence)
 
 
 def _render_switcher(
@@ -694,6 +698,13 @@ def render(
         if is_revealed:
             with container:
                 if key == "alignment":
-                    _render_alignment(protein, query_sequence)
+                    # BLAST-DNA hits carry a per-candidate query translation
+                    # (in the hit's specific reading frame); use it for the
+                    # full alignment view too, so we're never comparing DNA
+                    # letters to protein letters.
+                    effective_query = (
+                        selected.get("query_translation") or query_sequence
+                    )
+                    _render_alignment(protein, effective_query)
                 else:
                     _RENDERERS[key](protein)

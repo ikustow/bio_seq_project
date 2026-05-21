@@ -59,9 +59,13 @@ class PathwayRef(TypedDict):
     name: str
 
 
-class Candidate(TypedDict):
+class Candidate(TypedDict, total=False):
+    # ``protein`` and ``match_score`` are always present (asserted by call sites);
+    # ``query_translation`` is only set for BLAST-DNA hits — readers must use
+    # ``.get("query_translation")``.
     protein: "ProteinView"
     match_score: float
+    query_translation: str | None
 
 
 class ProteinView(TypedDict):

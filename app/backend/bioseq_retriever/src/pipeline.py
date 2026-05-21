@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 from src.utils import get_llm, get_first_fasta_entry, is_secure_path, clean_sequence
 from src.data_fetcher import get_uniprot_records
-from src.search import search_protein_top_k, search_dna_top_k, blast_search
+from src.search import search_protein_top_k, search_dna_top_k, blast_search, blastx_search_dna
 from src.reranking import LocalReranker
 
 from src.config import ALLOWED_DATA_DIR, SEARCH_SERVICE_URL, RETRIEVAL_TOP_K, RERANK_TOP_N
@@ -131,6 +131,54 @@ _DNA_ALPHABET = set("ACGTUN")
 _PROTEIN_ONLY = set("EFILPQ")
 _MIN_SEQ_LEN = 30
 _SEQ_RUN_RE = re.compile(r"[ACDEFGHIKLMNPQRSTVWYBJUOZX*\-\s\d]{30,}")
+
+# Standard genetic code — local copy so this module doesn't reach across the
+# package into app_services. Same table as STANDARD_CODON_TABLE there.
+_CODON_TABLE = {
+    "TTT": "F", "TCT": "S", "TAT": "Y", "TGT": "C",
+    "TTC": "F", "TCC": "S", "TAC": "Y", "TGC": "C",
+    "TTA": "L", "TCA": "S", "TAA": "*", "TGA": "*",
+    "TTG": "L", "TCG": "S", "TAG": "*", "TGG": "W",
+    "CTT": "L", "CCT": "P", "CAT": "H", "CGT": "R",
+    "CTC": "L", "CCC": "P", "CAC": "H", "CGC": "R",
+    "CTA": "L", "CCA": "P", "CAA": "Q", "CGA": "R",
+    "CTG": "L", "CCG": "P", "CAG": "Q", "CGG": "R",
+    "ATT": "I", "ACT": "T", "AAT": "N", "AGT": "S",
+    "ATC": "I", "ACC": "T", "AAC": "N", "AGC": "S",
+    "ATA": "I", "ACA": "T", "AAA": "K", "AGA": "R",
+    "ATG": "M", "ACG": "T", "AAG": "K", "AGG": "R",
+    "GTT": "V", "GCT": "A", "GAT": "D", "GGT": "G",
+    "GTC": "V", "GCC": "A", "GAC": "D", "GGC": "G",
+    "GTA": "V", "GCA": "A", "GAA": "E", "GGA": "G",
+    "GTG": "V", "GCG": "A", "GAG": "E", "GGG": "G",
+}
+_DNA_COMPLEMENT = str.maketrans("ACGTUN", "TGCAAN")
+
+
+def _translate_in_frame(dna: str, frame: int) -> str:
+    """Translate ``dna`` in BLAST-style frame ``frame`` (±1, ±2, ±3).
+
+    Positive frames read the forward strand; negative frames reverse-complement
+    first. Frame magnitude is the 1-based offset (frame 1 starts at position 0).
+    Tail nucleotides that don't form a complete codon are dropped; a stop codon
+    truncates the output. Ambiguous codons map to ``X``.
+
+    Used by ``rank_dna_node`` to translate the query in **each hit's** specific
+    frame so alignment can be computed per query↔candidate pair.
+    """
+    seq = "".join(dna.upper().split()).replace("U", "T")
+    if frame < 0:
+        seq = seq.translate(_DNA_COMPLEMENT)[::-1]
+    offset = abs(frame) - 1
+    seq = seq[offset:]
+    seq = seq[: len(seq) - (len(seq) % 3)]
+    protein: list = []
+    for i in range(0, len(seq), 3):
+        aa = _CODON_TABLE.get(seq[i : i + 3], "X")
+        if aa == "*":
+            break
+        protein.append(aa)
+    return "".join(protein)
 
 
 def _classify_sequence_type(normalized: str) -> str:
@@ -322,18 +370,48 @@ def use_raw_sequence_node(state: GraphState) -> Dict[str, Any]:
     return {"sequence": cleaned_seq}
 
 def rank_dna_node(state: GraphState) -> Dict[str, Any]:
-    """Performs DNA sequence similarity search (Top 50) via DNA search service."""
+    """Performs DNA sequence similarity search via the selected backend.
+
+    ``embeddings`` (default) routes to the local DNA-FAISS gateway; ``blast``
+    runs ``blastx`` against SwissProt — see :func:`blastx_search_dna` for why
+    we translate to protein instead of using ``blastn``. Both branches yield
+    UniProt accessions, so the downstream UniProt lookup is identical.
+    """
     if state.get('error'): return {}
     try:
-        # Uses raw DNA sequence for search
-        matches = search_dna_top_k(state['sequence'], k=RETRIEVAL_TOP_K)
-        # matches is List[Tuple[accession, score]]
+        algorithm = (state.get("search_algorithm") or "embeddings").lower()
+        if algorithm == "blast":
+            # blastx is slower than FAISS and rarely returns more than ~10 hits;
+            # ask for 10 to give rerank something to reorder if context exists.
+            matches = blastx_search_dna(state['sequence'], k=10)
+        else:
+            # Embeddings path returns (acc, score); pad to 3-tuple shape so the
+            # downstream loop can stay uniform.
+            raw = search_dna_top_k(state['sequence'], k=RETRIEVAL_TOP_K)
+            matches = [(acc, score, {}) for acc, score in raw]
+        # matches is List[Tuple[accession, score, hit_info]]
         records = get_uniprot_records([m[0] for m in matches])
-        
-        # Inject search scores into records for future reranking logic
+
+        # Mirror rank_protein_node's score stamping: ``_search_score`` feeds
+        # rerank, ``_bioseq_embedding_score`` is what the UI's EMB tile reads.
+        # For BLAST, rerank is skipped, so identity is the only signal we show.
+        # We also stamp ``_query_translation`` with the DNA query translated in
+        # this specific hit's frame — the alignment viewer reads it to compare
+        # against the candidate protein instead of aligning raw DNA letters.
         score_map = {m[0]: m[1] for m in matches}
+        info_map = {m[0]: m[2] for m in matches}
         for rec in records:
-            rec["_search_score"] = score_map.get(rec.get("primaryAccession"))
+            acc = rec.get("primaryAccession")
+            score = score_map.get(acc)
+            rec["_search_score"] = score
+            if algorithm == "blast" and score is not None:
+                rec["_bioseq_embedding_score"] = score
+                info = info_map.get(acc) or {}
+                frame = info.get("query_frame")
+                if frame:
+                    rec["_query_translation"] = _translate_in_frame(
+                        state['sequence'], int(frame)
+                    )
 
         return {"ranked_results": records}
     except Exception as e:

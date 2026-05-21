@@ -511,7 +511,12 @@ def _sort_by_alignment(
     candidate has its own sequence, or alignment scoring fails for every
     candidate. Keeps the two lists in sync.
     """
-    if not query_protein_sequence or not ui_candidates:
+    if not ui_candidates:
+        return raw_candidates, ui_candidates
+    # If we have neither a global query nor any per-candidate translations,
+    # there's nothing to align against.
+    has_per_candidate = any(c.get("query_translation") for c in ui_candidates)
+    if not query_protein_sequence and not has_per_candidate:
         return raw_candidates, ui_candidates
     from components import alignment_viewer  # lazy: pulls Bio + streamlit cache
 
@@ -519,10 +524,13 @@ def _sort_by_alignment(
     any_scored = False
     for index, cand in enumerate(ui_candidates):
         candidate_sequence = cand["protein"].get("sequence")
+        # Per-candidate translation (BLAST-DNA) wins over the session-global
+        # query — different frames give different protein sequences.
+        effective_query = cand.get("query_translation") or query_protein_sequence
         score: float | None = None
-        if candidate_sequence:
+        if candidate_sequence and effective_query:
             score = alignment_viewer.alignment_match_percent(
-                query_protein_sequence, candidate_sequence
+                effective_query, candidate_sequence
             )
         if score is None:
             scored.append((float("-inf"), index))
@@ -542,6 +550,7 @@ def _candidate_from_backend(record: dict[str, Any]) -> Candidate:
     return Candidate(
         protein=_ensure_protein_shape(record.get("protein") or {}),
         match_score=_score_as_percent(record.get("match_score")),
+        query_translation=(record.get("query_translation") or None),
     )
 
 

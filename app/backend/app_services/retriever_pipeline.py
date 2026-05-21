@@ -158,6 +158,10 @@ class BioSeqRetrieverPipeline:
             state.error = "Sequence type could not be classified as DNA or protein."
             return state, candidates
 
+        # Protein-view translation is purely cosmetic — it feeds the inspector
+        # and FASTA preview, not the search itself (embeddings uses raw DNA,
+        # blastx scans 6 frames remotely). Failures here used to kill the whole
+        # pipeline; now we just drop the preview and keep searching.
         try:
             state.protein_sequence = (
                 translate_dna_to_protein(state.sequence)
@@ -165,9 +169,8 @@ class BioSeqRetrieverPipeline:
                 else normalize_protein_sequence(state.sequence)
             )
         except Exception as exc:
-            state.controlled_miss = True
-            state.error = f"Translation failed: {exc}"
-            return state, candidates
+            state.protein_sequence = None
+            state.warnings.append(f"Protein preview unavailable: {exc}")
 
         if self._enable_runtime_retriever:
             runtime_state, runtime_candidates = self._run_runtime_retriever(
@@ -383,6 +386,23 @@ def _extract_sequence_token(prompt: str) -> str | None:
     for match in SEQUENCE_TOKEN_RE.finditer(prompt):
         token = normalize_protein_sequence(match.group(0)).replace("-", "").replace("*", "")
         if len(token) >= 10 and set(token.upper()) <= (DNA_IUPAC | PROTEIN_ALPHABET):
+            if len(token) > len(best):
+                best = token
+    if best:
+        return best
+    # Fallback for whitespace-formatted DNA like "ATG GCC CTG TGG..." — the
+    # per-token regex above requires 10+ letters with no whitespace, so codon-
+    # formatted input never matches. We scan for runs that are exclusively
+    # DNA letters + whitespace (English text breaks the char class on the
+    # first non-DNA letter like 'o' or 'l'), strip the whitespace, and accept
+    # if the result is long enough. Restricted to DNA on purpose: the protein
+    # alphabet overlaps too much with everyday letters to safely match across
+    # whitespace without false positives.
+    dna_chars = "ACGTUNRYKMSWBDHVacgtunrykmswbdhv"
+    dna_run_re = re.compile(rf"[{dna_chars}\s]{{30,}}")
+    for match in dna_run_re.finditer(prompt):
+        token = re.sub(r"\s+", "", match.group(0)).upper()
+        if len(token) >= 30 and set(token) <= DNA_IUPAC:
             if len(token) > len(best):
                 best = token
     return best or None

@@ -1089,6 +1089,18 @@ _LIVE_PREVIEW_JS = r"""
     if (!fragment) return true;
     const tokens = fragment.split(/\s+/).filter(Boolean);
     if (!tokens.length) return true;
+    // Pre-check: codon-formatted DNA ("ATG GCC CTG ...") trips short-token
+    // and longest-run checks because every codon is 3 chars. Skip prose
+    // checks when the whitespace-stripped fragment is pure DNA IUPAC —
+    // English text never satisfies that.
+    const compact = fragment.replace(/\s+/g, '').toUpperCase();
+    if (compact.length >= MIN_LEN) {
+      let allDna = true;
+      for (const c of compact) {
+        if (!NUCLEOTIDE_AMBIGUOUS.has(c)) { allDna = false; break; }
+      }
+      if (allDna) return false;
+    }
     let shortCount = 0;
     let longest = 0;
     for (const t of tokens) {

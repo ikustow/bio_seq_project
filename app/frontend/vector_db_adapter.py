@@ -55,6 +55,7 @@ def _candidate_from_backend(record: dict[str, Any]) -> Candidate:
     return Candidate(
         protein=protein,
         match_score=_score_as_percent(record.get("match_score")),
+        query_translation=(record.get("query_translation") or None),
     )
 
 

@@ -309,6 +309,16 @@ def build_protein_context(
     if not isinstance(protein, dict):
         return None
     match_score = candidate.get("match_score", 0) or 0
+    # ``match_score`` arrives in two shapes depending on the upstream caller:
+    # a ``[0, 1]`` fraction (most live pipelines) or a ``[0, 100]`` percent
+    # (some fixtures and legacy paths). Treat anything ``<= 1`` as a fraction
+    # so the rendered string is always a real percentage.
+    try:
+        score_value = float(match_score)
+    except (TypeError, ValueError):
+        score_value = 0.0
+    if score_value <= 1.0:
+        score_value *= 100
 
     header = f"**Context for `@{label}`:**" if label else "**Current protein context:**"
     lines = [
@@ -317,7 +327,7 @@ def build_protein_context(
         f"Name: {protein.get('name', 'Unknown')}",
         f"Gene: {protein.get('gene', 'N/A')}",
         f"Organism: {protein.get('organism_scientific', '')} ({protein.get('organism_common', '')})",
-        f"Match confidence: {float(match_score):.1f}%",
+        f"Match confidence: {score_value:.1f}%",
         "",
     ]
 
@@ -505,7 +515,17 @@ def build_objects_context(
             seq_type = seq.get("sequence_type") or "UNKNOWN"
             length = seq.get("length") or 0
             status = seq.get("status") or "draft"
-            line = f"- `@{label}` ({seq_type}, {length} aa, {status})"
+            # Protein sequences are measured in amino acids; nucleic acids in
+            # nucleotides. Mislabelling DNA length as ``aa`` confused the LLM
+            # because the workspace block disagreed with the UniProt ``Length``
+            # below (where the protein truly is 110 aa, not 333).
+            if seq_type == "PROTEIN":
+                unit = "aa"
+            elif seq_type in ("DNA", "RNA"):
+                unit = "nt"
+            else:
+                unit = "chars"
+            line = f"- `@{label}` ({seq_type}, {length} {unit}, {status})"
             matches = seq.get("matches") or []
             chosen_idx = int(seq.get("selected_match_index") or 0)
             if matches and 0 <= chosen_idx < len(matches):
@@ -523,6 +543,12 @@ def build_objects_context(
                     f"; resolved to `{acc}` ({gene} — {name}, score {score_str})"
                 )
             lines.append(line)
+            if seq_type in ("DNA", "RNA"):
+                protein_sequence = str(seq.get("protein_sequence") or "")
+                if protein_sequence:
+                    lines.append(
+                        f"  Translated protein: {len(protein_sequence)} aa"
+                    )
 
     if proteins:
         lines.append("\n**Proteins:**")

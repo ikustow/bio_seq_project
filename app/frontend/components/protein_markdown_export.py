@@ -57,7 +57,11 @@ def build_protein_markdown(
 
     section_builders = {
         "header": _identification,
-        "alignment": lambda p: _alignment(p, query_sequence),
+        # Prefer the BLAST-DNA per-hit translation when present; otherwise
+        # use the session-global protein query.
+        "alignment": lambda p: _alignment(
+            p, selected.get("query_translation") or query_sequence
+        ),
         "keyfacts": _key_facts,
         "function": _function,
         "expression": _expression,
