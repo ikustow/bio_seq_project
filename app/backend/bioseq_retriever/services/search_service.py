@@ -179,7 +179,7 @@ def _embed_dna(sequence: str) -> np.ndarray:
         mean_pooled = outputs.last_hidden_state.mean(dim=1).squeeze()
     return mean_pooled.cpu().numpy().astype(np.float32)
 
-def _embed_rerank_texts(texts: List[str], is_query: bool = False) -> np.ndarray:
+def _embed_rerank_texts(texts: List[str], is_query: bool = False, tag: str = "") -> np.ndarray:
     """
     Generates semantic embeddings using Qwen3-Embedding.
     1. Uses last-token pooling (standard for decoder-based embeddings).
@@ -199,20 +199,25 @@ def _embed_rerank_texts(texts: List[str], is_query: bool = False) -> np.ndarray:
         # Plain text path for documents
         processed_texts = texts
         
+    _t = time.perf_counter()
     inputs = rerank_tokenizer(
-        processed_texts, 
-        padding=True, 
-        truncation=True, 
-        max_length=RERANK_MAX_LENGTH, 
+        processed_texts,
+        padding=True,
+        truncation=True,
+        max_length=RERANK_MAX_LENGTH,
         return_tensors="pt"
     ).to(device)
+    _bsz, _seqlen = tuple(inputs["input_ids"].shape)
+    print(f"[embed {tag}] tokenized: batch={_bsz} seq_len={_seqlen} in {time.perf_counter()-_t:.1f}s -> starting model.forward ...", flush=True)
 
+    _t = time.perf_counter()
     with torch.no_grad():
         outputs = rerank_model(**inputs, return_dict=True)
         # Use last-token pooling of the last hidden state
         # Explicitly cast to float32 before numpy conversion (numpy does not support bfloat16)
         embeddings = outputs.last_hidden_state[:, -1].to(torch.float32)
-        
+    print(f"[embed {tag}] model.forward done in {time.perf_counter()-_t:.1f}s", flush=True)
+
     return embeddings.cpu().numpy()
 
 # --- Search ---
@@ -372,11 +377,15 @@ async def rerank(request: RerankRequest):
         # 1. Semantic Embedding
         passages = [_format_record_for_embedding(rec) for rec in request.records]
         print(f"[rerank #{rid}] passages built, max_chars={max((len(p) for p in passages), default=0)} (+{time.perf_counter()-t0:.1f}s)", flush=True)
-        query_vec = await loop.run_in_executor(executor, _embed_rerank_texts, [request.context_query], True)
-        doc_vecs = await loop.run_in_executor(executor, _embed_rerank_texts, passages, False)
-        print(f"[rerank #{rid}] embedded (+{time.perf_counter()-t0:.1f}s)", flush=True)
+        _tq = time.perf_counter()
+        query_vec = await loop.run_in_executor(executor, _embed_rerank_texts, [request.context_query], True, f"#{rid} query")
+        print(f"[rerank #{rid}] query embedded: step {time.perf_counter()-_tq:.1f}s (+{time.perf_counter()-t0:.1f}s total)", flush=True)
+        _td = time.perf_counter()
+        doc_vecs = await loop.run_in_executor(executor, _embed_rerank_texts, passages, False, f"#{rid} docs")
+        print(f"[rerank #{rid}] docs embedded: step {time.perf_counter()-_td:.1f}s (+{time.perf_counter()-t0:.1f}s total)", flush=True)
 
         # 2. Raw Semantic Scores (Cosine Similarity)
+        _ts = time.perf_counter()
         query_vec = query_vec / (np.linalg.norm(query_vec, axis=1, keepdims=True) + 1e-9)
         doc_vecs = doc_vecs / (np.linalg.norm(doc_vecs, axis=1, keepdims=True) + 1e-9)
         semantic_scores = np.dot(doc_vecs, query_vec.T).flatten()
@@ -407,7 +416,7 @@ async def rerank(request: RerankRequest):
         # 6. Stable Rank Sort
         reranked_list.sort(key=lambda x: x["_search_score"], reverse=True)
 
-        print(f"[rerank #{rid}] DONE total={time.perf_counter()-t0:.1f}s", flush=True)
+        print(f"[rerank #{rid}] scoring+sort: {time.perf_counter()-_ts:.1f}s | DONE total={time.perf_counter()-t0:.1f}s", flush=True)
         return {"results": reranked_list[:request.top_n]}
     except Exception as e:
         print(f"[rerank #{rid}] FAILED after {time.perf_counter()-t0:.1f}s: {e}", flush=True)
