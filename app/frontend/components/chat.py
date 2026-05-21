@@ -9,6 +9,7 @@ the chat with their raw text.
 from __future__ import annotations
 
 import html
+import json
 import re
 import time
 from collections.abc import Callable, Iterable
@@ -996,12 +997,18 @@ def render(on_first_search, on_submit: SubmitHandler | None = None) -> None:
             chip_cols = st.columns([1, 4, 1])
             with chip_cols[1]:
                 if st.button(
-                    "✨  Try the demo sequence — UNC5C (Human)",
+                    "🎲  Get a random sequence",
                     width="stretch",
                     key="try_example_chip",
                 ):
-                    if _stage_submission(conversation.example_first_message(), []):
-                        st.rerun()
+                    # Prefill the composer instead of auto-submitting, so the
+                    # user can review the sequence and press send themselves.
+                    # st.chat_input can't be seeded from session_state, so the
+                    # actual fill happens via JS in _render_composer below.
+                    st.session_state["pending_prefill"] = (
+                        conversation.random_first_message()
+                    )
+                    st.rerun()
 
     # Hidden bridge buttons so JS can dispatch clicks on inline @mentions
     # into the Streamlit event loop. Rendered after the chat history so
@@ -1054,6 +1061,13 @@ def _render_composer(on_submit: SubmitHandler | None) -> None:
     )
 
     _inject_live_preview_js()
+
+    # The random-sequence chip stages its text here (st.chat_input has no
+    # session_state seed); drop it into the textarea via JS so the user can
+    # review it and submit manually. One-shot: popped so it fires once.
+    prefill = st.session_state.pop("pending_prefill", None)
+    if prefill:
+        _inject_prefill_js(prefill)
 
     if user_input is None:
         return
@@ -1978,6 +1992,71 @@ def _inject_live_preview_js() -> None:
     import streamlit.components.v1 as components
 
     components.html(_LIVE_PREVIEW_JS, height=0, width=0)
+
+
+# Seeds the chat_input textarea with a value from JS. Used by the
+# random-sequence chip: ``st.chat_input`` is a React-controlled widget that
+# can't be set from session_state, so we set its value through the native
+# setter + an ``input`` event (the same trick _LIVE_PREVIEW_JS uses for
+# @mention insertion). Retries across a few frames in case the composer
+# hasn't mounted in the parent DOM yet. ``__PREFILL_JSON__`` is replaced
+# with a json-encoded string so newlines/quotes survive the embed.
+_PREFILL_JS = r"""
+<script>
+(function () {
+  const win = window.parent;
+  const doc = win.document;
+  const TEXT = __PREFILL_JSON__;
+
+  function findChatInput() {
+    return (
+      doc.querySelector('[data-testid="stChatInput"] textarea')
+      || doc.querySelector('textarea[data-testid="stChatInputTextArea"]')
+      || doc.querySelector('[data-testid="stChatInput"] [contenteditable="true"]')
+      || doc.querySelector('div[class*="stChatInput"] textarea')
+      || doc.querySelector('div[class*="stChatInput"] [contenteditable="true"]')
+    );
+  }
+
+  function setNativeValue(input, value) {
+    if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
+      const proto = Object.getPrototypeOf(input);
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value');
+      if (setter && setter.set) { setter.set.call(input, value); return; }
+      input.value = value;
+    } else {
+      input.textContent = value;
+    }
+  }
+
+  let tries = 0;
+  function apply() {
+    const input = findChatInput();
+    if (!input) {
+      if (tries++ < 40) win.requestAnimationFrame(apply);
+      return;
+    }
+    setNativeValue(input, TEXT);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    try { input.focus(); } catch (e) {}
+    try {
+      if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
+        const len = input.value.length;
+        input.setSelectionRange(len, len);
+      }
+    } catch (e) {}
+  }
+  apply();
+})();
+</script>
+"""
+
+
+def _inject_prefill_js(text: str) -> None:
+    import streamlit.components.v1 as components
+
+    script = _PREFILL_JS.replace("__PREFILL_JSON__", json.dumps(text))
+    components.html(script, height=0, width=0)
 
 
 # Streamlit's ``st.container(height=N)`` only accepts a fixed pixel int,

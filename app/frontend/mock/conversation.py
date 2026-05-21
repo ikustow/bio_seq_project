@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
+from mock import sample_sequences
+
 EXAMPLE_SEQUENCE = (
     "MRKGLRATAARCGLGLGYLLQMLVLPALALLSASGTGSAAQDDDFFHELPETFPSDPPEPLPHFLIEPEEA"
     "YIVKNKPVNLYCKASPATQIYFKCNSEWVHQKDHIVDERVDETSGLIVREVSIEISRQQVEELFGPEDYW"
@@ -24,7 +26,8 @@ WELCOME_MESSAGE = (
     "Hi! I'm **BioSeq Investigator** — paste a DNA or protein FASTA sequence "
     "and ask me a question about it. I'll search public bioinformatics "
     "databases and show you an evidence-grounded answer.\n\n"
-    "No sequence handy? Click **Try example** below to see how it works."
+    "No sequence handy? Click **Get a random sequence** below to drop one "
+    "into the message box, then press send."
 )
 
 
@@ -177,6 +180,16 @@ def route(user_text: str, state: ConversationState) -> tuple[str, tuple[str, ...
 
 def example_first_message() -> str:
     return f"Sequence:\n{EXAMPLE_SEQUENCE}\n\nQuestion: {EXAMPLE_QUESTION}"
+
+
+def random_first_message() -> str:
+    """A first message built from a randomly picked sample sequence.
+
+    Pulls one record from :mod:`mock.sample_sequences` so the "random
+    sequence" chip offers a different protein on each click.
+    """
+    sample = sample_sequences.random_sample()
+    return f"Sequence:\n{sample['sequence']}\n\nQuestion: {sample['question']}"
 
 
 def fasta_detected(text: str) -> bool:
