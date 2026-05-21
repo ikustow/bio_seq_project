@@ -61,6 +61,33 @@
     line-height: 1.1;
     white-space: nowrap;
 }
+/* Stacks the title and the small UniProt data-attribution line next to
+   the logo. CC BY 4.0 asks reusers to credit the creator (UniProt
+   Consortium), the license, and a link to it — the full notice
+   (incl. the "not affiliated" disclaimer) lives in the span's title
+   tooltip; the visible line stays compact so it fits the 68px bar. */
+.bioseq-topbar-brand-text {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    line-height: 1.1;
+}
+.bioseq-topbar-attribution {
+    font-size: 0.68rem;
+    color: #94a3b8;
+    line-height: 1.2;
+    margin-top: 2px;
+    white-space: nowrap;
+}
+.bioseq-topbar-attribution a {
+    color: #64748b;
+    text-decoration: none;
+    border-bottom: 1px dotted #cbd5e1;
+}
+.bioseq-topbar-attribution a:hover {
+    color: #334155;
+    border-bottom-color: #94a3b8;
+}
 .bioseq-topbar-tagline {
     font-size: 0.88rem;
     color: #475569;

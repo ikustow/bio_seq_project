@@ -97,7 +97,10 @@ def _render_topbar() -> None:
         <div class="bioseq-topbar" style="height:68px;display:flex;align-items:center;gap:1.75rem;padding:0 1.5rem;box-sizing:border-box;overflow:hidden;">
           <div class="bioseq-topbar-brand" style="display:flex;align-items:center;gap:0.8rem;flex-shrink:0;">
             {logo_html}
-            <span class="bioseq-topbar-title">BioSeq Investigator</span>
+            <div class="bioseq-topbar-brand-text" style="display:flex;flex-direction:column;justify-content:center;line-height:1.1;">
+              <span class="bioseq-topbar-title">BioSeq Investigator</span>
+              <span class="bioseq-topbar-attribution" title="Built on protein data from UniProt. &#169; UniProt Consortium, licensed under CC BY 4.0. Data adapted for presentation. BioSeq Investigator is an independent project, not affiliated with or endorsed by UniProt.">Built on <a href="https://www.uniprot.org" target="_blank" rel="noopener noreferrer">UniProt</a> data &#183; &#169; UniProt Consortium &#183; <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a></span>
+            </div>
           </div>
           <div class="bioseq-topbar-tagline">
             Paste a biological sequence, ask a question, and get an<br>
@@ -844,6 +847,55 @@ def _start_progress_ticker(placeholder, stop_event):
     return thread
 
 
+# Retry tuning for transient upstream failures (e.g. the Gemini proxy
+# returning 503 Service Unavailable when its worker is cold/overloaded).
+_SERVER_BUSY_RETRIES = 1
+_SERVER_BUSY_RETRY_DELAY_SECONDS = 5.0
+_SERVER_BUSY_NOTICE = "Server is busy, let us wait for a couple of seconds…"
+
+
+def _run_turn_with_progress(text: str, placeholder) -> tuple[dict, float]:
+    """Run one backend turn while driving the live progress indicator.
+
+    Returns ``(outcome, elapsed_seconds)``. The progress ticker is torn
+    down before returning so the caller can render its own status (busy
+    notice, "Finalizing…") into the same placeholder without a background
+    thread overwriting it.
+    """
+    import chat_pipeline  # noqa: WPS433  (lazy import; heavy backend deps)
+    import threading
+    import time
+
+    stop_event = threading.Event()
+    _render_progress(placeholder, _PROGRESS_STAGES[0][1], 0.0)
+    ticker = _start_progress_ticker(placeholder, stop_event)
+    start = time.monotonic()
+    try:
+        outcome = chat_pipeline.run_turn(text)
+    finally:
+        elapsed = time.monotonic() - start
+        stop_event.set()
+        ticker.join(timeout=1)
+    return outcome, elapsed
+
+
+def _render_busy_notice(placeholder, message: str) -> None:
+    """Render a transient "server busy" status while we wait to retry.
+
+    Reuses the progress row's look — including the click-shield so a stray
+    click doesn't trigger a rerun and abort the pending retry — but swaps
+    the spinner copy for the wait notice and drops the elapsed timer.
+    """
+    placeholder.markdown(
+        f'<div class="bioseq-click-shield" aria-hidden="true"></div>'
+        f'<div class="bioseq-progress">'
+        f'<span class="bioseq-progress-spinner"></span>'
+        f'<span class="bioseq-progress-label">{message}</span>'
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def _handle_vector_db_submission(
     text: str,
 ) -> tuple[str, set[str], list[str], str | None]:
@@ -858,27 +910,31 @@ def _handle_vector_db_submission(
     ``secondary_reply`` is the optional Chat-LLM follow-up text emitted
     right after a retriever hit; ``None`` on every other path.
     """
-    import chat_pipeline  # noqa: WPS433  (lazy import; heavy backend deps)
-    import threading
     import time
 
-    stop_event = threading.Event()
     placeholder = st.empty()
-    _render_progress(placeholder, _PROGRESS_STAGES[0][1], 0.0)
-    ticker = _start_progress_ticker(placeholder, stop_event)
-    start = time.monotonic()
-    try:
-        outcome = chat_pipeline.run_turn(text)
-    finally:
-        elapsed_seconds = time.monotonic() - start
-        stop_event.set()
-        ticker.join(timeout=1)
-        # Don't blank the slot here — there's still ~1–3s of work below
-        # (footer, session-state, debug_panel, then Streamlit rerun + chat
-        # history re-render). If we ``empty()`` now, that interval shows as
-        # a blank gap between the live progress and the final reply. Hold a
-        # "Finalizing…" label until the very end of the function instead.
-        _render_progress(placeholder, "Finalizing…", elapsed_seconds)
+    outcome, elapsed_seconds = _run_turn_with_progress(text, placeholder)
+
+    # Transient upstream failure (e.g. the Gemini proxy returning 503 while
+    # its worker is cold/overloaded): tell the user we're waiting, pause,
+    # then retry. The backend tags these turns as ``server_busy`` and skips
+    # persisting them, so a successful retry leaves a single clean turn in
+    # history instead of an error bubble followed by the real answer.
+    attempts = 0
+    while outcome.get("server_busy") and attempts < _SERVER_BUSY_RETRIES:
+        attempts += 1
+        _render_busy_notice(placeholder, _SERVER_BUSY_NOTICE)
+        time.sleep(_SERVER_BUSY_RETRY_DELAY_SECONDS)
+        retry_outcome, retry_elapsed = _run_turn_with_progress(text, placeholder)
+        outcome = retry_outcome
+        elapsed_seconds += retry_elapsed + _SERVER_BUSY_RETRY_DELAY_SECONDS
+
+    # Don't blank the slot here — there's still ~1–3s of work below
+    # (footer, session-state, debug_panel, then Streamlit rerun + chat
+    # history re-render). If we ``empty()`` now, that interval shows as
+    # a blank gap between the live progress and the final reply. Hold a
+    # "Finalizing…" label until the very end of the function instead.
+    _render_progress(placeholder, "Finalizing…", elapsed_seconds)
 
     # Only retriever turns get the timing/algorithm footer — Chat-LLM
     # follow-up turns don't actually hit a database, so the elapsed

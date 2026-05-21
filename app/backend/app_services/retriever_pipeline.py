@@ -36,7 +36,14 @@ STANDARD_CODON_TABLE = {
 DNA_IUPAC = set("ACGTUNRYKMSWBDHV")
 PROTEIN_ALPHABET = set("ACDEFGHIKLMNPQRSTVWY")
 PROTEIN_ONLY = PROTEIN_ALPHABET - DNA_IUPAC
-SEQUENCE_TOKEN_RE = re.compile(r"[A-Za-z*\-]{10,}")
+# Minimum length for a bare letter-run to be treated as a candidate sequence.
+# Set to 15 (not 10) so ordinary English words that happen to contain only
+# valid amino-acid letters — e.g. "differences", "structural" — aren't misread
+# as protein sequences and routed into the retriever. Genuine sequences worth
+# searching are comfortably longer; shorter real peptides should be sent as
+# explicit FASTA (the ``>`` header path) instead.
+MIN_SEQUENCE_TOKEN_LEN = 15
+SEQUENCE_TOKEN_RE = re.compile(rf"[A-Za-z*\-]{{{MIN_SEQUENCE_TOKEN_LEN},}}")
 PATH_RE = re.compile(r"(?P<path>(?:[\w./~:-]+)?[\w.-]+\.(?:fasta|faa|fna|nuc|pep|pro|fa))", re.IGNORECASE)
 
 
@@ -385,7 +392,7 @@ def _extract_sequence_token(prompt: str) -> str | None:
     best = ""
     for match in SEQUENCE_TOKEN_RE.finditer(prompt):
         token = normalize_protein_sequence(match.group(0)).replace("-", "").replace("*", "")
-        if len(token) >= 10 and set(token.upper()) <= (DNA_IUPAC | PROTEIN_ALPHABET):
+        if len(token) >= MIN_SEQUENCE_TOKEN_LEN and set(token.upper()) <= (DNA_IUPAC | PROTEIN_ALPHABET):
             if len(token) > len(best):
                 best = token
     if best:

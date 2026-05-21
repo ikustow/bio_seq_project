@@ -22,11 +22,15 @@ def test_translation_handles_stop_and_bad_length() -> None:
     assert translate_dna_to_protein("ATGTAAATG") == "M"
 
     pipeline = BioSeqRetrieverPipeline(enable_runtime_retriever=False)
-    state, candidates = pipeline.run("dna ATGAAATGAA")
+    # 16 nt: long enough to clear MIN_SEQUENCE_TOKEN_LEN (15) so it is detected
+    # as a sequence, but not divisible by 3 so translation fails. That failure
+    # surfaces as a warning (the cosmetic protein preview is dropped); the
+    # controlled miss itself comes from the runtime being disabled.
+    state, candidates = pipeline.run("dna ATGAAATGAAATGAAA")
 
     assert candidates == []
     assert state.controlled_miss is True
-    assert "divisible by 3" in (state.error or "")
+    assert any("divisible by 3" in warning for warning in state.warnings)
 
 
 def test_runtime_disabled_returns_controlled_miss() -> None:

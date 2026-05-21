@@ -133,6 +133,15 @@ def _run_turn_backend(prompt: str) -> dict[str, Any]:
     if response.selected_object_id:
         session_objects.set_selected(response.selected_object_id)
 
+    # Transient Chat-LLM failure (proxy 503 etc.). The frontend retries these
+    # after a short pause, so we neither persist the error turn nor surface it
+    # as a final answer — otherwise a successful retry would leave an error
+    # bubble followed by the real answer in the saved history.
+    server_busy = (
+        response.current_mode == "chat_llm_error"
+        and bool((response.metadata or {}).get("retryable"))
+    )
+
     if update_card:
         raw_candidates = [candidate.model_dump() for candidate in response.candidates]
         ui_candidates = [_candidate_from_backend(candidate) for candidate in raw_candidates]
@@ -164,19 +173,20 @@ def _run_turn_backend(prompt: str) -> dict[str, Any]:
         ui_candidates = list(st.session_state.get("candidates") or [])
         reveals = set(st.session_state.get("card_sections_revealed") or set())
         query_protein_sequence = st.session_state.get("query_protein_sequence")
-        _safe_save_turn(
-            context,
-            prompt,
-            reply,
-            [],
-            None,
-            warnings,
-            None,
-            current_mode=response.current_mode or "chat_llm",
-            update_candidates=False,
-            suggested_questions=suggested_questions,
-            suggested_questions_metadata=suggested_questions_metadata,
-        )
+        if not server_busy:
+            _safe_save_turn(
+                context,
+                prompt,
+                reply,
+                [],
+                None,
+                warnings,
+                None,
+                current_mode=response.current_mode or "chat_llm",
+                update_candidates=False,
+                suggested_questions=suggested_questions,
+                suggested_questions_metadata=suggested_questions_metadata,
+            )
 
     return {
         "reply": reply,
@@ -191,6 +201,7 @@ def _run_turn_backend(prompt: str) -> dict[str, Any]:
         "update_card": update_card,
         "suggested_questions": suggested_questions,
         "backend": response.current_mode or backend_choice.BACKEND_RUNTIME,
+        "server_busy": server_busy,
     }
 
 

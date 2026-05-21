@@ -30,6 +30,29 @@ OPENAI_MODEL_ENV = "OPENAI_MODEL"
 OPENAI_DEFAULT_MODEL = "gpt-4.1-nano"
 REQUEST_TIMEOUT_SECONDS = 45
 
+# HTTP statuses worth a short wait + retry instead of surfacing to the user.
+# These are transient upstream conditions: the Cloudflare Gemini proxy
+# returns 503 when its worker is cold/overloaded, and 429/502/504 are the
+# usual "try again shortly" family.
+RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+
+
+def is_retryable_error(exc: BaseException) -> bool:
+    """True for transient upstream failures worth retrying after a pause.
+
+    Covers HTTP 429/5xx from the Gemini proxy (e.g. the worker returning
+    ``503 Service Unavailable``) and low-level connection/timeout errors.
+    Permanent failures (auth, bad request, empty response) return False so
+    they surface to the user immediately.
+    """
+    if isinstance(exc, requests.exceptions.HTTPError):
+        response = getattr(exc, "response", None)
+        return getattr(response, "status_code", None) in RETRYABLE_STATUS_CODES
+    return isinstance(
+        exc,
+        (requests.exceptions.ConnectionError, requests.exceptions.Timeout),
+    )
+
 
 @dataclass
 class ChatLLMRequest:

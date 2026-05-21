@@ -1,5 +1,5 @@
 from typing import List, Dict, Any, Optional, TypedDict, Literal, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
@@ -325,6 +325,21 @@ def extract_and_classify_node(state: GraphState) -> Dict[str, Any]:
                 "error": None,
                 "extraction_used_fallback": None,
             }
+
+    except ValidationError as e:
+        # The LLM responded, but its structured output doesn't match
+        # ``PipelineRouter``. Mistral tends to do this when the input isn't
+        # actually a sequence and it tries to bail out mid-schema (e.g. a
+        # plain comparative question). Don't attempt a regex rescue or hand
+        # the turn elsewhere — return a single, human-readable error. The raw
+        # validation detail is logged for debugging only, never shown to the user.
+        print(f"extract_and_classify_node: structured-output validation failed: {e}")
+        return {"error": (
+            "The input could not be classified as a biological sequence or file path. "
+            "The extraction model returned a response that did not match the expected "
+            "format, which usually means the input was a natural-language question "
+            "rather than a sequence. Paste a raw sequence or FASTA to run a search."
+        )}
 
     except Exception as e:
         # LLM step failed (e.g. Mistral 429, missing MISTRAL_API_KEY,

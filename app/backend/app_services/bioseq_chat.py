@@ -16,7 +16,7 @@ from backend.app_contracts import (
     SessionSnapshot,
 )
 
-from .chat_llm import ChatLLMRequest, ChatLLMService
+from .chat_llm import ChatLLMRequest, ChatLLMService, is_retryable_error
 from .retriever_pipeline import BioSeqRetrieverPipeline
 from .suggested_questions import SuggestedQuestionsRequest, SuggestedQuestionsService
 from .uniprot_lookup import lookup_protein_view
@@ -347,7 +347,10 @@ class BioSeqChatService:
         except Exception as exc:
             assistant_message = f"**Chat LLM error:** {exc}"
             current_mode = "chat_llm_error"
-            metadata = {"error": str(exc)}
+            # ``retryable`` lets the frontend show a "server is busy" notice
+            # and retry transient upstream failures (proxy 503 etc.) instead
+            # of dumping the raw error on the user.
+            metadata = {"error": str(exc), "retryable": is_retryable_error(exc)}
             warnings.append(str(exc))
 
         suggested_questions: list[str] = []
